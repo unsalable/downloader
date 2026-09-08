@@ -1,0 +1,329 @@
+{
+  "generatedBy": "scripts/generate_licenses.py",
+  "packages": [
+    {
+      "name": "@tailwindcss/vite",
+      "version": "4.3.3",
+      "license": "MIT",
+      "kind": "npm",
+      "url": "https://www.npmjs.com/package/@tailwindcss/vite"
+    },
+    {
+      "name": "@tauri-apps/api",
+      "version": "2.11.1",
+      "license": "Apache-2.0 OR MIT",
+      "kind": "npm",
+      "url": "https://www.npmjs.com/package/@tauri-apps/api"
+    },
+    {
+      "name": "@tauri-apps/cli",
+      "version": "2.11.4",
+      "license": "Apache-2.0 OR MIT",
+      "kind": "npm",
+      "url": "https://www.npmjs.com/package/@tauri-apps/cli"
+    },
+    {
+      "name": "@tauri-apps/plugin-clipboard-manager",
+      "version": "2.3.3",
+      "license": "MIT OR Apache-2.0",
+      "kind": "npm",
+      "url": "https://www.npmjs.com/package/@tauri-apps/plugin-clipboard-manager"
+    },
+    {
+      "name": "@tauri-apps/plugin-dialog",
+      "version": "2.7.3",
+      "license": "MIT OR Apache-2.0",
+      "kind": "npm",
+      "url": "https://www.npmjs.com/package/@tauri-apps/plugin-dialog"
+    },
+    {
+      "name": "@tauri-apps/plugin-notification",
+      "version": "2.4.0",
+      "license": "MIT OR Apache-2.0",
+      "kind": "npm",
+      "url": "https://www.npmjs.com/package/@tauri-apps/plugin-notification"
+    },
+    {
+      "name": "@tauri-apps/plugin-opener",
+      "version": "2.5.5",
+      "license": "MIT OR Apache-2.0",
+      "kind": "npm",
+      "url": "https://www.npmjs.com/package/@tauri-apps/plugin-opener"
+    },
+    {
+      "name": "@tauri-apps/plugin-os",
+      "version": "2.3.2",
+      "license": "MIT OR Apache-2.0",
+      "kind": "npm",
+      "url": "https://www.npmjs.com/package/@tauri-apps/plugin-os"
+    },
+    {
+      "name": "@types/react",
+      "version": "19.2.18",
+      "license": "MIT",
+      "kind": "npm",
+      "url": "https://www.npmjs.com/package/@types/react"
+    },
+    {
+      "name": "@types/react-dom",
+      "version": "19.2.7",
+      "license": "MIT",
+      "kind": "npm",
+      "url": "https://www.npmjs.com/package/@types/react-dom"
+    },
+    {
+      "name": "@vitejs/plugin-react",
+      "version": "6.1.1",
+      "license": "MIT",
+      "kind": "npm",
+      "url": "https://www.npmjs.com/package/@vitejs/plugin-react"
+    },
+    {
+      "name": "lucide-react",
+      "version": "1.42.0",
+      "license": "ISC",
+      "kind": "npm",
+      "url": "https://www.npmjs.com/package/lucide-react"
+    },
+    {
+      "name": "motion",
+      "version": "13.2.0",
+      "license": "MIT",
+      "kind": "npm",
+      "url": "https://www.npmjs.com/package/motion"
+    },
+    {
+      "name": "react",
+      "version": "19.2.8",
+      "license": "MIT",
+      "kind": "npm",
+      "url": "https://www.npmjs.com/package/react"
+    },
+    {
+      "name": "react-dom",
+      "version": "19.2.8",
+      "license": "MIT",
+      "kind": "npm",
+      "url": "https://www.npmjs.com/package/react-dom"
+    },
+    {
+      "name": "tailwindcss",
+      "version": "4.3.3",
+      "license": "MIT",
+      "kind": "npm",
+      "url": "https://www.npmjs.com/package/tailwindcss"
+    },
+    {
+      "name": "typescript",
+      "version": "7.0.2",
+      "license": "Apache-2.0",
+      "kind": "npm",
+      "url": "https://www.npmjs.com/package/typescript"
+    },
+    {
+      "name": "vite",
+      "version": "8.2.2",
+      "license": "MIT",
+      "kind": "npm",
+      "url": "https://www.npmjs.com/package/vite"
+    },
+    {
+      "name": "zustand",
+      "version": "5.0.15",
+      "license": "MIT",
+      "kind": "npm",
+      "url": "https://www.npmjs.com/package/zustand"
+    },
+    {
+      "name": "bytes",
+      "version": "",
+      "license": "MIT",
+      "kind": "cargo",
+      "url": "https://crates.io/crates/bytes"
+    },
+    {
+      "name": "chrono",
+      "version": "",
+      "license": "MIT OR Apache-2.0",
+      "kind": "cargo",
+      "url": "https://crates.io/crates/chrono"
+    },
+    {
+      "name": "dirs",
+      "version": "",
+      "license": "MIT OR Apache-2.0",
+      "kind": "cargo",
+      "url": "https://crates.io/crates/dirs"
+    },
+    {
+      "name": "futures-util",
+      "version": "",
+      "license": "MIT OR Apache-2.0",
+      "kind": "cargo",
+      "url": "https://crates.io/crates/futures-util"
+    },
+    {
+      "name": "hex",
+      "version": "",
+      "license": "MIT OR Apache-2.0",
+      "kind": "cargo",
+      "url": "https://crates.io/crates/hex"
+    },
+    {
+      "name": "once_cell",
+      "version": "",
+      "license": "MIT OR Apache-2.0",
+      "kind": "cargo",
+      "url": "https://crates.io/crates/once_cell"
+    },
+    {
+      "name": "regex",
+      "version": "",
+      "license": "MIT OR Apache-2.0",
+      "kind": "cargo",
+      "url": "https://crates.io/crates/regex"
+    },
+    {
+      "name": "reqwest",
+      "version": "",
+      "license": "MIT OR Apache-2.0",
+      "kind": "cargo",
+      "url": "https://crates.io/crates/reqwest"
+    },
+    {
+      "name": "rusqlite",
+      "version": "",
+      "license": "MIT",
+      "kind": "cargo",
+      "url": "https://crates.io/crates/rusqlite"
+    },
+    {
+      "name": "serde",
+      "version": "",
+      "license": "MIT OR Apache-2.0",
+      "kind": "cargo",
+      "url": "https://crates.io/crates/serde"
+    },
+    {
+      "name": "serde_json",
+      "version": "",
+      "license": "MIT OR Apache-2.0",
+      "kind": "cargo",
+      "url": "https://crates.io/crates/serde_json"
+    },
+    {
+      "name": "sha2",
+      "version": "",
+      "license": "MIT OR Apache-2.0",
+      "kind": "cargo",
+      "url": "https://crates.io/crates/sha2"
+    },
+    {
+      "name": "tauri",
+      "version": "",
+      "license": "Apache-2.0 OR MIT",
+      "kind": "cargo",
+      "url": "https://crates.io/crates/tauri"
+    },
+    {
+      "name": "tauri-plugin-autostart",
+      "version": "",
+      "license": "Apache-2.0 OR MIT",
+      "kind": "cargo",
+      "url": "https://crates.io/crates/tauri-plugin-autostart"
+    },
+    {
+      "name": "tauri-plugin-clipboard-manager",
+      "version": "",
+      "license": "Apache-2.0 OR MIT",
+      "kind": "cargo",
+      "url": "https://crates.io/crates/tauri-plugin-clipboard-manager"
+    },
+    {
+      "name": "tauri-plugin-dialog",
+      "version": "",
+      "license": "Apache-2.0 OR MIT",
+      "kind": "cargo",
+      "url": "https://crates.io/crates/tauri-plugin-dialog"
+    },
+    {
+      "name": "tauri-plugin-notification",
+      "version": "",
+      "license": "Apache-2.0 OR MIT",
+      "kind": "cargo",
+      "url": "https://crates.io/crates/tauri-plugin-notification"
+    },
+    {
+      "name": "tauri-plugin-opener",
+      "version": "",
+      "license": "Apache-2.0 OR MIT",
+      "kind": "cargo",
+      "url": "https://crates.io/crates/tauri-plugin-opener"
+    },
+    {
+      "name": "tauri-plugin-os",
+      "version": "",
+      "license": "Apache-2.0 OR MIT",
+      "kind": "cargo",
+      "url": "https://crates.io/crates/tauri-plugin-os"
+    },
+    {
+      "name": "tauri-plugin-single-instance",
+      "version": "",
+      "license": "Apache-2.0 OR MIT",
+      "kind": "cargo",
+      "url": "https://crates.io/crates/tauri-plugin-single-instance"
+    },
+    {
+      "name": "thiserror",
+      "version": "",
+      "license": "MIT OR Apache-2.0",
+      "kind": "cargo",
+      "url": "https://crates.io/crates/thiserror"
+    },
+    {
+      "name": "tokio",
+      "version": "",
+      "license": "MIT",
+      "kind": "cargo",
+      "url": "https://crates.io/crates/tokio"
+    },
+    {
+      "name": "urlencoding",
+      "version": "",
+      "license": "MIT",
+      "kind": "cargo",
+      "url": "https://crates.io/crates/urlencoding"
+    },
+    {
+      "name": "zip",
+      "version": "",
+      "license": "MIT",
+      "kind": "cargo",
+      "url": "https://crates.io/crates/zip"
+    },
+    {
+      "name": "Inter",
+      "version": "variable",
+      "license": "OFL-1.1",
+      "kind": "font",
+      "url": "https://rsms.me/inter/"
+    },
+    {
+      "name": "yt-dlp",
+      "version": "managed at runtime",
+      "license": "Unlicense",
+      "kind": "external-tool",
+      "url": "https://github.com/yt-dlp/yt-dlp",
+      "note": "Used to read public metadata and stream URLs. Invoked as a separate process; never linked into the app."
+    },
+    {
+      "name": "FFmpeg",
+      "version": "managed at runtime",
+      "license": "GPL-3.0-or-later (managed build) / varies for a custom build",
+      "kind": "external-tool",
+      "url": "https://ffmpeg.org",
+      "note": "Used only to merge separate audio/video streams and for user-requested conversion. Invoked as a separate process, never linked. The copy this app installs is the GPL build from yt-dlp/FFmpeg-Builds; a custom path may point at any other build."
+    }
+  ]
+}
