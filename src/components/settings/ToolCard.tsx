@@ -23,6 +23,48 @@ interface ToolCardProps {
   optionalNoteKey?: TranslationKey;
 }
 
+const STAGE_LABEL = {
+  downloading: 'settings.toolStageDownloading',
+  extracting: 'settings.toolStageExtracting',
+  verifying: 'settings.toolStageVerifying',
+  done: 'settings.toolStageVerifying',
+} as const satisfies Record<ToolInstallProgress['stage'], TranslationKey>;
+
+/**
+ * What an install is doing right now. The byte count only means something
+ * while downloading; extracting and the start-up check that follows have no
+ * measurable progress, and without saying so a full bar looks like a hang.
+ */
+export function InstallProgress({
+  progress,
+  className,
+}: {
+  progress: ToolInstallProgress;
+  className?: string;
+}) {
+  const { t } = useTranslation();
+  const downloading = progress.stage === 'downloading';
+  const percent =
+    downloading && progress.totalBytes != null && progress.totalBytes > 0
+      ? (progress.receivedBytes / progress.totalBytes) * 100
+      : null;
+
+  return (
+    <div className={className}>
+      <Progress value={percent} />
+      <div className="mt-1.5 flex items-center gap-2 text-[11.5px] text-fg-muted">
+        <span>{t(STAGE_LABEL[progress.stage])}</span>
+        {downloading && progress.receivedBytes > 0 && (
+          <span className="tabular ml-auto">
+            {formatBytes(progress.receivedBytes)}
+            {progress.totalBytes != null && ` / ${formatBytes(progress.totalBytes)}`}
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
+
 const SOURCE_LABEL = {
   managed: 'settings.toolSourceManaged',
   system: 'settings.toolSourceSystem',
@@ -52,11 +94,6 @@ export function ToolCard({
     });
     if (typeof selected === 'string') onLocate(selected);
   };
-
-  const percent =
-    installing?.totalBytes != null && installing.totalBytes > 0
-      ? (installing.receivedBytes / installing.totalBytes) * 100
-      : null;
 
   return (
     <div className="px-4 py-4">
@@ -99,18 +136,7 @@ export function ToolCard({
             </Tooltip>
           )}
 
-          {installing && (
-            <div className="mt-3">
-              <Progress value={percent} />
-              <div className="mt-1.5 flex items-center gap-2 text-[11.5px] text-fg-muted">
-                <span>{t('settings.toolInstalling')}</span>
-                <span className="tabular ml-auto">
-                  {formatBytes(installing.receivedBytes)}
-                  {installing.totalBytes != null && ` / ${formatBytes(installing.totalBytes)}`}
-                </span>
-              </div>
-            </div>
-          )}
+          {installing && <InstallProgress progress={installing} className="mt-3" />}
 
           {!installing && (
             <div className="mt-3 flex flex-wrap items-center gap-2">

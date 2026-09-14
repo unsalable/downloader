@@ -8,10 +8,13 @@ Built with Tauri 2, React 19, TypeScript and Rust.
 
 ## Download
 
-Grab the latest installer from the [releases page](https://github.com/unsalable/downloader/releases/latest):
+Grab the installer from the [releases page](https://github.com/unsalable/downloader/releases/latest):
 
-- `UniversalDownloader_<version>_x64-setup.exe` -- normal install, per user, no admin rights needed.
-- `UniversalDownloader_<version>_x64.msi` -- for managed or scripted deployment.
+- [`UniversalDownloader_x64-setup.exe`](https://github.com/unsalable/downloader/releases/latest/download/UniversalDownloader_x64-setup.exe) -- normal install, per user, no admin rights needed.
+- [`UniversalDownloader_x64.msi`](https://github.com/unsalable/downloader/releases/latest/download/UniversalDownloader_x64.msi) -- for managed or scripted deployment.
+
+These links always point at the current build. Installing over an existing copy
+updates it in place; settings, history and the downloaded tools are kept.
 
 Windows 10/11, 64-bit. The installers are not code-signed, so SmartScreen warns on first
 run: choose **More info -> Run anyway**.

@@ -23,7 +23,7 @@ import { selectActive, selectInFlightCount, useQueueStore } from '@/stores/useQu
 import { useSettingsStore } from '@/stores/useSettingsStore';
 import { useToastStore } from '@/stores/useToastStore';
 import { useToolsStore } from '@/stores/useToolsStore';
-import type { ThemePreference } from '@/types';
+import type { ThemePreference, ToolsState } from '@/types';
 
 const SIDEBAR_COLLAPSED_KEY = 'ud.sidebar.collapsed';
 
@@ -46,6 +46,7 @@ export function App() {
   const replaceConversions = useConvertStore((state) => state.replace);
   const applyConvertProgress = useConvertStore((state) => state.applyProgress);
 
+  const tools = useToolsStore((state) => state.tools);
   const loadTools = useToolsStore((state) => state.load);
   const applyTools = useToolsStore((state) => state.apply);
   const setInstallProgress = useToolsStore((state) => state.setInstallProgress);
@@ -168,6 +169,28 @@ export function App() {
     const live = new Set(conversions.map((job) => job.id));
     for (const id of seen.keys()) if (!live.has(id)) seen.delete(id);
   }, [conversions, pushToast, t]);
+
+  // A download that failed only because a tool was missing is retried as soon
+  // as that tool appears. The error told the user to install it; having done
+  // so, they should not also have to find the task and press Retry -- and
+  // before this, a restart was what seemed to fix it.
+  const previousTools = useRef<ToolsState | null>(null);
+  useEffect(() => {
+    const before = previousTools.current;
+    previousTools.current = tools;
+    if (!before || !tools) return;
+
+    const resolved = new Set<string>();
+    if (!before.engine.available && tools.engine.available) resolved.add('engineMissing');
+    if (!before.ffmpeg.available && tools.ffmpeg.available) resolved.add('ffmpegMissing');
+    if (resolved.size === 0) return;
+
+    for (const task of useQueueStore.getState().tasks) {
+      if (task.status === 'failed' && task.error && resolved.has(task.error.code)) {
+        void ipc.retryDownload(task.id).catch(() => {});
+      }
+    }
+  }, [tools]);
 
   const goHomeWithUrl = useCallback(
     (url: string) => {

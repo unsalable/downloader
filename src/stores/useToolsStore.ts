@@ -25,8 +25,13 @@ export const useToolsStore = create<ToolsStoreState>((set, get) => ({
   error: null,
 
   load: async () => {
-    const tools = await ipc.getTools();
-    set({ tools, checking: false });
+    // The backend answers once its first discovery pass has finished, so this
+    // is a real result rather than a "missing" placeholder.
+    try {
+      set({ tools: await ipc.getTools(), checking: false });
+    } catch {
+      set({ checking: false });
+    }
   },
 
   refresh: async () => {
@@ -57,6 +62,13 @@ export const useToolsStore = create<ToolsStoreState>((set, get) => ({
       return true;
     } catch (error) {
       set({ error: ipc.toAppError(error).message });
+      // A failed install can still have changed what is on disk, so take the
+      // backend's view rather than keeping the one from before.
+      try {
+        set({ tools: await ipc.getTools() });
+      } catch {
+        // The tools event carries the same state; nothing more to do here.
+      }
       return false;
     } finally {
       set((state) => {
@@ -68,9 +80,12 @@ export const useToolsStore = create<ToolsStoreState>((set, get) => ({
   },
 
   setInstallProgress: (progress) =>
-    set((state) => ({
-      installing: { ...state.installing, [progress.tool]: progress },
-    })),
+    set((state) => {
+      // Progress can trail the install's own result by a tick; a late event
+      // must not bring a finished install's progress bar back.
+      if (!state.installing[progress.tool] || progress.stage === 'done') return {};
+      return { installing: { ...state.installing, [progress.tool]: progress } };
+    }),
 }));
 
 /** The engine is what makes analysis possible at all. */

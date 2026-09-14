@@ -259,6 +259,10 @@ export const tr: Record<TranslationKey, string> = {
   'settings.toolReset': 'Yönetilen kopyayı kullan',
   'settings.toolMissing': 'Kurulu değil',
   'settings.toolInstalling': 'Kuruluyor...',
+  'settings.toolStageDownloading': 'İndiriliyor...',
+  'settings.toolStageExtracting': 'Arşivden çıkarılıyor...',
+  'settings.toolStageVerifying': 'Çalıştığı doğrulanıyor...',
+  'settings.toolInstallFailed': 'Kurulum başarısız oldu',
   'settings.toolSourceManaged': 'Uygulama tarafından yönetiliyor',
   'settings.toolSourceSystem': "PATH'te bulundu",
   'settings.toolSourceCustom': 'Özel yol',
@@ -309,6 +313,7 @@ export const tr: Record<TranslationKey, string> = {
   'setup.body':
     'Universal Downloader, medya bilgilerini okumak ve akışları birleştirmek için iki açık kaynak araç kullanır. Bir kez indirilir ve tamamen sizin makinenizde çalışır.',
   'setup.engineRequired': 'İndirme motoru henüz kurulu değil.',
+  'setup.checking': 'İndirme motoru denetleniyor...',
   'setup.installNow': 'Şimdi kur',
   'setup.ffmpegOptional':
     'FFmpeg isteğe bağlıdır, ancak onsuz ayrı video ve ses akışları birleştirilemez.',

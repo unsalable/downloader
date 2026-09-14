@@ -41,7 +41,7 @@ export function Progress({ value, tone = 'accent', size = 'md', className, label
       {indeterminate ? (
         <div
           className={cn(
-            'absolute inset-y-0 w-2/5 rounded-[2px] [animation:ud-sweep_1.25s_ease-in-out_infinite]',
+            'motion-essential absolute inset-y-0 w-2/5 rounded-[2px] [animation:ud-sweep_1.25s_ease-in-out_infinite]',
             TONES[tone],
           )}
         />

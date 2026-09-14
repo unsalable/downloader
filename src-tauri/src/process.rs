@@ -54,6 +54,38 @@ pub async fn run(program: &std::path::Path, args: &[String]) -> AppResult<Captur
     })
 }
 
+/// `run`, bounded: a tool that has not finished within `limit` is killed and
+/// reported as an error rather than stalling its caller indefinitely.
+pub async fn run_with_timeout(
+    program: &std::path::Path,
+    args: &[String],
+    limit: std::time::Duration,
+) -> AppResult<CapturedOutput> {
+    let output = command(program)
+        .args(args)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true)
+        .output();
+
+    let output = tokio::time::timeout(limit, output)
+        .await
+        .map_err(|_| {
+            AppError::Other(format!(
+                "{} did not respond within {}s",
+                program.display(),
+                limit.as_secs()
+            ))
+        })?
+        .map_err(|err| AppError::Other(format!("could not start {}: {err}", program.display())))?;
+
+    Ok(CapturedOutput {
+        status: output.status.code(),
+        stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
+        stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+    })
+}
+
 /// Locate an executable on `PATH`. Used to prefer a copy the user already has
 /// installed over downloading a second one.
 pub fn which(name: &str) -> Option<std::path::PathBuf> {

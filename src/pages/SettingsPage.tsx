@@ -601,7 +601,12 @@ function AdvancedSection({
     pushToast(
       ok
         ? { tone: 'success', title: t('common.done') }
-        : { tone: 'error', title: t('error.unknown.title'), body: t('error.network.message') },
+        : {
+            tone: 'error',
+            title: t('settings.toolInstallFailed'),
+            body: useToolsStore.getState().error ?? t('error.network.message'),
+            durationMs: 9000,
+          },
     );
   };
 

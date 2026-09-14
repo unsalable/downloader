@@ -204,7 +204,15 @@ export function ConvertPage({ settings }: { settings: Settings }) {
               size="sm"
               variant="secondary"
               loading={installing != null}
-              onClick={() => void installTool('ffmpeg')}
+              onClick={async () => {
+                if (await installTool('ffmpeg')) return;
+                pushToast({
+                  tone: 'error',
+                  title: t('settings.toolInstallFailed'),
+                  body: useToolsStore.getState().error ?? t('error.network.message'),
+                  durationMs: 9000,
+                });
+              }}
             >
               {installing != null ? t('settings.toolInstalling') : t('settings.toolInstall')}
             </Button>

@@ -364,10 +364,14 @@
   animation: ud-shimmer 1.6s ease-in-out infinite;
 }
 
-/* Respect the OS "reduce motion" setting: kill decorative loops outright and
-   collapse transitions to something near-instant. */
+/* Respect "reduce motion" -- the OS setting, and the app's own toggle, which
+   the settings store mirrors onto the root element: kill decorative loops
+   outright and collapse transitions to something near-instant.
+
+   Spinners and indeterminate bars are exempt. Frozen, they stop saying that
+   something is still happening, which is information rather than decoration. */
 @media (prefers-reduced-motion: reduce) {
-  *,
+  *:not(.motion-essential),
   *::before,
   *::after {
     animation-duration: 0.001ms !important;
@@ -375,4 +379,20 @@
     transition-duration: 0.001ms !important;
     scroll-behavior: auto !important;
   }
+}
+
+:root[data-reduce-motion="true"] *:not(.motion-essential),
+:root[data-reduce-motion="true"] *::before,
+:root[data-reduce-motion="true"] *::after {
+  animation-duration: 0.001ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.001ms !important;
+  scroll-behavior: auto !important;
+}
+
+/* Low resource mode: frosted-glass panels re-blur everything behind them on
+   every frame that changes, which is the most expensive effect in the app. The
+   surfaces keep their tinted fill, so nothing becomes unreadable. */
+:root[data-low-resource="true"] * {
+  backdrop-filter: none !important;
 }

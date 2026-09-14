@@ -107,18 +107,20 @@ pub fn run() {
 
             // Tool discovery runs a subprocess per tool, so it happens off the
             // startup path; the UI renders a "checking" state until it lands.
+            // `get_tools` waits for this same pass, so an interface that asks
+            // before it finishes cannot be handed the placeholder.
             {
                 let handle = handle.clone();
                 let settings = loaded.clone();
                 tauri::async_runtime::spawn(async move {
-                    let state = tools::refresh(&settings).await;
+                    let state = tools::discovered(&settings).await;
                     log_info!(
                         "app",
                         "engine={} ffmpeg={}",
                         state.engine.available,
                         state.ffmpeg.available
                     );
-                    let _ = handle.emit("tools://changed", state);
+                    let _ = handle.emit(commands::EVENT_TOOLS_CHANGED, state);
                 });
             }
 

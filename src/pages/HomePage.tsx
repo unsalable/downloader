@@ -10,6 +10,7 @@ import { Hero } from '@/components/home/Hero';
 import { MediaPreviewCard } from '@/components/home/MediaPreviewCard';
 import { PlatformIndicator } from '@/components/home/PlatformIndicator';
 import { UrlInput, type UrlInputHandle } from '@/components/home/UrlInput';
+import { InstallProgress } from '@/components/settings/ToolCard';
 import { Button } from '@/components/ui/Button';
 import { useDebouncedValue } from '@/hooks/useDebouncedValue';
 import { useTranslation } from '@/i18n';
@@ -49,6 +50,8 @@ export function HomePage({
   const reset = useAnalysisStore((state) => state.reset);
 
   const tools = useToolsStore((state) => state.tools);
+  const checkingTools = useToolsStore((state) => state.checking);
+  const engineInstall = useToolsStore((state) => state.installing.engine);
   const installTool = useToolsStore((state) => state.install);
   const pushToast = useToastStore((state) => state.push);
 
@@ -56,6 +59,7 @@ export function HomePage({
   const [dragging, setDragging] = useState(false);
 
   const engineReady = tools?.engine.available ?? false;
+  const engineMissing = !engineReady && tools != null && !checkingTools;
 
   // Platform detection is a pure function in Rust; debouncing keeps it off the
   // keystroke path without duplicating the host patterns in TypeScript.
@@ -86,6 +90,21 @@ export function HomePage({
     },
     [analyze, engineReady, settings.defaultContainer, settings.defaultMode, settings.defaultQuality],
   );
+
+  // An analysis that failed only because the engine was missing is retried the
+  // moment the engine appears, wherever it was installed from. Otherwise the
+  // error card would keep saying "missing" about a tool that is now there.
+  const wasEngineReady = useRef(engineReady);
+  useEffect(() => {
+    const appeared = engineReady && !wasEngineReady.current;
+    wasEngineReady.current = engineReady;
+    if (!appeared) return;
+
+    const current = useAnalysisStore.getState();
+    if (current.phase === 'error' && current.error?.code === 'engineMissing' && current.url.trim()) {
+      startAnalysis(current.url);
+    }
+  }, [engineReady, startAnalysis]);
 
   const pasteFromClipboard = useCallback(async () => {
     try {
@@ -190,7 +209,12 @@ export function HomePage({
     pushToast(
       ok
         ? { tone: 'success', title: t('settings.engine'), body: t('common.done') }
-        : { tone: 'error', title: t('error.engineMissing.title'), body: t('error.unknown.message') },
+        : {
+            tone: 'error',
+            title: t('settings.toolInstallFailed'),
+            body: useToolsStore.getState().error ?? t('error.network.message'),
+            durationMs: 9000,
+          },
     );
   };
 
@@ -228,7 +252,9 @@ export function HomePage({
           onPaste={pasteFromClipboard}
           analyzing={phase === 'analyzing'}
           disabled={!engineReady}
-          disabledHint={!engineReady ? t('setup.engineRequired') : undefined}
+          disabledHint={
+            engineReady ? undefined : engineMissing ? t('setup.engineRequired') : t('setup.checking')
+          }
         />
       </div>
 
@@ -236,7 +262,7 @@ export function HomePage({
         <PlatformIndicator platform={platform} />
       </div>
 
-      {!engineReady && tools != null && (
+      {engineMissing && (
         <motion.div
           initial={{ opacity: 0, y: 8 }}
           animate={{ opacity: 1, y: 0 }}
@@ -244,14 +270,18 @@ export function HomePage({
         >
           <h3 className="text-[14px] font-semibold text-fg">{t('setup.title')}</h3>
           <p className="mt-1.5 text-[13px] leading-relaxed text-fg-muted">{t('setup.body')}</p>
-          <div className="mt-3 flex gap-2">
-            <Button variant="primary" size="sm" onClick={installEngine}>
-              {t('setup.installNow')}
-            </Button>
-            <Button variant="ghost" size="sm" onClick={onOpenSettings}>
-              {t('nav.settings')}
-            </Button>
-          </div>
+          {engineInstall ? (
+            <InstallProgress progress={engineInstall} className="mt-3" />
+          ) : (
+            <div className="mt-3 flex gap-2">
+              <Button variant="primary" size="sm" onClick={installEngine}>
+                {t('setup.installNow')}
+              </Button>
+              <Button variant="ghost" size="sm" onClick={onOpenSettings}>
+                {t('nav.settings')}
+              </Button>
+            </div>
+          )}
         </motion.div>
       )}
 
@@ -283,7 +313,16 @@ export function HomePage({
                 onDownload={() => void startDownload(false)}
                 onInstallFfmpeg={async () => {
                   const ok = await installTool('ffmpeg');
-                  if (ok) pushToast({ tone: 'success', title: t('settings.ffmpeg') });
+                  pushToast(
+                    ok
+                      ? { tone: 'success', title: t('settings.ffmpeg'), body: t('common.done') }
+                      : {
+                          tone: 'error',
+                          title: t('settings.toolInstallFailed'),
+                          body: useToolsStore.getState().error ?? t('error.network.message'),
+                          durationMs: 9000,
+                        },
+                  );
                 }}
               />
 

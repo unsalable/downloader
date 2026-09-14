@@ -1,3 +1,4 @@
+import { MotionConfig } from 'motion/react';
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 
@@ -25,6 +26,10 @@ window.addEventListener('drop', (event) => event.preventDefault());
 
 createRoot(container).render(
   <StrictMode>
-    <App />
+    {/* The OS preference, which Motion ignores unless told. The in-app toggle
+        is applied globally by the settings store. */}
+    <MotionConfig reducedMotion="user">
+      <App />
+    </MotionConfig>
   </StrictMode>,
 );

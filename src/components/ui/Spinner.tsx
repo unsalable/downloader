@@ -17,7 +17,7 @@ export function Spinner({
       height={size}
       viewBox="0 0 24 24"
       fill="none"
-      className={cn('shrink-0 [animation:ud-spin_0.7s_linear_infinite]', className)}
+      className={cn('motion-essential shrink-0 [animation:ud-spin_0.7s_linear_infinite]', className)}
       aria-hidden="true"
     >
       <circle cx="12" cy="12" r="9" stroke="currentColor" strokeOpacity="0.22" strokeWidth="2.5" />

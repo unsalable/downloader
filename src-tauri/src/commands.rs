@@ -21,6 +21,7 @@ use crate::settings::Settings;
 use crate::{cache, converter, downloader, filename, logging, net, paths, providers, tools, util};
 
 pub const EVENT_TOOL_PROGRESS: &str = "tools://progress";
+pub const EVENT_TOOLS_CHANGED: &str = "tools://changed";
 pub const EVENT_SETTINGS_CHANGED: &str = "settings://changed";
 
 pub struct AppState {
@@ -74,9 +75,10 @@ pub async fn save_settings(
         net::invalidate();
     }
 
-    // A changed tool path means the cached discovery result is stale.
+    // A changed tool path means the cached discovery result is stale, and the
+    // interface has to hear about the new one: nothing else would tell it.
     if previous.engine_path != settings.engine_path || previous.ffmpeg_path != settings.ffmpeg_path {
-        tools::refresh(&settings).await;
+        let _ = app.emit(EVENT_TOOLS_CHANGED, tools::refresh(&settings).await);
     }
 
     if previous.start_with_windows != settings.start_with_windows {
@@ -118,13 +120,15 @@ fn apply_autostart(app: &AppHandle, enabled: bool) {
 // -- tools -----------------------------------------------------------------
 
 #[tauri::command]
-pub fn get_tools() -> ToolsState {
-    tools::snapshot()
+pub async fn get_tools(state: State<'_, AppState>) -> AppResult<ToolsState> {
+    Ok(tools::discovered(&state.settings()).await)
 }
 
 #[tauri::command]
-pub async fn refresh_tools(state: State<'_, AppState>) -> AppResult<ToolsState> {
-    Ok(tools::refresh(&state.settings()).await)
+pub async fn refresh_tools(app: AppHandle, state: State<'_, AppState>) -> AppResult<ToolsState> {
+    let tools = tools::refresh(&state.settings()).await;
+    let _ = app.emit(EVENT_TOOLS_CHANGED, tools.clone());
+    Ok(tools)
 }
 
 #[tauri::command]
@@ -148,8 +152,15 @@ pub async fn install_tool(
         );
     };
 
-    tools::install(tool, &settings, &on_progress).await?;
-    Ok(tools::snapshot())
+    let result = tools::install(tool, &settings, &on_progress).await;
+
+    // Published on failure too. Every screen that shows a tool reads it from
+    // this event, and a failed update can still have changed what is on disk.
+    let tools = tools::snapshot();
+    let _ = app.emit(EVENT_TOOLS_CHANGED, tools.clone());
+
+    result?;
+    Ok(tools)
 }
 
 // -- analysis --------------------------------------------------------------

@@ -1,4 +1,5 @@
 import { getCurrentWindow, Theme } from '@tauri-apps/api/window';
+import { MotionGlobalConfig } from 'motion/react';
 import { create } from 'zustand';
 
 import { setLanguage } from '@/i18n';
@@ -20,7 +21,25 @@ interface SettingsState {
 function applySideEffects(settings: Settings) {
   setLanguage(settings.language);
   applyTheme(settings.theme);
-  document.documentElement.dataset.reduceMotion = settings.reduceMotion ? 'true' : 'false';
+  applyMotion(settings);
+}
+
+/**
+ * "Reduce motion" has two audiences. The stylesheet reads the data attributes
+ * for CSS transitions and keyframes; Motion runs its animations in JavaScript
+ * and never sees CSS, so it is told through its global config. That flag is
+ * read as each animation starts, so the change applies from the next animation
+ * on without remounting anything.
+ *
+ * Low resource mode promises fewer visual effects, and movement is most of
+ * them, so it implies reduced motion without flipping the user's own toggle.
+ */
+function applyMotion(settings: Settings) {
+  const reduce = settings.reduceMotion || settings.lowResourceMode;
+  const root = document.documentElement;
+  root.dataset.reduceMotion = reduce ? 'true' : 'false';
+  root.dataset.lowResource = settings.lowResourceMode ? 'true' : 'false';
+  MotionGlobalConfig.skipAnimations = reduce;
 }
 
 let systemThemeQuery: MediaQueryList | null = null;

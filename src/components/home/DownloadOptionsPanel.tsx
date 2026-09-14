@@ -12,6 +12,7 @@ import {
 } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 
+import { InstallProgress } from '@/components/settings/ToolCard';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Dropdown } from '@/components/ui/Dropdown';
@@ -64,6 +65,7 @@ export function DownloadOptionsPanel({
   // the warning below has to clear that warning without the user having to
   // touch another control first.
   const ffmpegAvailable = useToolsStore((state) => state.tools?.ffmpeg.available ?? false);
+  const ffmpegInstall = useToolsStore((state) => state.installing.ffmpeg);
 
   const modes = useMemo(() => availableModes(metadata), [metadata]);
   const qualities = useMemo(
@@ -262,13 +264,17 @@ export function DownloadOptionsPanel({
             <p className="text-[12.5px] leading-relaxed text-warning">
               {t('error.ffmpegMissing.message')}
             </p>
-            <button
-              type="button"
-              onClick={onInstallFfmpeg}
-              className="mt-1.5 text-[12.5px] font-semibold text-warning underline underline-offset-2"
-            >
-              {t('setup.installNow')}
-            </button>
+            {ffmpegInstall ? (
+              <InstallProgress progress={ffmpegInstall} className="mt-2" />
+            ) : (
+              <button
+                type="button"
+                onClick={onInstallFfmpeg}
+                className="mt-1.5 text-[12.5px] font-semibold text-warning underline underline-offset-2"
+              >
+                {t('setup.installNow')}
+              </button>
+            )}
           </div>
         </div>
       )}

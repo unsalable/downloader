@@ -258,6 +258,10 @@ export const en = {
   'settings.toolReset': 'Use managed copy',
   'settings.toolMissing': 'Not installed',
   'settings.toolInstalling': 'Installing...',
+  'settings.toolStageDownloading': 'Downloading...',
+  'settings.toolStageExtracting': 'Extracting...',
+  'settings.toolStageVerifying': 'Checking that it runs...',
+  'settings.toolInstallFailed': 'Installation failed',
   'settings.toolSourceManaged': 'Managed by the app',
   'settings.toolSourceSystem': 'Found on PATH',
   'settings.toolSourceCustom': 'Custom path',
@@ -308,6 +312,7 @@ export const en = {
   'setup.body':
     'Universal Downloader uses two open-source tools to read media details and merge streams. They are downloaded once and run entirely on your machine.',
   'setup.engineRequired': 'The download engine is not installed yet.',
+  'setup.checking': 'Checking the download engine...',
   'setup.installNow': 'Install now',
   'setup.ffmpegOptional':
     'FFmpeg is optional, but without it separate video and audio streams cannot be merged.',
