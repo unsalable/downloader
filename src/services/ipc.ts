@@ -3,6 +3,7 @@ import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 
 import type {
   AppErrorInfo,
+  AppUpdate,
   CacheStats,
   ConvertFormatInfo,
   ConvertJob,
@@ -19,6 +20,7 @@ import type {
   Settings,
   ToolInstallProgress,
   ToolsState,
+  UpdateProgress,
 } from '@/types';
 
 /**
@@ -157,6 +159,12 @@ export const platformSetSystemBars = (dark: boolean) =>
   invoke<void>('platform_set_system_bars', { dark });
 export const platformTakeSharedText = () => invoke<string | null>('platform_take_shared_text');
 
+/** A newer build of the phone app, or null when this one is current. */
+export const checkAppUpdate = () => invoke<AppUpdate | null>('check_app_update');
+/** Resolves once the system installer has been opened on the downloaded APK. */
+export const installAppUpdate = (update: AppUpdate) =>
+  invoke<void>('install_app_update', { update });
+
 /** Dispatched by the Android side when a link is shared into a running app. */
 export const SHARED_TEXT_EVENT = 'ud-shared-text';
 
@@ -170,6 +178,7 @@ export const EVENTS = {
   settingsChanged: 'settings://changed',
   convertChanged: 'convert://changed',
   convertProgress: 'convert://progress',
+  updateProgress: 'update://progress',
   navigate: 'navigate',
 } as const;
 
@@ -221,6 +230,12 @@ export function onConvertProgress(
   handler: (event: ConvertProgressEvent) => void,
 ): Promise<UnlistenFn> {
   return listen<ConvertProgressEvent>(EVENTS.convertProgress, (event) => handler(event.payload));
+}
+
+export function onUpdateProgress(
+  handler: (progress: UpdateProgress) => void,
+): Promise<UnlistenFn> {
+  return listen<UpdateProgress>(EVENTS.updateProgress, (event) => handler(event.payload));
 }
 
 export function onNavigate(handler: (route: string) => void): Promise<UnlistenFn> {

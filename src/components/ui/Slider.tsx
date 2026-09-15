@@ -1,6 +1,7 @@
 import { useId } from 'react';
 
 import { cn } from '@/lib/cn';
+import { IS_MOBILE } from '@/lib/platform';
 
 interface SliderProps {
   value: number;
@@ -45,7 +46,7 @@ export function Slider({
         ) : (
           <span aria-hidden="true" />
         )}
-        <span className="tabular text-[13px] font-medium text-fg">
+        <span className={cn('tabular font-medium text-fg', IS_MOBILE ? 'text-[14px]' : 'text-[13px]')}>
           {formatValue ? formatValue(value) : value}
         </span>
       </div>
@@ -62,9 +63,13 @@ export function Slider({
           background: `linear-gradient(to right, var(--accent) ${percent}%, var(--surface-active) ${percent}%)`,
         }}
         className={cn(
-          'h-1.5 w-full cursor-pointer appearance-none rounded-full outline-none',
+          'w-full cursor-pointer appearance-none rounded-full outline-none',
           'disabled:pointer-events-none disabled:opacity-40',
-          '[&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:size-4',
+          '[&::-webkit-slider-thumb]:appearance-none',
+          // A thumb a finger can find without covering the value it sets.
+          IS_MOBILE
+            ? 'my-2 h-2 [&::-webkit-slider-thumb]:size-6'
+            : 'h-1.5 [&::-webkit-slider-thumb]:size-4',
           '[&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-white',
           '[&::-webkit-slider-thumb]:shadow-[0_1px_4px_rgb(0_0_0/0.4)]',
           '[&::-webkit-slider-thumb]:border [&::-webkit-slider-thumb]:border-black/10',

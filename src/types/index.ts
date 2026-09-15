@@ -340,6 +340,20 @@ export interface ToolInstallProgress {
   stage: 'downloading' | 'extracting' | 'verifying' | 'done';
 }
 
+/** A newer build of the phone app, found on the release page. */
+export interface AppUpdate {
+  commit: string;
+  assetUrl: string;
+  assetSize: number;
+  digest: string | null;
+  publishedAt: string | null;
+}
+
+export interface UpdateProgress {
+  receivedBytes: number;
+  totalBytes: number | null;
+}
+
 export interface CacheStats {
   thumbnailCount: number;
   thumbnailBytes: number;

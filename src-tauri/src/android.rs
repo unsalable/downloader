@@ -26,6 +26,7 @@ use std::time::UNIX_EPOCH;
 
 use once_cell::sync::OnceCell;
 use serde::{Deserialize, Serialize};
+use tauri::plugin::mobile::PluginInvokeError;
 use tauri::plugin::{Builder, PluginHandle, TauriPlugin};
 use tauri::{AppHandle, Listener, Manager, Wry};
 use tokio::process::Command;
@@ -48,6 +49,10 @@ const FFMPEG: &str = "libffmpeg.so";
 const FFMPEG_ARCHIVE: &str = "libffmpeg.zip.so";
 const QUICKJS: &str = "libqjs.so";
 
+/// The code `BridgePlugin.installApk` rejects with when the user did not let
+/// this app install others.
+const INSTALL_PERMISSION_DENIED: &str = "INSTALL_PERMISSION_DENIED";
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct Environment {
@@ -69,7 +74,14 @@ impl Bridge {
     ) -> AppResult<T> {
         self.0
             .run_mobile_plugin(command, payload)
-            .map_err(|err| AppError::Other(format!("{command} failed: {err}")))
+            .map_err(|err| match err {
+                PluginInvokeError::InvokeRejected(ref response)
+                    if response.code.as_deref() == Some(INSTALL_PERMISSION_DENIED) =>
+                {
+                    AppError::Permission("installing apps from this source is not allowed".into())
+                }
+                _ => AppError::Other(format!("{command} failed: {err}")),
+            })
     }
 }
 
@@ -420,6 +432,22 @@ struct SystemBars {
 pub async fn set_system_bars(app: AppHandle, dark: bool) -> AppResult<()> {
     blocking(app, move |bridge| {
         bridge.call::<serde_json::Value>("setSystemBarsTheme", SystemBars { dark })
+    })
+    .await
+    .map(|_| ())
+}
+
+/// Where a downloaded update waits for the installer. It has to be inside the
+/// cache directory, which is what the file provider shares with the installer.
+pub fn update_dir() -> PathBuf {
+    environment().cache_dir.join("updates")
+}
+
+/// Hand a downloaded APK to the system installer, first sending the user to
+/// allow installs from this app if they have not yet.
+pub async fn install_apk(app: AppHandle, path: String) -> AppResult<()> {
+    blocking(app, move |bridge| {
+        bridge.call::<serde_json::Value>("installApk", PathArgs { path })
     })
     .await
     .map(|_| ())

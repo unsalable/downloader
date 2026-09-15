@@ -1,6 +1,8 @@
 import type { ReactNode } from 'react';
 
 import { cn } from '@/lib/cn';
+import { IS_MOBILE } from '@/lib/platform';
+import { Toggle, ToggleTrack } from './Toggle';
 
 interface SettingRowProps {
   title: ReactNode;
@@ -23,7 +25,8 @@ export function SettingRow({
   return (
     <div
       className={cn(
-        'flex gap-4 px-4 py-3.5',
+        'flex gap-4 px-4',
+        IS_MOBILE ? (stacked ? 'gap-3 py-4' : 'py-4') : 'py-3.5',
         // Wrapping lets a wide control drop under its label on a narrow screen;
         // the label's minimum width is what decides when that happens.
         stacked ? 'flex-col' : 'flex-wrap items-center justify-between',
@@ -31,14 +34,75 @@ export function SettingRow({
       )}
     >
       <div className={cn(stacked ? 'w-full min-w-0' : 'min-w-[min(100%,12rem)] flex-1')}>
-        <div className="text-[13.5px] font-medium text-fg">{title}</div>
-        {description && (
-          <p className="mt-0.5 text-[12.5px] leading-relaxed text-fg-muted">{description}</p>
-        )}
+        <RowText title={title} description={description} />
       </div>
       {control && <div className={cn('max-w-full shrink-0', stacked && 'w-full')}>{control}</div>}
       {children}
     </div>
+  );
+}
+
+function RowText({ title, description }: { title: ReactNode; description?: ReactNode }) {
+  return (
+    <>
+      <div className={cn('font-medium text-fg', IS_MOBILE ? 'text-[15px]' : 'text-[13.5px]')}>
+        {title}
+      </div>
+      {description && (
+        <p
+          className={cn(
+            'mt-0.5 leading-relaxed text-fg-muted',
+            IS_MOBILE ? 'text-[13px]' : 'text-[12.5px]',
+          )}
+        >
+          {description}
+        </p>
+      )}
+    </>
+  );
+}
+
+interface ToggleRowProps {
+  title: string;
+  description?: ReactNode;
+  checked: boolean;
+  onChange: (checked: boolean) => void;
+  disabled?: boolean;
+}
+
+/**
+ * A setting that is only on or off. On a phone the whole row is the switch:
+ * aiming a fingertip at a small toggle at the edge of the screen is exactly
+ * the kind of precision a touch screen should not ask for.
+ */
+export function ToggleRow({ title, description, checked, onChange, disabled = false }: ToggleRowProps) {
+  if (!IS_MOBILE) {
+    return (
+      <SettingRow
+        title={title}
+        description={description}
+        control={<Toggle checked={checked} onChange={onChange} disabled={disabled} label={title} />}
+      />
+    );
+  }
+
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      disabled={disabled}
+      onClick={() => onChange(!checked)}
+      className={cn(
+        'flex w-full items-center gap-4 px-4 py-4 text-left transition-colors duration-150',
+        'active:bg-surface-hover disabled:pointer-events-none disabled:opacity-40',
+      )}
+    >
+      <div className="min-w-0 flex-1">
+        <RowText title={title} description={description} />
+      </div>
+      <ToggleTrack checked={checked} />
+    </button>
   );
 }
 

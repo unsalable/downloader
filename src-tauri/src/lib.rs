@@ -26,6 +26,7 @@ pub mod settings;
 pub mod tools;
 #[cfg(desktop)]
 pub mod tray;
+pub mod updater;
 pub mod util;
 
 use std::sync::{Arc, Mutex};
@@ -225,6 +226,8 @@ pub fn run() {
             commands::platform_pick_media_files,
             commands::platform_set_system_bars,
             commands::platform_take_shared_text,
+            commands::check_app_update,
+            commands::install_app_update,
         ])
         .run(tauri::generate_context!())
         .expect("the application failed to start");

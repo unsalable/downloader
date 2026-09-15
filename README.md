@@ -32,6 +32,12 @@ and allow installs from that source when Android asks. Every build is signed
 with the same key, so a newer APK installs over the old one and keeps settings
 and history.
 
+The app looks for a newer release each time it is opened. When there is one it
+offers to update: the APK for the phone's processor is downloaded, checked
+against the checksum on the release page, and handed to Android's installer.
+Nothing is shown when the app is up to date or offline. **About** has a button
+to check by hand.
+
 Downloads land in `Download/Universal Downloader`, where the gallery and file
 manager find them. To download from another app, use its **Share** button and
 pick Universal Downloader.
@@ -137,8 +143,24 @@ handful of `IS_MOBILE` branches in the front end.
   converting; without it Android freezes the app as soon as it leaves the
   screen. It stops when the queue is empty.
 - **Interface.** A bottom tab bar replaces the sidebar, Back returns to Home,
-  and links shared from other apps are analysed on arrival. Desktop-only
-  settings (tray, autostart, shortcuts, tool paths, folder pickers) are hidden.
+  and links shared from other apps are analysed on arrival. Settings is a list
+  of sections, each opening on its own page, with rows and controls sized for
+  touch. Desktop-only settings (tray, autostart, shortcuts, tool paths, folder
+  pickers) are hidden. Pressing Download moves to the Downloads tab.
+- **Heat.** A phone pays for effects a desktop does not notice. Frosted glass
+  and the moving aurora are replaced by solid panels and a still backdrop,
+  progress bars move by transform, list items skip layout animation, and the
+  app no longer re-renders every screen on each progress tick. The analysis
+  the user just saw is reused when Download is pressed rather than run again
+  -- for YouTube that is a Python start and a JavaScript challenge solved
+  twice -- and yt-dlp reports progress twice a second instead of per block.
+- **Updates.** A build records the commit it came from (`build.rs`). Releases
+  are unversioned, so `src-tauri/src/updater.rs` compares that commit with the
+  one the `latest` tag points at; a difference means a newer build. The APK is
+  verified against the SHA-256 digest GitHub publishes for the asset, and
+  `BridgePlugin.installApk` asks for the install permission if needed and opens
+  the system installer. Always build release APKs from a committed tree, and
+  move the tag only after the new files are uploaded.
 
 ### Two external tools
 

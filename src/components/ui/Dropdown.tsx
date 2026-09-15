@@ -13,6 +13,7 @@ import {
 import { createPortal } from 'react-dom';
 
 import { cn } from '@/lib/cn';
+import { IS_MOBILE } from '@/lib/platform';
 
 export interface DropdownOption<T extends string> {
   value: T;
@@ -219,7 +220,8 @@ export function Dropdown<T extends string>({
         onClick={() => (open ? closeMenu() : openMenu())}
         onKeyDown={onTriggerKeyDown}
         className={cn(
-          'group flex h-10 w-full items-center gap-2 rounded-[10px] px-3 text-left',
+          'group flex w-full items-center gap-2 rounded-[10px] px-3 text-left',
+          IS_MOBILE ? 'h-12' : 'h-10',
           'border border-[var(--border)] bg-surface transition-all duration-150',
           'hover:border-[var(--border-strong)] hover:bg-surface-hover',
           'disabled:pointer-events-none disabled:opacity-45',
@@ -229,7 +231,8 @@ export function Dropdown<T extends string>({
         {selected?.icon && <span className="shrink-0 text-fg-muted">{selected.icon}</span>}
         <span
           className={cn(
-            'min-w-0 flex-1 truncate text-[13.5px] font-medium',
+            'min-w-0 flex-1 truncate font-medium',
+            IS_MOBILE ? 'text-[15px]' : 'text-[13.5px]',
             selected ? 'text-fg' : 'text-fg-faint',
           )}
         >
@@ -292,7 +295,8 @@ export function Dropdown<T extends string>({
                     }}
                     onClick={() => commit(option)}
                     className={cn(
-                      'flex cursor-pointer items-center gap-2.5 rounded-lg px-2.5 py-2 transition-colors duration-100',
+                      'flex cursor-pointer items-center gap-2.5 rounded-lg px-2.5 transition-colors duration-100',
+                      IS_MOBILE ? 'min-h-12 py-2.5' : 'py-2',
                       option.disabled && 'cursor-not-allowed opacity-40',
                       !option.disabled && activeIndex === index && 'bg-surface-hover',
                     )}
@@ -301,7 +305,8 @@ export function Dropdown<T extends string>({
                     <div className="min-w-0 flex-1">
                       <div
                         className={cn(
-                          'truncate text-[13.5px]',
+                          'truncate',
+                          IS_MOBILE ? 'text-[15px]' : 'text-[13.5px]',
                           isSelected ? 'font-semibold text-fg' : 'font-medium text-fg',
                         )}
                       >

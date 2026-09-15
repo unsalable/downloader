@@ -5,6 +5,8 @@
     <!-- Downloads keep running while the app is in the background. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <!-- Installing an update downloaded from the release page. -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <!-- Writing to Downloads needs no permission from Android 11 on. -->
     <uses-permission
         android:name="android.permission.WRITE_EXTERNAL_STORAGE"

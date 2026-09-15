@@ -531,7 +531,7 @@ fn extract_ffmpeg(archive: &Path, dest: &Path) -> AppResult<()> {
 }
 
 /// Stream `url` to `target`, removing the partial file if the transfer fails.
-async fn download_to_file(
+pub(crate) async fn download_to_file(
     url: &str,
     target: &Path,
     settings: &Settings,

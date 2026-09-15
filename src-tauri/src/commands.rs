@@ -18,7 +18,9 @@ use crate::model::{
 };
 use crate::queue::QueueManager;
 use crate::settings::Settings;
-use crate::{cache, converter, downloader, filename, logging, net, paths, providers, tools, util};
+use crate::{
+    cache, converter, downloader, filename, logging, net, paths, providers, tools, updater, util,
+};
 
 pub const EVENT_TOOL_PROGRESS: &str = "tools://progress";
 pub const EVENT_TOOLS_CHANGED: &str = "tools://changed";
@@ -179,7 +181,9 @@ pub async fn analyze_url(state: State<'_, AppState>, url: String) -> AppResult<M
     if trimmed.is_empty() {
         return Err(AppError::InvalidUrl("no address was given".into()));
     }
-    providers::analyze(trimmed, &settings).await
+    let metadata = providers::analyze(trimmed, &settings).await?;
+    providers::remember_analysis(trimmed, &settings, &metadata);
+    Ok(metadata)
 }
 
 #[tauri::command]
@@ -495,6 +499,50 @@ pub async fn platform_take_shared_text(app: AppHandle) -> AppResult<Option<Strin
     {
         let _ = app;
         Ok(None)
+    }
+}
+
+// -- app updates -----------------------------------------------------------
+
+/// Whether a newer build of the phone app has been released. Always `None` on
+/// the desktop, whose installer is updated by downloading it again.
+#[tauri::command]
+pub async fn check_app_update(state: State<'_, AppState>) -> AppResult<Option<updater::AppUpdate>> {
+    let settings = state.settings();
+    // Offline or on a stalled network this runs while the app is in use, so it
+    // is bounded rather than left to the transport timeouts.
+    tokio::time::timeout(std::time::Duration::from_secs(20), updater::check(&settings))
+        .await
+        .map_err(|_| AppError::Network("the update check timed out".into()))?
+}
+
+/// Download a newer build and open the system installer on it.
+#[tauri::command]
+pub async fn install_app_update(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    update: updater::AppUpdate,
+) -> AppResult<()> {
+    #[cfg(target_os = "android")]
+    {
+        let settings = state.settings();
+        let emitter = app.clone();
+        let on_progress = move |received: u64, total: Option<u64>, _stage: &str| {
+            let _ = emitter.emit(
+                updater::EVENT_UPDATE_PROGRESS,
+                updater::UpdateProgress {
+                    received_bytes: received,
+                    total_bytes: total,
+                },
+            );
+        };
+        let apk = updater::download(&update, &crate::android::update_dir(), &settings, &on_progress).await?;
+        crate::android::install_apk(app, apk.to_string_lossy().into_owned()).await
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = (app, state, update);
+        android_only()
     }
 }
 

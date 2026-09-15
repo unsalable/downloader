@@ -12,6 +12,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.Environment
 import android.provider.OpenableColumns
+import android.provider.Settings
 import android.webkit.MimeTypeMap
 import android.webkit.WebView
 import androidx.activity.result.ActivityResult
@@ -212,6 +213,63 @@ class BridgePlugin(private val activity: Activity) : Plugin(activity) {
         }
     }
 
+    /**
+     * Open the system installer on a downloaded update. Android asks the user
+     * to allow installs from this app the first time; that screen is shown
+     * here, and the install carries on if they allow it.
+     */
+    @Command
+    fun installApk(invoke: Invoke) {
+        val args = invoke.parseArgs(PathArgs::class.java)
+        if (!canInstallPackages()) {
+            val intent = Intent(
+                Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                Uri.parse("package:${activity.packageName}"),
+            )
+            try {
+                startActivityForResult(invoke, intent, "installPermissionReturned")
+            } catch (ex: ActivityNotFoundException) {
+                invoke.reject("installing apps is not allowed on this device", INSTALL_PERMISSION_DENIED)
+            }
+            return
+        }
+        launchInstaller(invoke, args.path)
+    }
+
+    // The result code says nothing here: the settings screen has no answer
+    // to give, so the permission itself is checked again.
+    @Suppress("UNUSED_PARAMETER")
+    @ActivityCallback
+    fun installPermissionReturned(invoke: Invoke, result: ActivityResult) {
+        if (!canInstallPackages()) {
+            invoke.reject("installing apps from this source was not allowed", INSTALL_PERMISSION_DENIED)
+            return
+        }
+        launchInstaller(invoke, invoke.parseArgs(PathArgs::class.java).path)
+    }
+
+    /** Before Android 8 the permission is part of the install screen itself. */
+    private fun canInstallPackages(): Boolean =
+        Build.VERSION.SDK_INT < Build.VERSION_CODES.O || activity.packageManager.canRequestPackageInstalls()
+
+    private fun launchInstaller(invoke: Invoke, path: String) {
+        val file = File(path)
+        if (!file.isFile) {
+            invoke.reject("the downloaded update is missing")
+            return
+        }
+        try {
+            val uri = FileProvider.getUriForFile(activity, "${activity.packageName}.fileprovider", file)
+            val intent = Intent(Intent.ACTION_VIEW)
+                .setDataAndType(uri, "application/vnd.android.package-archive")
+                .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+            activity.startActivity(intent)
+            invoke.resolve()
+        } catch (ex: Exception) {
+            invoke.reject(ex.message ?: "the installer could not be opened")
+        }
+    }
+
     @Command
     fun pickMediaFiles(invoke: Invoke) {
         val intent = Intent(Intent.ACTION_OPEN_DOCUMENT)
@@ -273,7 +331,7 @@ class BridgePlugin(private val activity: Activity) : Plugin(activity) {
         resolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
             if (cursor.moveToFirst() && !cursor.isNull(0)) name = cursor.getString(0)
         }
-        name = name.replace('/', '_').replace(' ', '_').ifBlank { "media" }
+        name = name.replace('/', '_').replace('\u0000', '_').ifBlank { "media" }
 
         var target = File(dir, name)
         var attempt = 2
@@ -292,5 +350,8 @@ class BridgePlugin(private val activity: Activity) : Plugin(activity) {
     companion object {
         private const val REQUEST_STORAGE = 7301
         private const val REQUEST_NOTIFICATIONS = 7302
+
+        /** Matched by `android.rs`, which reports it as a permission error. */
+        private const val INSTALL_PERMISSION_DENIED = "INSTALL_PERMISSION_DENIED"
     }
 }

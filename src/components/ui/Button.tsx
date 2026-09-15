@@ -1,6 +1,7 @@
 import { forwardRef, type ButtonHTMLAttributes, type ReactNode } from 'react';
 
 import { cn } from '@/lib/cn';
+import { IS_MOBILE } from '@/lib/platform';
 import { Spinner } from './Spinner';
 
 export type ButtonVariant = 'primary' | 'secondary' | 'ghost' | 'danger' | 'cta';
@@ -15,11 +16,18 @@ export interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   fullWidth?: boolean;
 }
 
-const SIZES: Record<ButtonSize, string> = {
-  sm: 'h-8 px-3 text-[12.5px] gap-1.5 rounded-md',
-  md: 'h-9.5 px-4 text-[13px] gap-2 rounded-[7px]',
-  lg: 'h-12 px-6 text-[14.5px] gap-2.5 rounded-[9px]',
-};
+const SIZES: Record<ButtonSize, string> = IS_MOBILE
+  ? // Sized for a fingertip rather than a pointer.
+    {
+      sm: 'h-10 px-3.5 text-[13.5px] gap-1.5 rounded-lg',
+      md: 'h-11 px-4 text-[14px] gap-2 rounded-[9px]',
+      lg: 'h-13 px-6 text-[15px] gap-2.5 rounded-[10px]',
+    }
+  : {
+      sm: 'h-8 px-3 text-[12.5px] gap-1.5 rounded-md',
+      md: 'h-9.5 px-4 text-[13px] gap-2 rounded-[7px]',
+      lg: 'h-12 px-6 text-[14.5px] gap-2.5 rounded-[9px]',
+    };
 
 const VARIANTS: Record<ButtonVariant, string> = {
   primary: 'bg-accent text-accent-fg hover:bg-accent-hover active:brightness-95',

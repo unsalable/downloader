@@ -202,6 +202,11 @@ export const en = {
   'settings.advanced': 'Advanced',
   'settings.hotkeys': 'Shortcuts',
   'settings.about': 'About',
+  'settings.generalSummary': 'Clipboard, notifications',
+  'settings.downloadsSummary': 'Folder, quality, simultaneous downloads',
+  'settings.appearanceSummary': 'Theme, language, motion',
+  'settings.performanceSummary': 'Low resource mode, cache',
+  'settings.advancedSummary': 'Download engine, network, reset',
 
   'settings.startWithWindows': 'Start with Windows',
   'settings.startWithWindowsHint': 'Launch minimized to the tray when you sign in.',
@@ -341,6 +346,26 @@ export const en = {
   'common.enabled': 'On',
   'common.seconds': '{n}s',
   'common.copy': 'Copy',
+  'common.back': 'Back',
+
+  'update.title': 'An update is available',
+  'update.body':
+    'A newer version of Universal Downloader has been released. Your downloads, history and settings stay as they are.',
+  'update.size': 'Size',
+  'update.later': 'Later',
+  'update.install': 'Update',
+  'update.retry': 'Try again',
+  'update.downloading': 'Downloading the update...',
+  'update.preparing': 'Opening the installer...',
+  'update.installerOpened': "The installer has opened. If it didn't appear, press Update again.",
+  'update.failed': 'The update could not be downloaded. Check your connection and try again.',
+  'update.permission':
+    'Android needs your permission to install the update. Allow "Install unknown apps" for Universal Downloader, then press Try again.',
+  'update.check': 'Check for updates',
+  'update.checkHint': 'The app also checks each time it opens.',
+  'update.checkNow': 'Check',
+  'update.upToDate': 'You have the latest version',
+  'update.checkFailed': 'Could not check for updates',
 
   'error.invalidUrl.title': "That link doesn't look right",
   'error.invalidUrl.message': 'Check the address and try again.',

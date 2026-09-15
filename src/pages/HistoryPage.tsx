@@ -102,7 +102,8 @@ export function HistoryPage({ onGoHome }: { onGoHome: () => void }) {
     <div className="mx-auto w-full max-w-[820px] px-6 pb-12">
       <div
         className={cn(
-          'sticky top-0 z-10 -mx-6 flex items-center bg-bg/85 px-6 py-3 backdrop-blur-xl',
+          'sticky top-0 z-10 -mx-6 flex items-center px-6 py-3',
+          IS_MOBILE ? 'bg-bg' : 'bg-bg/85 backdrop-blur-xl',
           // On a phone the search field takes the first line to itself.
           IS_MOBILE ? 'flex-wrap gap-x-3 gap-y-1.5' : 'gap-3',
         )}

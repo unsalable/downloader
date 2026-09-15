@@ -3,7 +3,11 @@ import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 
 import { App } from './App';
+import { IS_MOBILE } from './lib/platform';
 import './styles/globals.css';
+
+// The stylesheet trims effects a phone pays too much for; see globals.css.
+if (IS_MOBILE) document.documentElement.dataset.mobile = 'true';
 
 const container = document.getElementById('root');
 if (!container) throw new Error('the root element is missing from index.html');

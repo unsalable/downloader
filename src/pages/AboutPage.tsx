@@ -1,14 +1,18 @@
 import { motion } from 'motion/react';
 import { openUrl } from '@tauri-apps/plugin-opener';
-import { ExternalLink, ShieldCheck } from 'lucide-react';
+import { ExternalLink, RefreshCw, ShieldCheck } from 'lucide-react';
 import { useEffect, useState } from 'react';
 
 import { Badge } from '@/components/ui/Badge';
+import { Button } from '@/components/ui/Button';
 import { Logo } from '@/components/layout/Logo';
-import { SettingGroup } from '@/components/ui/SettingRow';
+import { SettingGroup, SettingRow } from '@/components/ui/SettingRow';
 import { useTranslation } from '@/i18n';
 import { cn } from '@/lib/cn';
+import { IS_MOBILE } from '@/lib/platform';
 import * as ipc from '@/services/ipc';
+import { useToastStore } from '@/stores/useToastStore';
+import { useUpdateStore } from '@/stores/useUpdateStore';
 import type { DiagnosticsSnapshot, LicenseEntry } from '@/types';
 
 const KIND_LABEL: Record<LicenseEntry['kind'], string> = {
@@ -55,6 +59,8 @@ export function AboutPage() {
           {t('about.description')}
         </p>
       </motion.header>
+
+      {IS_MOBILE && <UpdateCheck />}
 
       <section
         className={cn(
@@ -161,6 +167,54 @@ function LicenseRow({ entry }: { entry: LicenseEntry }) {
       >
         <ExternalLink size={13} />
       </button>
+    </div>
+  );
+}
+
+/** Ask for an update now, rather than waiting for the app to be opened again. */
+function UpdateCheck() {
+  const { t } = useTranslation();
+  const check = useUpdateStore((state) => state.check);
+  const pushToast = useToastStore((state) => state.push);
+  const [checking, setChecking] = useState(false);
+
+  const run = async () => {
+    setChecking(true);
+    try {
+      // A build that is found opens the update prompt by itself.
+      const found = await check(true);
+      if (!found) pushToast({ tone: 'success', title: t('update.upToDate') });
+    } catch (caught) {
+      pushToast({
+        tone: 'error',
+        title: t('update.checkFailed'),
+        body: ipc.toAppError(caught).message,
+        durationMs: 7000,
+      });
+    } finally {
+      setChecking(false);
+    }
+  };
+
+  return (
+    <div className="mb-6">
+      <SettingGroup>
+        <SettingRow
+          title={t('update.check')}
+          description={t('update.checkHint')}
+          control={
+            <Button
+              size="sm"
+              variant="secondary"
+              loading={checking}
+              icon={<RefreshCw size={14} />}
+              onClick={() => void run()}
+            >
+              {t('update.checkNow')}
+            </Button>
+          }
+        />
+      </SettingGroup>
     </div>
   );
 }

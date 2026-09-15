@@ -49,6 +49,13 @@ import type { ConvertFormatInfo, ConvertJob, ConvertQuality, Settings } from '@/
 
 const DEFAULT_TARGET = 'mp4';
 
+/** Stable across renders so the memoised cards only re-render when their job does. */
+const JOB_HANDLERS: JobHandlers = {
+  onCancel: (id) => void ipc.cancelConversion(id),
+  onRetry: (id) => void ipc.retryConversion(id),
+  onRemove: (id) => void ipc.removeConversion(id),
+};
+
 export function ConvertPage({ settings }: { settings: Settings }) {
   const { t } = useTranslation();
 
@@ -187,12 +194,6 @@ export function ConvertPage({ settings }: { settings: Settings }) {
     target,
     targetKind,
   ]);
-
-  const handlers = {
-    onCancel: (id: string) => void ipc.cancelConversion(id),
-    onRetry: (id: string) => void ipc.retryConversion(id),
-    onRemove: (id: string) => void ipc.removeConversion(id),
-  };
 
   return (
     <div className="mx-auto w-full max-w-[760px] px-6 pb-12 pt-2">
@@ -420,11 +421,11 @@ export function ConvertPage({ settings }: { settings: Settings }) {
 
       {jobs.length > 0 && (
         <div className="mt-7 flex flex-col gap-6">
-          <JobGroup title={t('convert.inProgress')} jobs={active} handlers={handlers} />
+          <JobGroup title={t('convert.inProgress')} jobs={active} handlers={JOB_HANDLERS} />
           <JobGroup
             title={t('downloads.finished')}
             jobs={finished}
-            handlers={handlers}
+            handlers={JOB_HANDLERS}
             action={
               finished.length > 0 && (
                 <Button
@@ -518,7 +519,7 @@ function JobGroup({
   if (jobs.length === 0) return null;
 
   return (
-    <motion.section layout="position">
+    <motion.section layout={IS_MOBILE ? false : 'position'}>
       <div className="mb-2 flex items-center px-1">
         <h2 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-fg-faint">
           {title}

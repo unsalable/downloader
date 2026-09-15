@@ -46,9 +46,15 @@ export function Progress({ value, tone = 'accent', size = 'md', className, label
           )}
         />
       ) : (
+        // Scaled rather than resized: a width transition lays the page out
+        // again on every frame it runs, while a transform stays on the
+        // compositor. With several downloads ticking that difference is felt.
         <div
-          className={cn('h-full rounded-[2px] transition-[width] duration-300 ease-linear', TONES[tone])}
-          style={{ width: `${Math.min(100, Math.max(0, value))}%` }}
+          className={cn(
+            'h-full w-full origin-left rounded-[2px] transition-transform duration-300 ease-linear',
+            TONES[tone],
+          )}
+          style={{ transform: `scaleX(${Math.min(100, Math.max(0, value)) / 100})` }}
         />
       )}
     </div>

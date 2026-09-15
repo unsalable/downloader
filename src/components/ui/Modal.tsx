@@ -94,7 +94,8 @@ export function Modal({
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.975, y: 6, transition: { duration: 0.13 } }}
             transition={{ duration: 0.24, ease: [0.22, 1, 0.36, 1] }}
-            style={{ width }}
+            // Never wider than the screen: a phone is narrower than most dialogs.
+            style={{ width, maxWidth: '100%' }}
             className={cn(
               'relative max-h-[85vh] overflow-hidden rounded-[var(--radius-panel)]',
               'border border-[var(--border-strong)] bg-surface shadow-floating edge-light',

@@ -190,6 +190,14 @@ export function HomePage({
       const count = asGallery ? (await ipc.enqueueGallery(request)).length : 1;
       if (!asGallery) await ipc.enqueueDownload(request);
 
+      // On a phone the download itself is the next thing to look at, and the
+      // screen that shows it is a tab away; going there says "added" on its own.
+      if (IS_MOBILE) {
+        reset();
+        onGoToDownloads();
+        return;
+      }
+
       pushToast({
         tone: 'success',
         title: t('action.addedToQueue'),

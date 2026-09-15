@@ -1,6 +1,7 @@
 import { AnimatePresence, motion } from 'motion/react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
+import { UpdatePrompt } from '@/components/UpdatePrompt';
 import { WelcomeScreen } from '@/components/WelcomeScreen';
 import { Background } from '@/components/layout/Background';
 import { BottomNav } from '@/components/layout/BottomNav';
@@ -18,17 +19,31 @@ import { ConvertPage } from '@/pages/ConvertPage';
 import { DownloadsPage } from '@/pages/DownloadsPage';
 import { HistoryPage } from '@/pages/HistoryPage';
 import { HomePage } from '@/pages/HomePage';
-import { SettingsPage } from '@/pages/SettingsPage';
+import { SettingsPage, type SettingsSection } from '@/pages/SettingsPage';
 import * as ipc from '@/services/ipc';
 import { useAnalysisStore } from '@/stores/useAnalysisStore';
 import { selectConvertInFlight, useConvertStore } from '@/stores/useConvertStore';
-import { selectActive, selectInFlightCount, useQueueStore } from '@/stores/useQueueStore';
+import { selectInFlightCount, useQueueStore } from '@/stores/useQueueStore';
 import { useSettingsStore } from '@/stores/useSettingsStore';
 import { useToastStore } from '@/stores/useToastStore';
 import { useToolsStore } from '@/stores/useToolsStore';
-import type { ThemePreference, ToolsState } from '@/types';
+import type { ConvertJob, DownloadTask, ThemePreference, ToolsState } from '@/types';
 
 const SIDEBAR_COLLAPSED_KEY = 'ud.sidebar.collapsed';
+
+interface NavState {
+  route: Route;
+  /** A section of Settings opened on its own page, which only a phone does. */
+  section: SettingsSection | null;
+}
+
+const HOME: NavState = { route: 'home', section: null };
+
+/** History entries above Home: one for a screen, a second for a settings section. */
+function depthOf(state: NavState): number {
+  if (state.route === 'home') return 0;
+  return state.section ? 2 : 1;
+}
 
 export function App() {
   const { t } = useTranslation();
@@ -39,12 +54,10 @@ export function App() {
   const updateSettings = useSettingsStore((state) => state.update);
   const applyExternalSettings = useSettingsStore((state) => state.applyExternal);
 
-  const tasks = useQueueStore((state) => state.tasks);
   const loadQueue = useQueueStore((state) => state.load);
   const replaceQueue = useQueueStore((state) => state.replace);
   const applyProgress = useQueueStore((state) => state.applyProgress);
 
-  const conversions = useConvertStore((state) => state.jobs);
   const loadConversions = useConvertStore((state) => state.load);
   const replaceConversions = useConvertStore((state) => state.replace);
   const applyConvertProgress = useConvertStore((state) => state.applyProgress);
@@ -58,35 +71,68 @@ export function App() {
   const setUrl = useAnalysisStore((state) => state.setUrl);
   const analyze = useAnalysisStore((state) => state.analyze);
 
-  const [route, setRouteState] = useState<Route>('home');
+  const [nav, setNavState] = useState<NavState>(HOME);
+  const route = nav.route;
   const [collapsed, setCollapsed] = useState(
     () => localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === '1',
   );
   const urlInputRef = useRef<UrlInputHandle | null>(null);
 
   // On a phone the system Back gesture has to step back through the app, not
-  // leave it: the webview goes back in its history when it can, so each screen
-  // other than Home is given one entry. Back from any screen returns to Home,
-  // and Back from Home leaves the app.
-  const routeRef = useRef<Route>('home');
-  const setRoute = useCallback((next: Route) => {
-    const current = routeRef.current;
-    if (next === current) return;
-    routeRef.current = next;
-    if (IS_MOBILE) {
-      if (current === 'home') window.history.pushState({ route: next }, '');
-      else if (next === 'home') window.history.back();
-      else window.history.replaceState({ route: next }, '');
+  // leave it: the webview goes back in its history when it can, so each level
+  // below Home is given one entry -- a screen, and inside Settings the section
+  // opened from its list. Back from anywhere else returns to Home, and Back
+  // from Home leaves the app.
+  //
+  // Moving up a level has to go back through history as well, or a later Back
+  // would revisit the entries left behind. The entry that lands may belong to
+  // another screen, so it is rewritten to the one that was asked for.
+  const navRef = useRef<NavState>(HOME);
+  const pendingRef = useRef<NavState | null>(null);
+
+  const navigate = useCallback((requested: NavState) => {
+    const next: NavState = {
+      route: requested.route,
+      section: requested.route === 'settings' ? requested.section : null,
+    };
+    const current = navRef.current;
+    if (next.route === current.route && next.section === current.section) return;
+    navRef.current = next;
+    setNavState(next);
+    if (!IS_MOBILE) return;
+
+    const from = depthOf(current);
+    const to = depthOf(next);
+    if (to > from) {
+      if (to - from === 2) window.history.pushState({ route: next.route, section: null }, '');
+      window.history.pushState(next, '');
+    } else if (to === from) {
+      window.history.replaceState(next, '');
+    } else {
+      pendingRef.current = to === 0 ? null : next;
+      window.history.go(to - from);
     }
-    setRouteState(next);
   }, []);
+
+  const setRoute = useCallback((next: Route) => navigate({ route: next, section: null }), [navigate]);
+  const setSettingsSection = useCallback(
+    (section: SettingsSection | null) => navigate({ route: 'settings', section }),
+    [navigate],
+  );
 
   useEffect(() => {
     if (!IS_MOBILE) return;
     const onPop = (event: PopStateEvent) => {
-      const target = (event.state as { route?: Route } | null)?.route ?? 'home';
-      routeRef.current = target;
-      setRouteState(target);
+      const pending = pendingRef.current;
+      if (pending) {
+        pendingRef.current = null;
+        window.history.replaceState(pending, '');
+        return;
+      }
+      const state = event.state as Partial<NavState> | null;
+      const target: NavState = { route: state?.route ?? 'home', section: state?.section ?? null };
+      navRef.current = target;
+      setNavState(target);
     };
     window.addEventListener('popstate', onPop);
     return () => window.removeEventListener('popstate', onPop);
@@ -135,38 +181,49 @@ export function App() {
 
   // Surface finished and failed downloads even when the user is on another
   // screen. Only transitions are announced, never the steady state.
+  //
+  // Read through a store subscription rather than a hook: progress replaces the
+  // task list several times a second, and subscribing here would re-render the
+  // whole app -- every screen under it -- on each of those ticks.
   const previousStatuses = useRef(new Map<string, string>());
   useEffect(() => {
     const seen = previousStatuses.current;
 
-    for (const task of tasks) {
-      const before = seen.get(task.id);
-      seen.set(task.id, task.status);
-      if (before === undefined || before === task.status) continue;
+    const announce = (tasks: DownloadTask[]) => {
+      for (const task of tasks) {
+        const before = seen.get(task.id);
+        seen.set(task.id, task.status);
+        if (before === undefined || before === task.status) continue;
 
-      if (task.status === 'completed') {
-        pushToast({
-          tone: 'success',
-          title: t('toast.downloadComplete'),
-          body: task.title,
-          dedupeKey: `done-${task.id}`,
-        });
-      } else if (task.status === 'failed' && task.error) {
-        pushToast({
-          tone: 'error',
-          title: t('toast.downloadFailed'),
-          body: task.error.title,
-          durationMs: 7000,
-          dedupeKey: `fail-${task.id}`,
-          actions: [{ label: t('nav.downloads'), onClick: () => setRoute('downloads') }],
-        });
+        if (task.status === 'completed') {
+          pushToast({
+            tone: 'success',
+            title: t('toast.downloadComplete'),
+            body: task.title,
+            dedupeKey: `done-${task.id}`,
+          });
+        } else if (task.status === 'failed' && task.error) {
+          pushToast({
+            tone: 'error',
+            title: t('toast.downloadFailed'),
+            body: task.error.title,
+            durationMs: 7000,
+            dedupeKey: `fail-${task.id}`,
+            actions: [{ label: t('nav.downloads'), onClick: () => setRoute('downloads') }],
+          });
+        }
       }
-    }
 
-    // Forget ids that have left the queue so the map cannot grow unbounded.
-    const live = new Set(tasks.map((task) => task.id));
-    for (const id of seen.keys()) if (!live.has(id)) seen.delete(id);
-  }, [tasks, pushToast, t, setRoute]);
+      // Forget ids that have left the queue so the map cannot grow unbounded.
+      const live = new Set(tasks.map((task) => task.id));
+      for (const id of seen.keys()) if (!live.has(id)) seen.delete(id);
+    };
+
+    announce(useQueueStore.getState().tasks);
+    return useQueueStore.subscribe((state, previous) => {
+      if (state.tasks !== previous.tasks) announce(state.tasks);
+    });
+  }, [pushToast, t, setRoute]);
 
   // Conversions get the same treatment: only transitions are announced, and
   // only once, however many times progress arrives afterwards.
@@ -174,33 +231,40 @@ export function App() {
   useEffect(() => {
     const seen = previousConvertStatuses.current;
 
-    for (const job of conversions) {
-      const before = seen.get(job.id);
-      seen.set(job.id, job.status);
-      if (before === undefined || before === job.status) continue;
+    const announce = (conversions: ConvertJob[]) => {
+      for (const job of conversions) {
+        const before = seen.get(job.id);
+        seen.set(job.id, job.status);
+        if (before === undefined || before === job.status) continue;
 
-      if (job.status === 'completed') {
-        pushToast({
-          tone: 'success',
-          title: t('convert.done'),
-          body: job.inputName,
-          dedupeKey: `convert-done-${job.id}`,
-        });
-      } else if (job.status === 'failed' && job.error) {
-        pushToast({
-          tone: 'error',
-          title: t('convert.failed'),
-          body: job.inputName,
-          durationMs: 7000,
-          dedupeKey: `convert-fail-${job.id}`,
-          actions: [{ label: t('nav.convert'), onClick: () => setRoute('convert') }],
-        });
+        if (job.status === 'completed') {
+          pushToast({
+            tone: 'success',
+            title: t('convert.done'),
+            body: job.inputName,
+            dedupeKey: `convert-done-${job.id}`,
+          });
+        } else if (job.status === 'failed' && job.error) {
+          pushToast({
+            tone: 'error',
+            title: t('convert.failed'),
+            body: job.inputName,
+            durationMs: 7000,
+            dedupeKey: `convert-fail-${job.id}`,
+            actions: [{ label: t('nav.convert'), onClick: () => setRoute('convert') }],
+          });
+        }
       }
-    }
 
-    const live = new Set(conversions.map((job) => job.id));
-    for (const id of seen.keys()) if (!live.has(id)) seen.delete(id);
-  }, [conversions, pushToast, t, setRoute]);
+      const live = new Set(conversions.map((job) => job.id));
+      for (const id of seen.keys()) if (!live.has(id)) seen.delete(id);
+    };
+
+    announce(useConvertStore.getState().jobs);
+    return useConvertStore.subscribe((state, previous) => {
+      if (state.jobs !== previous.jobs) announce(state.jobs);
+    });
+  }, [pushToast, t, setRoute]);
 
   // A download that failed only because a tool was missing is retried as soon
   // as that tool appears. The error told the user to install it; having done
@@ -293,9 +357,9 @@ export function App() {
 
   useHotkeys(settings?.hotkeys ?? ({} as never), hotkeyHandlers);
 
-  const activeTasks = useMemo(() => selectActive(tasks), [tasks]);
-  const inFlight = useMemo(() => selectInFlightCount(tasks), [tasks]);
-  const converting = useMemo(() => selectConvertInFlight(conversions), [conversions]);
+  // Counts, not lists: a count that has not changed does not re-render.
+  const inFlight = useQueueStore((state) => selectInFlightCount(state.tasks));
+  const converting = useConvertStore((state) => selectConvertInFlight(state.jobs));
 
   const toggleCollapsed = () => {
     setCollapsed((value) => {
@@ -319,11 +383,12 @@ export function App() {
     );
   }
 
+  // A phone's backdrop does not move (see Background), so only low resource
+  // mode turns it off there.
   const backgroundActive =
     route === 'home' &&
-    settings.showAnimatedBackground &&
-    !settings.reduceMotion &&
-    !settings.lowResourceMode;
+    !settings.lowResourceMode &&
+    (IS_MOBILE || (settings.showAnimatedBackground && !settings.reduceMotion));
 
   return (
     <div className="flex h-full overflow-hidden bg-bg">
@@ -348,7 +413,6 @@ export function App() {
           onOpenSettings={() => setRoute('settings')}
           onOpenAbout={() => setRoute('about')}
           onOpenDownloads={() => setRoute('downloads')}
-          activeTasks={activeTasks}
         />
 
         <main className="relative z-10 min-h-0 flex-1 overflow-y-auto">
@@ -372,7 +436,13 @@ export function App() {
               {route === 'downloads' && <DownloadsPage onGoHome={() => setRoute('home')} />}
               {route === 'convert' && <ConvertPage settings={settings} />}
               {route === 'history' && <HistoryPage onGoHome={() => setRoute('home')} />}
-              {route === 'settings' && <SettingsPage settings={settings} />}
+              {route === 'settings' && (
+                <SettingsPage
+                  settings={settings}
+                  section={nav.section}
+                  onSectionChange={setSettingsSection}
+                />
+              )}
               {route === 'about' && <AboutPage />}
             </motion.div>
           </AnimatePresence>
@@ -388,6 +458,7 @@ export function App() {
         )}
       </div>
 
+      {IS_MOBILE && <UpdatePrompt />}
       <Toaster />
     </div>
   );

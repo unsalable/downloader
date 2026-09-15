@@ -48,6 +48,16 @@ pub async fn run(
     args.push("--progress".into());
     args.push("--progress-template".into());
     args.push(PROGRESS_TEMPLATE.into());
+    // The engine otherwise prints a line for every block it reads, many times
+    // a second on a fast link, and on a phone formatting those in Python and
+    // parsing them here is real work for lines that are mostly thrown away.
+    // The yt-dlp this app installs has the option; a copy chosen by hand on
+    // the desktop might not.
+    #[cfg(target_os = "android")]
+    {
+        args.push("--progress-delta".into());
+        args.push("0.5".into());
+    }
     args.push("--no-playlist".into());
     // Resume whatever a previous run left behind.
     args.push("--continue".into());

@@ -1,6 +1,7 @@
 import { forwardRef, type ButtonHTMLAttributes, type ReactNode } from 'react';
 
 import { cn } from '@/lib/cn';
+import { IS_MOBILE } from '@/lib/platform';
 import { Tooltip } from './Tooltip';
 
 export interface IconButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
@@ -35,7 +36,8 @@ export const IconButton = forwardRef<HTMLButtonElement, IconButtonProps>(functio
       className={cn(
         'inline-flex shrink-0 items-center justify-center rounded-md transition-all duration-150',
         'active:scale-[0.93] disabled:pointer-events-none disabled:opacity-40',
-        size === 'sm' ? 'size-7' : 'size-8.5',
+        // A fingertip needs a larger target than a pointer does.
+        size === 'sm' ? (IS_MOBILE ? 'size-9' : 'size-7') : IS_MOBILE ? 'size-10' : 'size-8.5',
         tone === 'default' && 'text-fg-muted hover:bg-surface-hover hover:text-fg',
         tone === 'accent' && 'text-accent hover:bg-accent-soft',
         tone === 'danger' && 'text-fg-muted hover:bg-error-soft hover:text-error',

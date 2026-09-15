@@ -2,6 +2,7 @@ import { motion } from 'motion/react';
 import { useId, type ReactNode } from 'react';
 
 import { cn } from '@/lib/cn';
+import { IS_MOBILE } from '@/lib/platform';
 
 export interface SegmentedOption<T extends string> {
   value: T;
@@ -62,7 +63,11 @@ export function Segmented<T extends string>({
               className={cn(
                 'relative flex flex-1 items-center justify-center gap-1.5 rounded-[7px] font-medium',
                 'transition-colors duration-150 disabled:pointer-events-none disabled:opacity-40',
-                size === 'sm' ? 'h-7 px-2 text-[12.5px]' : 'h-8 px-3 text-[13px]',
+                IS_MOBILE
+                  ? 'h-10 px-2 text-[14px]'
+                  : size === 'sm'
+                    ? 'h-7 px-2 text-[12.5px]'
+                    : 'h-8 px-3 text-[13px]',
                 selected ? 'text-fg' : 'text-fg-muted hover:text-fg',
               )}
             >

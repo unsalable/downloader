@@ -132,8 +132,34 @@ pub async fn execute(
         ..Default::default()
     });
 
-    // Fresh metadata means fresh (unexpired) stream URLs.
-    let metadata = providers::analyze(&request.url, settings).await?;
+    // Fresh metadata means fresh (unexpired) stream URLs. An analysis the user
+    // made moments ago is fresh enough, and repeating it is the costliest step.
+    let (metadata, reused) = match providers::recent_analysis(&request.url, settings) {
+        Some(metadata) => (metadata, true),
+        None => (providers::analyze(&request.url, settings).await?, false),
+    };
+    if reused {
+        log_debug!("downloader", "task {task_id}: reusing the analysis made moments ago");
+    }
+
+    let result = download_analyzed(task_id, request, settings, control, on_update, &temp_dir, metadata).await;
+    // The streams it named may be what failed; a retry has to look again. A
+    // pause is not a failure, and resuming may still use it.
+    if reused && matches!(&result, Err(err) if !matches!(err, AppError::Canceled)) {
+        providers::forget_analysis(&request.url);
+    }
+    result
+}
+
+async fn download_analyzed(
+    task_id: &str,
+    request: &DownloadRequest,
+    settings: &Settings,
+    control: Arc<TaskControl>,
+    on_update: UpdateSink<'_>,
+    temp_dir: &Path,
+    metadata: MediaMetadata,
+) -> AppResult<DownloadOutcome> {
     if control.interrupted() {
         return Err(AppError::Canceled);
     }
@@ -177,9 +203,9 @@ pub async fn execute(
     let mut aggregate = Aggregator::new(plan.estimated_bytes, plan.stage_count());
 
     let produced = if plan.needs_engine {
-        run_via_engine(task_id, &plan, &metadata, settings, &control, &mut aggregate, on_update, &temp_dir).await?
+        run_via_engine(task_id, &plan, &metadata, settings, &control, &mut aggregate, on_update, temp_dir).await?
     } else {
-        match run_natively(task_id, &plan, &metadata, settings, &control, &mut aggregate, on_update, &temp_dir).await {
+        match run_natively(task_id, &plan, &metadata, settings, &control, &mut aggregate, on_update, temp_dir).await {
             Ok(path) => path,
             // A CDN that refuses a plain ranged GET is not necessarily refusing
             // us: several hosts only serve a stream to the session that
@@ -192,7 +218,7 @@ pub async fn execute(
                 );
                 cleanup_task_files(task_id);
                 aggregate = Aggregator::new(plan.estimated_bytes, 1 + u32::from(plan.convert_to.is_some()));
-                run_via_engine(task_id, &plan, &metadata, settings, &control, &mut aggregate, on_update, &temp_dir)
+                run_via_engine(task_id, &plan, &metadata, settings, &control, &mut aggregate, on_update, temp_dir)
                     .await
                     // The engine failing here is the same refusal seen from
                     // another angle; the access error is the one that explains

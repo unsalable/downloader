@@ -14,6 +14,11 @@ pub mod direct;
 pub mod engine;
 pub mod generic;
 
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
+
+use once_cell::sync::Lazy;
+
 use crate::error::{AppError, AppResult};
 use crate::model::{MediaMetadata, PlatformId};
 use crate::settings::Settings;
@@ -139,10 +144,147 @@ pub async fn analyze(url: &str, settings: &Settings) -> AppResult<MediaMetadata>
     }))
 }
 
+// -- recent analyses -----------------------------------------------------------
+//
+// Pressing Download usually follows an analysis by seconds, and the download
+// used to start by running that same analysis again. For the engine that means
+// starting Python and, for YouTube, solving the player's JavaScript challenge
+// -- the most expensive thing the app does, and on a phone enough on its own to
+// heat it. An analysis the user has just seen is fresh enough to download from:
+// stream URLs stay valid for hours, and a download that fails with a reused
+// analysis forgets it, so the retry resolves the link anew.
+
+/// How long an analysis may be reused. Well inside the lifetime of the signed
+/// stream URLs it carries.
+const RECENT_TTL: Duration = Duration::from_secs(5 * 60);
+const RECENT_LIMIT: usize = 8;
+
+struct RecentAnalysis {
+    at: Instant,
+    /// The address typed, and the ones the source reported for itself. A
+    /// download is requested by the canonical one.
+    urls: Vec<String>,
+    /// Stream URLs can be tied to the network path that resolved them.
+    proxy: Option<String>,
+    metadata: MediaMetadata,
+}
+
+static RECENT: Lazy<Mutex<Vec<RecentAnalysis>>> = Lazy::new(|| Mutex::new(Vec::new()));
+
+/// Keep an analysis the interface is showing, for the download that follows.
+pub fn remember_analysis(input_url: &str, settings: &Settings, metadata: &MediaMetadata) {
+    let mut urls = vec![input_url.to_string()];
+    for url in [&metadata.url, &metadata.canonical_url] {
+        if !url.is_empty() && !urls.contains(url) {
+            urls.push(url.clone());
+        }
+    }
+
+    let mut recent = RECENT.lock().unwrap_or_else(|e| e.into_inner());
+    recent.retain(|entry| entry.at.elapsed() < RECENT_TTL && !entry.urls.iter().any(|u| urls.contains(u)));
+    if recent.len() >= RECENT_LIMIT {
+        recent.remove(0);
+    }
+    recent.push(RecentAnalysis {
+        at: Instant::now(),
+        urls,
+        proxy: settings.proxy_url.clone(),
+        metadata: metadata.clone(),
+    });
+}
+
+/// An analysis of `url` made moments ago under the same network settings.
+pub fn recent_analysis(url: &str, settings: &Settings) -> Option<MediaMetadata> {
+    let recent = RECENT.lock().unwrap_or_else(|e| e.into_inner());
+    recent
+        .iter()
+        .rev()
+        .find(|entry| {
+            entry.at.elapsed() < RECENT_TTL
+                && entry.proxy == settings.proxy_url
+                && entry.urls.iter().any(|known| known == url)
+        })
+        .map(|entry| entry.metadata.clone())
+}
+
+/// Drop any kept analysis of `url`, so the next attempt resolves it afresh.
+pub fn forget_analysis(url: &str) {
+    RECENT
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .retain(|entry| !entry.urls.iter().any(|known| known == url));
+}
+
 /// Expand a gallery, carousel or album into one URL per item.
 pub async fn expand_entries(url: &str, settings: &Settings) -> AppResult<Vec<String>> {
     if tools::engine_path().is_none() {
         return Ok(vec![url.to_string()]);
     }
     EngineProvider.expand_entries(url, settings).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::{MediaKind, WatermarkSupport};
+
+    // The kept analyses are process-wide, so each test uses addresses of its own.
+    fn metadata(url: &str, canonical: &str) -> MediaMetadata {
+        MediaMetadata {
+            url: url.into(),
+            canonical_url: canonical.into(),
+            platform: PlatformId::Youtube,
+            platform_label: "YouTube".into(),
+            provider_id: "engine".into(),
+            media_kind: MediaKind::Video,
+            title: "t".into(),
+            creator: None,
+            description: None,
+            thumbnail_url: None,
+            duration_sec: None,
+            view_count: None,
+            like_count: None,
+            upload_date: None,
+            is_live: false,
+            formats: Vec::new(),
+            entry_count: None,
+            watermark_support: WatermarkSupport::NotApplicable,
+            warnings: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn a_download_by_the_canonical_address_finds_the_analysis_of_the_typed_one() {
+        let settings = Settings::default();
+        let typed = "https://youtu.be/recent-a";
+        let canonical = "https://www.youtube.com/watch?v=recent-a";
+        remember_analysis(typed, &settings, &metadata(typed, canonical));
+
+        assert!(recent_analysis(canonical, &settings).is_some());
+        assert!(recent_analysis(typed, &settings).is_some());
+        assert!(recent_analysis("https://youtu.be/someone-else", &settings).is_none());
+    }
+
+    #[test]
+    fn a_forgotten_analysis_is_not_reused() {
+        let settings = Settings::default();
+        let url = "https://example.test/recent-b";
+        remember_analysis(url, &settings, &metadata(url, url));
+        forget_analysis(url);
+
+        assert!(recent_analysis(url, &settings).is_none());
+    }
+
+    #[test]
+    fn a_different_proxy_resolves_the_link_again() {
+        let settings = Settings::default();
+        let url = "https://example.test/recent-c";
+        remember_analysis(url, &settings, &metadata(url, url));
+
+        let proxied = Settings {
+            proxy_url: Some("socks5://127.0.0.1:1080".into()),
+            ..Settings::default()
+        };
+        assert!(recent_analysis(url, &proxied).is_none());
+    }
 }

@@ -1,6 +1,7 @@
 import { forwardRef, useId, type InputHTMLAttributes, type ReactNode } from 'react';
 
 import { cn } from '@/lib/cn';
+import { IS_MOBILE } from '@/lib/platform';
 
 export interface TextInputProps extends InputHTMLAttributes<HTMLInputElement> {
   label?: string;
@@ -27,7 +28,8 @@ export const TextInput = forwardRef<HTMLInputElement, TextInputProps>(function T
       )}
       <div
         className={cn(
-          'flex h-10 items-center gap-2 rounded-[10px] border bg-surface px-3',
+          'flex items-center gap-2 rounded-[10px] border bg-surface px-3',
+          IS_MOBILE ? 'h-12' : 'h-10',
           'transition-all duration-150',
           'focus-within:border-[var(--accent)] focus-within:ring-2 focus-within:ring-[var(--accent-ring)]/30',
           error ? 'border-[var(--error)]' : 'border-[var(--border)] hover:border-[var(--border-strong)]',
@@ -40,9 +42,13 @@ export const TextInput = forwardRef<HTMLInputElement, TextInputProps>(function T
           id={inputId}
           aria-invalid={error ? true : undefined}
           className={cn(
-            'min-w-0 flex-1 bg-transparent text-[13.5px] text-fg outline-none',
+            'min-w-0 flex-1 bg-transparent text-fg outline-none',
             'placeholder:text-fg-faint',
-            monospace && 'font-mono text-[12.5px]',
+            monospace
+              ? cn('font-mono', IS_MOBILE ? 'text-[13.5px]' : 'text-[12.5px]')
+              : IS_MOBILE
+                ? 'text-[15px]'
+                : 'text-[13.5px]',
           )}
           {...rest}
         />

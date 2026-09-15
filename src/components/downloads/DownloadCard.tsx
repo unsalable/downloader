@@ -96,7 +96,8 @@ export const DownloadCard = memo(function DownloadCard({
 
   return (
     <motion.article
-      layout="position"
+      // See `Group` in DownloadsPage: no per-tick layout measuring on a phone.
+      layout={IS_MOBILE ? false : 'position'}
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, scale: 0.98, transition: { duration: 0.16 } }}

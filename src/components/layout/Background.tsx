@@ -1,4 +1,5 @@
 import { AuroraBackground } from '@/components/ui/AuroraBackground';
+import { IS_MOBILE } from '@/lib/platform';
 
 /**
  * Ambient backdrop for the Home screen.
@@ -11,6 +12,27 @@ import { AuroraBackground } from '@/components/ui/AuroraBackground';
  */
 export function Background({ active }: { active: boolean }) {
   if (!active) return null;
+
+  // On a phone the moving aurora is a large blurred layer repainted every
+  // frame, which kept the GPU busy -- and the phone warm -- for as long as Home
+  // was open. The same light, standing still, costs one paint.
+  if (IS_MOBILE) {
+    return (
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute inset-x-0 top-0 h-[55%]"
+        style={{
+          opacity: 'var(--aurora-opacity)',
+          backgroundImage: `
+            radial-gradient(70% 55% at 20% 0%, var(--aurora-1), transparent 70%),
+            radial-gradient(60% 50% at 85% 5%, var(--aurora-2), transparent 70%)
+          `,
+          maskImage: 'linear-gradient(to bottom, black 35%, transparent)',
+          WebkitMaskImage: 'linear-gradient(to bottom, black 35%, transparent)',
+        }}
+      />
+    );
+  }
 
   return (
     <div aria-hidden="true" className="pointer-events-none absolute inset-0 overflow-hidden">

@@ -199,6 +199,11 @@ export const tr: Record<TranslationKey, string> = {
   'settings.advanced': 'Gelişmiş',
   'settings.hotkeys': 'Kısayollar',
   'settings.about': 'Hakkında',
+  'settings.generalSummary': 'Pano izleme, bildirimler',
+  'settings.downloadsSummary': 'Klasör, kalite, eşzamanlı indirme',
+  'settings.appearanceSummary': 'Tema, dil, hareket',
+  'settings.performanceSummary': 'Düşük kaynak modu, önbellek',
+  'settings.advancedSummary': 'İndirme motoru, ağ, sıfırlama',
 
   'settings.startWithWindows': 'Windows ile başlat',
   'settings.startWithWindowsHint': 'Oturum açıldığında tepsiye küçültülmüş olarak başlat.',
@@ -340,6 +345,26 @@ export const tr: Record<TranslationKey, string> = {
   'common.enabled': 'Açık',
   'common.seconds': '{n} sn',
   'common.copy': 'Kopyala',
+  'common.back': 'Geri',
+
+  'update.title': 'Güncelleme var',
+  'update.body':
+    "Universal Downloader'ın yeni bir sürümü yayınlandı. İndirmelerin, geçmişin ve ayarların olduğu gibi kalır.",
+  'update.size': 'Boyut',
+  'update.later': 'Sonra',
+  'update.install': 'Güncelle',
+  'update.retry': 'Tekrar dene',
+  'update.downloading': 'Güncelleme indiriliyor...',
+  'update.preparing': 'Yükleyici açılıyor...',
+  'update.installerOpened': "Yükleyici açıldı. Görünmediyse Güncelle'ye tekrar bas.",
+  'update.failed': 'Güncelleme indirilemedi. Bağlantını kontrol edip tekrar dene.',
+  'update.permission':
+    "Güncellemeyi kurmak için Android izin istiyor. Universal Downloader için \"Bilinmeyen uygulamaları yükle\" iznini ver, sonra Tekrar dene'ye bas.",
+  'update.check': 'Güncellemeleri denetle',
+  'update.checkHint': 'Uygulama her açıldığında da kendiliğinden bakar.',
+  'update.checkNow': 'Denetle',
+  'update.upToDate': 'En güncel sürümü kullanıyorsun',
+  'update.checkFailed': 'Güncellemeler denetlenemedi',
 
   'error.invalidUrl.title': 'Bu bağlantı doğru görünmüyor',
   'error.invalidUrl.message': 'Adresi kontrol edip tekrar deneyin.',

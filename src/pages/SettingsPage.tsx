@@ -2,6 +2,8 @@ import { motion } from 'motion/react';
 import { open } from '@tauri-apps/plugin-dialog';
 import { openPath } from '@tauri-apps/plugin-opener';
 import {
+  ChevronLeft,
+  ChevronRight,
   FolderOpen,
   Gauge,
   Keyboard,
@@ -19,10 +21,9 @@ import { Button } from '@/components/ui/Button';
 import { Dropdown } from '@/components/ui/Dropdown';
 import { Modal } from '@/components/ui/Modal';
 import { Segmented } from '@/components/ui/Segmented';
-import { SettingGroup, SettingRow } from '@/components/ui/SettingRow';
+import { SettingGroup, SettingRow, ToggleRow } from '@/components/ui/SettingRow';
 import { Slider } from '@/components/ui/Slider';
 import { TextInput } from '@/components/ui/TextInput';
-import { Toggle } from '@/components/ui/Toggle';
 import { Tooltip } from '@/components/ui/Tooltip';
 import { LANGUAGES, useTranslation } from '@/i18n';
 import type { TranslationKey } from '@/i18n';
@@ -43,15 +44,46 @@ import type {
   ThemePreference,
 } from '@/types';
 
-type SectionId = 'general' | 'downloads' | 'appearance' | 'performance' | 'shortcuts' | 'advanced';
+export type SettingsSection =
+  | 'general'
+  | 'downloads'
+  | 'appearance'
+  | 'performance'
+  | 'shortcuts'
+  | 'advanced';
 
-const ALL_SECTIONS: { id: SectionId; label: TranslationKey; icon: typeof Sparkles }[] = [
-  { id: 'general', label: 'settings.general', icon: Sparkles },
-  { id: 'downloads', label: 'settings.downloads', icon: FolderOpen },
-  { id: 'appearance', label: 'settings.appearance', icon: Palette },
-  { id: 'performance', label: 'settings.performance', icon: Gauge },
-  { id: 'shortcuts', label: 'settings.hotkeys', icon: Keyboard },
-  { id: 'advanced', label: 'settings.advanced', icon: SlidersHorizontal },
+const ALL_SECTIONS: {
+  id: SettingsSection;
+  label: TranslationKey;
+  summary: TranslationKey;
+  icon: typeof Sparkles;
+}[] = [
+  { id: 'general', label: 'settings.general', summary: 'settings.generalSummary', icon: Sparkles },
+  {
+    id: 'downloads',
+    label: 'settings.downloads',
+    summary: 'settings.downloadsSummary',
+    icon: FolderOpen,
+  },
+  {
+    id: 'appearance',
+    label: 'settings.appearance',
+    summary: 'settings.appearanceSummary',
+    icon: Palette,
+  },
+  {
+    id: 'performance',
+    label: 'settings.performance',
+    summary: 'settings.performanceSummary',
+    icon: Gauge,
+  },
+  { id: 'shortcuts', label: 'settings.hotkeys', summary: 'settings.hotkeys', icon: Keyboard },
+  {
+    id: 'advanced',
+    label: 'settings.advanced',
+    summary: 'settings.advancedSummary',
+    icon: SlidersHorizontal,
+  },
 ];
 
 /** Keyboard shortcuts mean nothing without a keyboard. */
@@ -68,41 +100,163 @@ const DEFAULT_HOTKEYS: Record<HotkeyAction, string> = {
   openSettings: 'Ctrl+,',
 };
 
-export function SettingsPage({ settings }: { settings: Settings }) {
+/**
+ * The heading of a section's first group. On a phone the section's own page
+ * title already says it, one line above.
+ */
+function leadTitle(title: string): string | undefined {
+  return IS_MOBILE ? undefined : title;
+}
+
+/** A control's width beside its label on the desktop; a phone gives it the row. */
+function controlWidth(desktop: string): string {
+  return IS_MOBILE ? 'w-full' : desktop;
+}
+
+interface SettingsPageProps {
+  settings: Settings;
+  /**
+   * On a phone, the section open on its own page, or null for the list of
+   * sections. Owned by the app so the Back gesture can close it.
+   */
+  section?: SettingsSection | null;
+  onSectionChange?: (section: SettingsSection | null) => void;
+}
+
+export function SettingsPage({ settings, section: openSection, onSectionChange }: SettingsPageProps) {
   const { t } = useTranslation();
   const update = useSettingsStore((state) => state.update);
   const reset = useSettingsStore((state) => state.reset);
-  const [section, setSection] = useState<SectionId>('general');
+  const [desktopSection, setDesktopSection] = useState<SettingsSection>('general');
   const [confirmReset, setConfirmReset] = useState(false);
 
-  return (
-    <div
-      className={cn(
-        'mx-auto flex w-full max-w-[880px] pb-12',
-        IS_MOBILE ? 'flex-col gap-3 px-4' : 'gap-6 px-6',
-      )}
+  const section = IS_MOBILE ? (openSection ?? null) : desktopSection;
+  const entry = SECTIONS.find((candidate) => candidate.id === section);
+
+  const content = section && (
+    <motion.div
+      key={section}
+      initial={{ opacity: 0, y: 6 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
+      className="min-w-0 flex-1 space-y-6"
     >
-      <nav
-        className={cn(
-          IS_MOBILE
-            ? // A row of tabs that scrolls sideways, pinned under the top bar.
-              'no-scrollbar sticky top-0 z-10 -mx-4 flex gap-1 overflow-x-auto bg-bg/85 px-4 py-2 backdrop-blur-xl'
-            : 'sticky top-3 h-fit w-[168px] shrink-0 space-y-0.5',
+      {section === 'general' && <GeneralSection settings={settings} update={update} />}
+      {section === 'downloads' && <DownloadsSection settings={settings} update={update} />}
+      {section === 'appearance' && <AppearanceSection settings={settings} update={update} />}
+      {section === 'performance' && <PerformanceSection settings={settings} update={update} />}
+      {section === 'shortcuts' && <ShortcutsSection settings={settings} update={update} />}
+      {section === 'advanced' && (
+        <AdvancedSection
+          settings={settings}
+          update={update}
+          onRequestReset={() => setConfirmReset(true)}
+        />
+      )}
+    </motion.div>
+  );
+
+  const resetModal = (
+    <Modal
+      open={confirmReset}
+      onClose={() => setConfirmReset(false)}
+      title={t('settings.resetConfirm')}
+      closeLabel={t('common.close')}
+      footer={
+        <>
+          <Button variant="ghost" onClick={() => setConfirmReset(false)}>
+            {t('common.cancel')}
+          </Button>
+          <Button
+            variant="danger"
+            data-autofocus
+            onClick={async () => {
+              await reset();
+              setConfirmReset(false);
+            }}
+          >
+            {t('settings.resetSettings')}
+          </Button>
+        </>
+      }
+    />
+  );
+
+  if (IS_MOBILE) {
+    // A phone shows the sections as a list of large rows, and each one opens
+    // on a page of its own -- the pattern of the phone's own Settings app. A
+    // strip of small tabs scrolling sideways was hard to hit, and easy to
+    // scroll when a tap was meant.
+    return (
+      <div className="mx-auto flex w-full max-w-[880px] flex-col px-4 pb-12">
+        {entry ? (
+          <>
+            <div className="sticky top-0 z-10 -mx-4 mb-2 flex h-14 items-center gap-1 bg-bg px-1.5">
+              <button
+                type="button"
+                onClick={() => onSectionChange?.(null)}
+                aria-label={t('common.back')}
+                className="flex size-11 shrink-0 items-center justify-center rounded-full text-fg transition-colors active:bg-surface-active"
+              >
+                <ChevronLeft size={24} />
+              </button>
+              <h2 className="truncate text-[17px] font-semibold text-fg">{t(entry.label)}</h2>
+            </div>
+            {content}
+          </>
+        ) : (
+          <motion.nav
+            initial={{ opacity: 0, y: 6 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
+            aria-label={t('settings.title')}
+            className="mt-4 overflow-hidden rounded-[var(--radius-panel)] border border-[var(--border)] bg-surface divide-y divide-[var(--border)]"
+          >
+            {SECTIONS.map((candidate) => {
+              const Icon = candidate.icon;
+              return (
+                <button
+                  key={candidate.id}
+                  type="button"
+                  onClick={() => onSectionChange?.(candidate.id)}
+                  className="flex min-h-[72px] w-full items-center gap-3.5 px-4 py-3 text-left transition-colors duration-150 active:bg-surface-active"
+                >
+                  <span className="flex size-10 shrink-0 items-center justify-center rounded-[10px] bg-accent-soft text-accent">
+                    <Icon size={19} />
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block text-[15.5px] font-medium text-fg">
+                      {t(candidate.label)}
+                    </span>
+                    <span className="mt-0.5 block truncate text-[13px] text-fg-muted">
+                      {t(candidate.summary)}
+                    </span>
+                  </span>
+                  <ChevronRight size={19} className="shrink-0 text-fg-faint" />
+                </button>
+              );
+            })}
+          </motion.nav>
         )}
-        aria-label={t('settings.title')}
-      >
-        {SECTIONS.map((entry) => {
-          const Icon = entry.icon;
-          const active = section === entry.id;
+        {resetModal}
+      </div>
+    );
+  }
+
+  return (
+    <div className="mx-auto flex w-full max-w-[880px] gap-6 px-6 pb-12">
+      <nav className="sticky top-3 h-fit w-[168px] shrink-0 space-y-0.5" aria-label={t('settings.title')}>
+        {SECTIONS.map((candidate) => {
+          const Icon = candidate.icon;
+          const active = section === candidate.id;
           return (
             <button
-              key={entry.id}
+              key={candidate.id}
               type="button"
-              onClick={() => setSection(entry.id)}
+              onClick={() => setDesktopSection(candidate.id)}
               className={cn(
-                'relative flex h-8.5 items-center gap-2.5 rounded-lg px-2.5 text-[13px] font-medium',
+                'relative flex h-8.5 w-full items-center gap-2.5 rounded-lg px-2.5 text-[13px] font-medium',
                 'transition-colors duration-150',
-                IS_MOBILE ? 'shrink-0' : 'w-full',
                 active ? 'text-fg' : 'text-fg-muted hover:bg-surface-hover hover:text-fg',
               )}
             >
@@ -114,56 +268,14 @@ export function SettingsPage({ settings }: { settings: Settings }) {
                 />
               )}
               <Icon size={15} className={cn('relative z-10', active && 'text-accent')} />
-              <span className="relative z-10">{t(entry.label)}</span>
+              <span className="relative z-10">{t(candidate.label)}</span>
             </button>
           );
         })}
       </nav>
 
-      <motion.div
-        key={section}
-        initial={{ opacity: 0, y: 6 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
-        className="min-w-0 flex-1 space-y-6"
-      >
-        {section === 'general' && <GeneralSection settings={settings} update={update} />}
-        {section === 'downloads' && <DownloadsSection settings={settings} update={update} />}
-        {section === 'appearance' && <AppearanceSection settings={settings} update={update} />}
-        {section === 'performance' && <PerformanceSection settings={settings} update={update} />}
-        {section === 'shortcuts' && <ShortcutsSection settings={settings} update={update} />}
-        {section === 'advanced' && (
-          <AdvancedSection
-            settings={settings}
-            update={update}
-            onRequestReset={() => setConfirmReset(true)}
-          />
-        )}
-      </motion.div>
-
-      <Modal
-        open={confirmReset}
-        onClose={() => setConfirmReset(false)}
-        title={t('settings.resetConfirm')}
-        closeLabel={t('common.close')}
-        footer={
-          <>
-            <Button variant="ghost" onClick={() => setConfirmReset(false)}>
-              {t('common.cancel')}
-            </Button>
-            <Button
-              variant="danger"
-              data-autofocus
-              onClick={async () => {
-                await reset();
-                setConfirmReset(false);
-              }}
-            >
-              {t('settings.resetSettings')}
-            </Button>
-          </>
-        }
-      />
+      {content}
+      {resetModal}
     </div>
   );
 }
@@ -175,90 +287,55 @@ function GeneralSection({ settings, update }: { settings: Settings; update: Upda
 
   return (
     <>
-      <SettingGroup title={t('settings.general')}>
+      <SettingGroup title={leadTitle(t('settings.general'))}>
         {!IS_MOBILE && (
           <>
-            <SettingRow
+            <ToggleRow
               title={t('settings.startWithWindows')}
               description={t('settings.startWithWindowsHint')}
-              control={
-                <Toggle
-                  checked={settings.startWithWindows}
-                  onChange={(value) => void update({ startWithWindows: value })}
-                  label={t('settings.startWithWindows')}
-                />
-              }
+              checked={settings.startWithWindows}
+              onChange={(value) => void update({ startWithWindows: value })}
             />
-            <SettingRow
+            <ToggleRow
               title={t('settings.minimizeToTray')}
               description={t('settings.minimizeToTrayHint')}
-              control={
-                <Toggle
-                  checked={settings.minimizeToTray}
-                  onChange={(value) => void update({ minimizeToTray: value })}
-                  label={t('settings.minimizeToTray')}
-                />
-              }
+              checked={settings.minimizeToTray}
+              onChange={(value) => void update({ minimizeToTray: value })}
             />
-            <SettingRow
+            <ToggleRow
               title={t('settings.closeToTray')}
               description={t('settings.closeToTrayHint')}
-              control={
-                <Toggle
-                  checked={settings.closeToTray}
-                  onChange={(value) => void update({ closeToTray: value })}
-                  label={t('settings.closeToTray')}
-                />
-              }
+              checked={settings.closeToTray}
+              onChange={(value) => void update({ closeToTray: value })}
             />
           </>
         )}
-        <SettingRow
+        <ToggleRow
           title={t('settings.clipboard')}
           description={t('settings.clipboardHint')}
-          control={
-            <Toggle
-              checked={settings.clipboardMonitoring}
-              onChange={(value) => void update({ clipboardMonitoring: value })}
-              label={t('settings.clipboard')}
-            />
-          }
+          checked={settings.clipboardMonitoring}
+          onChange={(value) => void update({ clipboardMonitoring: value })}
         />
       </SettingGroup>
 
       <SettingGroup title={t('settings.notifications')}>
-        <SettingRow
+        <ToggleRow
           title={t('settings.notifications')}
           description={t('settings.notificationsHint')}
-          control={
-            <Toggle
-              checked={settings.notificationsEnabled}
-              onChange={(value) => void update({ notificationsEnabled: value })}
-              label={t('settings.notifications')}
-            />
-          }
+          checked={settings.notificationsEnabled}
+          onChange={(value) => void update({ notificationsEnabled: value })}
         />
-        <SettingRow
+        <ToggleRow
           title={t('settings.notifyComplete')}
-          control={
-            <Toggle
-              checked={settings.notifyOnComplete}
-              disabled={!settings.notificationsEnabled}
-              onChange={(value) => void update({ notifyOnComplete: value })}
-              label={t('settings.notifyComplete')}
-            />
-          }
+          checked={settings.notifyOnComplete}
+          disabled={!settings.notificationsEnabled}
+          onChange={(value) => void update({ notifyOnComplete: value })}
         />
-        <SettingRow
+        <ToggleRow
           title={t('settings.notifyError')}
-          control={
-            <Toggle
-              checked={settings.notifyOnError}
-              disabled={!settings.notificationsEnabled}
-              onChange={(value) => void update({ notifyOnError: value })}
-              label={t('settings.notifyError')}
-            />
-          }
+          checked={settings.notifyOnError}
+          disabled={!settings.notificationsEnabled}
+          onChange={(value) => void update({ notifyOnError: value })}
         />
       </SettingGroup>
     </>
@@ -295,7 +372,7 @@ function DownloadsSection({ settings, update }: { settings: Settings; update: Up
 
   return (
     <>
-      <SettingGroup title={t('settings.downloads')}>
+      <SettingGroup title={leadTitle(t('settings.downloads'))}>
         <SettingRow
           title={t('settings.downloadDir')}
           description={
@@ -327,8 +404,9 @@ function DownloadsSection({ settings, update }: { settings: Settings; update: Up
 
         <SettingRow
           title={t('settings.defaultMode')}
+          stacked={IS_MOBILE}
           control={
-            <div className="w-[220px]">
+            <div className={controlWidth('w-[220px]')}>
               <Segmented
                 value={settings.defaultMode}
                 options={[
@@ -344,8 +422,9 @@ function DownloadsSection({ settings, update }: { settings: Settings; update: Up
 
         <SettingRow
           title={t('settings.defaultQuality')}
+          stacked={IS_MOBILE}
           control={
-            <div className="w-[200px]">
+            <div className={controlWidth('w-[200px]')}>
               <Dropdown
                 value={encodeQuality(settings.defaultQuality)}
                 options={[
@@ -366,8 +445,9 @@ function DownloadsSection({ settings, update }: { settings: Settings; update: Up
 
         <SettingRow
           title={t('settings.defaultContainer')}
+          stacked={IS_MOBILE}
           control={
-            <div className="w-[200px]">
+            <div className={controlWidth('w-[200px]')}>
               <Dropdown
                 value={settings.defaultContainer ?? ''}
                 options={[
@@ -385,8 +465,9 @@ function DownloadsSection({ settings, update }: { settings: Settings; update: Up
         <SettingRow
           title={t('settings.maxConcurrent')}
           description={t('settings.maxConcurrentHint')}
+          stacked={IS_MOBILE}
           control={
-            <div className="w-[180px]">
+            <div className={controlWidth('w-[180px]')}>
               <Slider
                 value={settings.maxConcurrentDownloads}
                 min={1}
@@ -401,8 +482,9 @@ function DownloadsSection({ settings, update }: { settings: Settings; update: Up
         <SettingRow
           title={t('settings.autoRetry')}
           description={t('settings.autoRetryHint')}
+          stacked={IS_MOBILE}
           control={
-            <div className="w-[180px]">
+            <div className={controlWidth('w-[180px]')}>
               <Slider
                 value={settings.autoRetryCount}
                 min={0}
@@ -442,11 +524,12 @@ function AppearanceSection({ settings, update }: { settings: Settings; update: U
   const { t } = useTranslation();
 
   return (
-    <SettingGroup title={t('settings.appearance')}>
+    <SettingGroup title={leadTitle(t('settings.appearance'))}>
       <SettingRow
         title={t('settings.theme')}
+        stacked={IS_MOBILE}
         control={
-          <div className="w-[260px]">
+          <div className={controlWidth('w-[260px]')}>
             <Segmented
               value={settings.theme}
               options={[
@@ -462,8 +545,9 @@ function AppearanceSection({ settings, update }: { settings: Settings; update: U
       />
       <SettingRow
         title={t('settings.language')}
+        stacked={IS_MOBILE}
         control={
-          <div className="w-[180px]">
+          <div className={controlWidth('w-[180px]')}>
             <Dropdown
               value={settings.language}
               options={LANGUAGES.map((entry) => ({ value: entry.code, label: entry.label }))}
@@ -472,28 +556,22 @@ function AppearanceSection({ settings, update }: { settings: Settings; update: U
           </div>
         }
       />
-      <SettingRow
+      <ToggleRow
         title={t('settings.reduceMotion')}
         description={t('settings.reduceMotionHint')}
-        control={
-          <Toggle
-            checked={settings.reduceMotion}
-            onChange={(value) => void update({ reduceMotion: value })}
-            label={t('settings.reduceMotion')}
-          />
-        }
+        checked={settings.reduceMotion}
+        onChange={(value) => void update({ reduceMotion: value })}
       />
-      <SettingRow
-        title={t('settings.animatedBackground')}
-        description={t('settings.animatedBackgroundHint')}
-        control={
-          <Toggle
-            checked={settings.showAnimatedBackground}
-            onChange={(value) => void update({ showAnimatedBackground: value })}
-            label={t('settings.animatedBackground')}
-          />
-        }
-      />
+      {/* A phone's backdrop stands still (see Background), so there is no
+          animation there to turn off. */}
+      {!IS_MOBILE && (
+        <ToggleRow
+          title={t('settings.animatedBackground')}
+          description={t('settings.animatedBackgroundHint')}
+          checked={settings.showAnimatedBackground}
+          onChange={(value) => void update({ showAnimatedBackground: value })}
+        />
+      )}
     </SettingGroup>
   );
 }
@@ -510,34 +588,25 @@ function PerformanceSection({ settings, update }: { settings: Settings; update: 
   useEffect(refreshStats, [refreshStats]);
 
   return (
-    <SettingGroup title={t('settings.performance')}>
-      <SettingRow
+    <SettingGroup title={leadTitle(t('settings.performance'))}>
+      <ToggleRow
         title={t('settings.lowResource')}
         description={t('settings.lowResourceHint')}
-        control={
-          <Toggle
-            checked={settings.lowResourceMode}
-            onChange={(value) => void update({ lowResourceMode: value })}
-            label={t('settings.lowResource')}
-          />
-        }
+        checked={settings.lowResourceMode}
+        onChange={(value) => void update({ lowResourceMode: value })}
       />
       {/* The GPU pass is an NVIDIA encoder, which no phone has. */}
       {!IS_MOBILE && (
-        <SettingRow
+        <ToggleRow
           title={t('settings.hardwareAcceleration')}
           description={t('settings.hardwareAccelerationHint')}
-          control={
-            <Toggle
-              checked={settings.hardwareAcceleration}
-              onChange={(value) => void update({ hardwareAcceleration: value })}
-              label={t('settings.hardwareAcceleration')}
-            />
-          }
+          checked={settings.hardwareAcceleration}
+          onChange={(value) => void update({ hardwareAcceleration: value })}
         />
       )}
       <SettingRow
         title={t('settings.cacheLimit')}
+        stacked={IS_MOBILE}
         description={
           stats
             ? t('settings.cacheUsage', {
@@ -547,7 +616,7 @@ function PerformanceSection({ settings, update }: { settings: Settings; update: 
             : undefined
         }
         control={
-          <div className="w-[200px]">
+          <div className={controlWidth('w-[200px]')}>
             <Slider
               value={settings.cacheLimitMb}
               min={32}
@@ -694,8 +763,9 @@ function AdvancedSection({
       <SettingGroup title={t('settings.advanced')}>
         <SettingRow
           title={t('settings.networkTimeout')}
+          stacked={IS_MOBILE}
           control={
-            <div className="w-[200px]">
+            <div className={controlWidth('w-[200px]')}>
               <Slider
                 value={settings.networkTimeoutSec}
                 min={5}
@@ -735,16 +805,11 @@ function AdvancedSection({
             />
           }
         />
-        <SettingRow
+        <ToggleRow
           title={t('settings.debugLogging')}
           description={t('settings.debugLoggingHint')}
-          control={
-            <Toggle
-              checked={settings.debugLogging}
-              onChange={(value) => void update({ debugLogging: value })}
-              label={t('settings.debugLogging')}
-            />
-          }
+          checked={settings.debugLogging}
+          onChange={(value) => void update({ debugLogging: value })}
         />
         {!IS_MOBILE && (
           <SettingRow

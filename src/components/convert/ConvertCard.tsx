@@ -81,7 +81,7 @@ export const ConvertCard = memo(function ConvertCard({
 
   return (
     <motion.article
-      layout="position"
+      layout={IS_MOBILE ? false : 'position'}
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, scale: 0.98, transition: { duration: 0.16 } }}
