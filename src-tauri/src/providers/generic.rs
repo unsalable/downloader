@@ -66,7 +66,7 @@ impl GenericProvider {
 
         let final_url = response.url().to_string();
         let body = response.text().await?;
-        let html = &body[..body.len().min(MAX_HTML_BYTES)];
+        let html = page_head(&body);
 
         let meta = collect_meta(html);
         let mut formats = Vec::new();
@@ -171,6 +171,17 @@ impl GenericProvider {
             entries: Vec::new(),
         })
     }
+}
+
+/// The first `MAX_HTML_BYTES` of a page, cut where a character begins. Few
+/// pages are all ASCII, and a body that is not text at all decodes into
+/// three-byte replacement characters; slicing inside one would panic.
+fn page_head(body: &str) -> &str {
+    let mut end = body.len().min(MAX_HTML_BYTES);
+    while !body.is_char_boundary(end) {
+        end -= 1;
+    }
+    &body[..end]
 }
 
 fn collect_meta(html: &str) -> HashMap<String, String> {
@@ -308,6 +319,20 @@ fn decode_entities(input: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_long_page_is_cut_between_characters() {
+        // A video file read as a page: replacement characters, three bytes
+        // each, one of them straddling the limit.
+        let body = "\u{FFFD}".repeat(MAX_HTML_BYTES / 3 + 1);
+        assert!(!body.is_char_boundary(MAX_HTML_BYTES));
+
+        let head = page_head(&body);
+        assert_eq!(head.len(), MAX_HTML_BYTES - MAX_HTML_BYTES % 3);
+        assert!(head.chars().all(|c| c == '\u{FFFD}'));
+
+        assert_eq!(page_head("<title>kısa</title>"), "<title>kısa</title>");
+    }
 
     #[test]
     fn reads_open_graph_tags_in_either_attribute_order() {
