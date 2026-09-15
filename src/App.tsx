@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { WelcomeScreen } from '@/components/WelcomeScreen';
 import { Background } from '@/components/layout/Background';
+import { BottomNav } from '@/components/layout/BottomNav';
 import { Sidebar, type Route } from '@/components/layout/Sidebar';
 import { Topbar } from '@/components/layout/Topbar';
 import { Toaster } from '@/components/ui/Toaster';
@@ -10,6 +11,8 @@ import type { UrlInputHandle } from '@/components/home/UrlInput';
 import { useClipboardMonitor } from '@/hooks/useClipboardMonitor';
 import { useHotkeys } from '@/hooks/useHotkeys';
 import { useTranslation } from '@/i18n';
+import { IS_MOBILE } from '@/lib/platform';
+import { extractFirstUrl } from '@/lib/url';
 import { AboutPage } from '@/pages/AboutPage';
 import { ConvertPage } from '@/pages/ConvertPage';
 import { DownloadsPage } from '@/pages/DownloadsPage';
@@ -55,11 +58,39 @@ export function App() {
   const setUrl = useAnalysisStore((state) => state.setUrl);
   const analyze = useAnalysisStore((state) => state.analyze);
 
-  const [route, setRoute] = useState<Route>('home');
+  const [route, setRouteState] = useState<Route>('home');
   const [collapsed, setCollapsed] = useState(
     () => localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === '1',
   );
   const urlInputRef = useRef<UrlInputHandle | null>(null);
+
+  // On a phone the system Back gesture has to step back through the app, not
+  // leave it: the webview goes back in its history when it can, so each screen
+  // other than Home is given one entry. Back from any screen returns to Home,
+  // and Back from Home leaves the app.
+  const routeRef = useRef<Route>('home');
+  const setRoute = useCallback((next: Route) => {
+    const current = routeRef.current;
+    if (next === current) return;
+    routeRef.current = next;
+    if (IS_MOBILE) {
+      if (current === 'home') window.history.pushState({ route: next }, '');
+      else if (next === 'home') window.history.back();
+      else window.history.replaceState({ route: next }, '');
+    }
+    setRouteState(next);
+  }, []);
+
+  useEffect(() => {
+    if (!IS_MOBILE) return;
+    const onPop = (event: PopStateEvent) => {
+      const target = (event.state as { route?: Route } | null)?.route ?? 'home';
+      routeRef.current = target;
+      setRouteState(target);
+    };
+    window.addEventListener('popstate', onPop);
+    return () => window.removeEventListener('popstate', onPop);
+  }, []);
 
   // -- bootstrap -----------------------------------------------------------
 
@@ -99,6 +130,7 @@ export function App() {
     applyExternalSettings,
     replaceConversions,
     applyConvertProgress,
+    setRoute,
   ]);
 
   // Surface finished and failed downloads even when the user is on another
@@ -134,7 +166,7 @@ export function App() {
     // Forget ids that have left the queue so the map cannot grow unbounded.
     const live = new Set(tasks.map((task) => task.id));
     for (const id of seen.keys()) if (!live.has(id)) seen.delete(id);
-  }, [tasks, pushToast, t]);
+  }, [tasks, pushToast, t, setRoute]);
 
   // Conversions get the same treatment: only transitions are announced, and
   // only once, however many times progress arrives afterwards.
@@ -168,7 +200,7 @@ export function App() {
 
     const live = new Set(conversions.map((job) => job.id));
     for (const id of seen.keys()) if (!live.has(id)) seen.delete(id);
-  }, [conversions, pushToast, t]);
+  }, [conversions, pushToast, t, setRoute]);
 
   // A download that failed only because a tool was missing is retried as soon
   // as that tool appears. The error told the user to install it; having done
@@ -203,8 +235,28 @@ export function App() {
         container: settings.defaultContainer,
       });
     },
-    [analyze, setUrl, settings],
+    [analyze, setUrl, settings, setRoute],
   );
+
+  // A link shared from another app arrives through the Android side, which
+  // holds it until asked: once at start-up for the share that launched the
+  // app, and again whenever it signals that another one came in.
+  const settingsReady = settings != null;
+  useEffect(() => {
+    if (!IS_MOBILE || !settingsReady) return;
+    const take = () => {
+      void ipc
+        .platformTakeSharedText()
+        .then((text) => {
+          const url = text ? extractFirstUrl(text) : null;
+          if (url) goHomeWithUrl(url);
+        })
+        .catch(() => {});
+    };
+    take();
+    window.addEventListener(ipc.SHARED_TEXT_EVENT, take);
+    return () => window.removeEventListener(ipc.SHARED_TEXT_EVENT, take);
+  }, [goHomeWithUrl, settingsReady]);
 
   useClipboardMonitor(settings?.clipboardMonitoring ?? false, (url) => {
     pushToast({
@@ -236,7 +288,7 @@ export function App() {
       openHistory: () => setRoute('history'),
       openSettings: () => setRoute('settings'),
     }),
-    [],
+    [setRoute],
   );
 
   useHotkeys(settings?.hotkeys ?? ({} as never), hotkeyHandlers);
@@ -275,14 +327,16 @@ export function App() {
 
   return (
     <div className="flex h-full overflow-hidden bg-bg">
-      <Sidebar
-        route={route}
-        onNavigate={setRoute}
-        collapsed={collapsed}
-        onToggleCollapsed={toggleCollapsed}
-        activeCount={inFlight}
-        convertingCount={converting}
-      />
+      {!IS_MOBILE && (
+        <Sidebar
+          route={route}
+          onNavigate={setRoute}
+          collapsed={collapsed}
+          onToggleCollapsed={toggleCollapsed}
+          activeCount={inFlight}
+          convertingCount={converting}
+        />
+      )}
 
       <div className="relative flex min-w-0 flex-1 flex-col">
         <Background active={backgroundActive} />
@@ -292,6 +346,7 @@ export function App() {
           theme={settings.theme}
           onThemeChange={(theme: ThemePreference) => void updateSettings({ theme })}
           onOpenSettings={() => setRoute('settings')}
+          onOpenAbout={() => setRoute('about')}
           onOpenDownloads={() => setRoute('downloads')}
           activeTasks={activeTasks}
         />
@@ -322,6 +377,15 @@ export function App() {
             </motion.div>
           </AnimatePresence>
         </main>
+
+        {IS_MOBILE && (
+          <BottomNav
+            route={route}
+            onNavigate={setRoute}
+            activeCount={inFlight}
+            convertingCount={converting}
+          />
+        )}
       </div>
 
       <Toaster />

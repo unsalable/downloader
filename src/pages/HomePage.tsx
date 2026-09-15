@@ -15,6 +15,7 @@ import { Button } from '@/components/ui/Button';
 import { useDebouncedValue } from '@/hooks/useDebouncedValue';
 import { useTranslation } from '@/i18n';
 import { cn } from '@/lib/cn';
+import { IS_MOBILE } from '@/lib/platform';
 import { normalizeUrl } from '@/lib/url';
 import * as ipc from '@/services/ipc';
 import { useAnalysisStore } from '@/stores/useAnalysisStore';
@@ -262,6 +263,12 @@ export function HomePage({
         <PlatformIndicator platform={platform} />
       </div>
 
+      {IS_MOBILE && phase === 'idle' && engineReady && !url.trim() && (
+        <p className="mt-4 text-center text-[12.5px] leading-relaxed text-fg-faint">
+          {t('input.shareHint')}
+        </p>
+      )}
+
       {engineMissing && (
         <motion.div
           initial={{ opacity: 0, y: 8 }}
@@ -269,7 +276,9 @@ export function HomePage({
           className="mt-4 rounded-[var(--radius-card)] border border-[var(--border)] bg-surface p-4 shadow-soft"
         >
           <h3 className="text-[14px] font-semibold text-fg">{t('setup.title')}</h3>
-          <p className="mt-1.5 text-[13px] leading-relaxed text-fg-muted">{t('setup.body')}</p>
+          <p className="mt-1.5 text-[13px] leading-relaxed text-fg-muted">
+            {t(IS_MOBILE ? 'setup.bodyMobile' : 'setup.body')}
+          </p>
           {engineInstall ? (
             <InstallProgress progress={engineInstall} className="mt-3" />
           ) : (

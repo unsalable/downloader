@@ -4,6 +4,8 @@
 //! external tools, restoring the queue, building the tray -- happens here, and
 //! nothing else in the crate reaches for global state.
 
+#[cfg(target_os = "android")]
+pub mod android;
 pub mod cache;
 pub mod commands;
 pub mod converter;
@@ -22,12 +24,15 @@ pub mod providers;
 pub mod queue;
 pub mod settings;
 pub mod tools;
+#[cfg(desktop)]
 pub mod tray;
 pub mod util;
 
 use std::sync::{Arc, Mutex};
 
-use tauri::{Emitter, Listener, Manager, WindowEvent};
+use tauri::{Emitter, Manager};
+#[cfg(desktop)]
+use tauri::{Listener, WindowEvent};
 
 use commands::AppState;
 use converter::ConvertManager;
@@ -37,6 +42,7 @@ use queue::QueueManager;
 /// Temp files older than a day are leftovers from a crash, not resumable state.
 const TEMP_SWEEP_AGE_SECS: u64 = 60 * 60 * 24;
 
+#[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let mut builder = tauri::Builder::default();
 
@@ -53,7 +59,12 @@ pub fn run() {
         ));
     }
 
-    builder
+    #[cfg(target_os = "android")]
+    {
+        builder = builder.plugin(android::plugin());
+    }
+
+    let builder = builder
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
@@ -61,6 +72,11 @@ pub fn run() {
         .plugin(tauri_plugin_os::init())
         .setup(|app| {
             let handle = app.handle().clone();
+
+            // The data and download directories come from the OS on Android,
+            // and everything below reads them.
+            #[cfg(target_os = "android")]
+            android::init(&handle)?;
 
             let database = Arc::new(Database::open(&paths::database_path()?)?);
             let loaded = database.load_settings().unwrap_or_default();
@@ -86,11 +102,16 @@ pub fn run() {
                 converter: Arc::clone(&converter),
             });
 
+            #[cfg(desktop)]
             if let Err(err) = tray::build(&handle, &loaded.language) {
                 log_error!("app", "tray unavailable: {err}");
             }
 
+            #[cfg(target_os = "android")]
+            android::keep_alive_while_busy(&handle);
+
             // Keep the tray's count in step with the queue without polling.
+            #[cfg(desktop)]
             {
                 let handle = handle.clone();
                 let language = loaded.language.clone();
@@ -133,7 +154,10 @@ pub fn run() {
 
             // Launched by the autostart entry: stay in the tray rather than
             // stealing focus during sign-in.
+            #[cfg(desktop)]
             let start_hidden = std::env::args().any(|arg| arg == "--minimized");
+            #[cfg(mobile)]
+            let start_hidden = false;
             if !start_hidden {
                 if let Some(window) = app.get_webview_window("main") {
                     let _ = window.show();
@@ -141,33 +165,14 @@ pub fn run() {
             }
 
             Ok(())
-        })
-        .on_window_event(|window, event| match event {
-            WindowEvent::CloseRequested { api, .. } => {
-                let close_to_tray = window
-                    .app_handle()
-                    .try_state::<AppState>()
-                    .map(|state| state.settings().close_to_tray)
-                    .unwrap_or(false);
+        });
 
-                if close_to_tray {
-                    api.prevent_close();
-                    let _ = window.hide();
-                } else if let Some(state) = window.app_handle().try_state::<AppState>() {
-                    state.queue.shutdown();
-                    state.converter.shutdown();
-                }
-            }
-            WindowEvent::Resized(_) => {
-                let Some(state) = window.app_handle().try_state::<AppState>() else {
-                    return;
-                };
-                if state.settings().minimize_to_tray && window.is_minimized().unwrap_or(false) {
-                    let _ = window.hide();
-                }
-            }
-            _ => {}
-        })
+    // Minimising and closing to the tray are desktop ideas; a phone manages the
+    // window's lifetime itself.
+    #[cfg(desktop)]
+    let builder = builder.on_window_event(handle_window_event);
+
+    builder
         .invoke_handler(tauri::generate_handler![
             commands::get_settings,
             commands::save_settings,
@@ -215,7 +220,42 @@ pub fn run() {
             commands::sweep_temp_files,
             commands::provisional_download_label,
             commands::new_task_id,
+            commands::platform_open_file,
+            commands::platform_open_downloads,
+            commands::platform_pick_media_files,
+            commands::platform_set_system_bars,
+            commands::platform_take_shared_text,
         ])
         .run(tauri::generate_context!())
         .expect("the application failed to start");
+}
+
+#[cfg(desktop)]
+fn handle_window_event(window: &tauri::Window, event: &WindowEvent) {
+    match event {
+        WindowEvent::CloseRequested { api, .. } => {
+            let close_to_tray = window
+                .app_handle()
+                .try_state::<AppState>()
+                .map(|state| state.settings().close_to_tray)
+                .unwrap_or(false);
+
+            if close_to_tray {
+                api.prevent_close();
+                let _ = window.hide();
+            } else if let Some(state) = window.app_handle().try_state::<AppState>() {
+                state.queue.shutdown();
+                state.converter.shutdown();
+            }
+        }
+        WindowEvent::Resized(_) => {
+            let Some(state) = window.app_handle().try_state::<AppState>() else {
+                return;
+            };
+            if state.settings().minimize_to_tray && window.is_minimized().unwrap_or(false) {
+                let _ = window.hide();
+            }
+        }
+        _ => {}
+    }
 }

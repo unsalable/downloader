@@ -32,6 +32,7 @@ export const tr: Record<TranslationKey, string> = {
   'input.invalid': 'Bu geçerli bir medya bağlantısına benzemiyor.',
   'input.detected': 'Algılanan platform',
   'input.dropHint': 'Analiz etmek için bir bağlantı bırak',
+  'input.shareHint': 'İpucu: herhangi bir uygulamadan bağlantıyı Universal Downloader ile paylaş.',
 
   'analyze.analyzing': 'Bağlantı analiz ediliyor...',
   'analyze.retry': 'Tekrar dene',
@@ -118,6 +119,9 @@ export const tr: Record<TranslationKey, string> = {
   'convert.title': 'Dönüştür',
   'convert.dropTitle': 'Dosyaları buraya bırak',
   'convert.dropBody': 'Bilgisayarındaki video veya ses dosyaları.',
+  'convert.pickTitle': 'Dönüştürülecek dosyaları seç',
+  'convert.pickBody': 'Bu telefondaki video veya ses dosyaları.',
+  'convert.savedTo': 'Şuraya kaydedilir: {folder}',
   'convert.chooseFiles': 'Dosya seç',
   'convert.mediaFiles': 'Medya dosyaları',
   'convert.addMore': 'Daha ekle',
@@ -211,6 +215,7 @@ export const tr: Record<TranslationKey, string> = {
   'settings.notifyError': 'Hata olunca bildir',
 
   'settings.downloadDir': 'İndirme klasörü',
+  'settings.downloadDirMobileHint': 'Dosya yöneticin ve galerin indirilenleri burada bulur.',
   'settings.browse': 'Gözat',
   'settings.defaultMode': 'Varsayılan tür',
   'settings.defaultQuality': 'Varsayılan kalite',
@@ -266,6 +271,7 @@ export const tr: Record<TranslationKey, string> = {
   'settings.toolSourceManaged': 'Uygulama tarafından yönetiliyor',
   'settings.toolSourceSystem': "PATH'te bulundu",
   'settings.toolSourceCustom': 'Özel yol',
+  'settings.toolSourceBundled': 'Uygulamayla birlikte gelir',
 
   'settings.networkTimeout': 'Ağ zaman aşımı',
   'settings.proxy': 'Proxy',
@@ -312,6 +318,8 @@ export const tr: Record<TranslationKey, string> = {
   'setup.title': 'Tek seferlik kurulum',
   'setup.body':
     'Universal Downloader, medya bilgilerini okumak ve akışları birleştirmek için iki açık kaynak araç kullanır. Bir kez indirilir ve tamamen sizin makinenizde çalışır.',
+  'setup.bodyMobile':
+    'Universal Downloader, medya bilgilerini açık kaynaklı yt-dlp aracıyla okur. Bir kez indirilir (yaklaşık 3 MB) ve tamamen telefonunda çalışır. FFmpeg zaten uygulamanın içinde.',
   'setup.engineRequired': 'İndirme motoru henüz kurulu değil.',
   'setup.checking': 'İndirme motoru denetleniyor...',
   'setup.installNow': 'Şimdi kur',

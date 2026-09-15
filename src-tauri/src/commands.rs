@@ -6,7 +6,7 @@
 
 use std::sync::{Arc, Mutex};
 
-use tauri::{AppHandle, Emitter, Manager, State};
+use tauri::{AppHandle, Emitter, State};
 
 use crate::converter::ConvertManager;
 use crate::db::Database;
@@ -432,6 +432,72 @@ pub fn preview_filename(template: String) -> String {
     format!("{rendered}.mp4")
 }
 
+// -- mobile platform -------------------------------------------------------
+//
+// What the opener, dialog and drag-and-drop APIs do on the desktop has to be
+// asked of the OS on Android. The interface only calls these there; elsewhere
+// they refuse rather than pretend.
+
+#[cfg(not(target_os = "android"))]
+fn android_only<T>() -> AppResult<T> {
+    Err(AppError::Other("this is only available on Android".into()))
+}
+
+#[tauri::command]
+pub async fn platform_open_file(app: AppHandle, path: String) -> AppResult<()> {
+    #[cfg(target_os = "android")]
+    return crate::android::open_file(app, path).await;
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = (app, path);
+        android_only()
+    }
+}
+
+#[tauri::command]
+pub async fn platform_open_downloads(app: AppHandle) -> AppResult<()> {
+    #[cfg(target_os = "android")]
+    return crate::android::open_downloads(app).await;
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = app;
+        android_only()
+    }
+}
+
+#[tauri::command]
+pub async fn platform_pick_media_files(app: AppHandle) -> AppResult<Vec<String>> {
+    #[cfg(target_os = "android")]
+    return crate::android::pick_media_files(app).await;
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = app;
+        android_only()
+    }
+}
+
+#[tauri::command]
+pub async fn platform_set_system_bars(app: AppHandle, dark: bool) -> AppResult<()> {
+    #[cfg(target_os = "android")]
+    return crate::android::set_system_bars(app, dark).await;
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = (app, dark);
+        Ok(())
+    }
+}
+
+#[tauri::command]
+pub async fn platform_take_shared_text(app: AppHandle) -> AppResult<Option<String>> {
+    #[cfg(target_os = "android")]
+    return crate::android::take_shared_text(app).await;
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = app;
+        Ok(None)
+    }
+}
+
 // -- cache and diagnostics -------------------------------------------------
 
 #[tauri::command]
@@ -472,8 +538,22 @@ pub fn get_log_dir() -> AppResult<String> {
 }
 
 /// Third-party licence list, read from the bundled resource.
+///
+/// Android keeps bundled resources inside the APK, where no file path reaches
+/// them, so that build carries the list compiled in instead.
+#[cfg(target_os = "android")]
 #[tauri::command]
 pub fn get_licenses(app: AppHandle) -> AppResult<serde_json::Value> {
+    let _ = app;
+    Ok(serde_json::from_str(include_str!("../resources/licenses.json"))?)
+}
+
+/// Third-party licence list, read from the bundled resource.
+#[cfg(not(target_os = "android"))]
+#[tauri::command]
+pub fn get_licenses(app: AppHandle) -> AppResult<serde_json::Value> {
+    use tauri::Manager;
+
     let path = app
         .path()
         .resolve("resources/licenses.json", tauri::path::BaseDirectory::Resource)

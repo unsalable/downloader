@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- The app opens in its dark theme; the window matches it so the launch
+         does not flash white before the page has painted. -->
+    <color name="app_background">#FF0C0B09</color>
+    <color name="app_accent">#FFFF7A3D</color>
+</resources>

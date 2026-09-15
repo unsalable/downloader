@@ -30,9 +30,6 @@
     "clipboard-manager:allow-read-text",
     "clipboard-manager:allow-write-text",
     "os:allow-platform",
-    "os:allow-version",
-    "autostart:allow-enable",
-    "autostart:allow-disable",
-    "autostart:allow-is-enabled"
+    "os:allow-version"
   ]
 }

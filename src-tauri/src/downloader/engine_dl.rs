@@ -63,11 +63,9 @@ pub async fn run(
 
     // Point the engine at the same FFmpeg the app manages, so it never picks up
     // a different copy from PATH.
-    if let Some(ffmpeg) = tools::ffmpeg_path() {
-        if let Some(dir) = ffmpeg.parent() {
-            args.push("--ffmpeg-location".into());
-            args.push(dir.to_string_lossy().into_owned());
-        }
+    if let Some(location) = tools::ffmpeg_location() {
+        args.push("--ffmpeg-location".into());
+        args.push(location);
     }
 
     args.push(options.url.to_string());

@@ -3,6 +3,7 @@ import { MotionGlobalConfig } from 'motion/react';
 import { create } from 'zustand';
 
 import { setLanguage } from '@/i18n';
+import { IS_MOBILE } from '@/lib/platform';
 import * as ipc from '@/services/ipc';
 import type { Settings, ThemePreference } from '@/types';
 
@@ -61,6 +62,9 @@ export function applyTheme(preference: ThemePreference) {
   const setClass = (dark: boolean) => {
     root.classList.toggle('dark', dark);
     root.style.colorScheme = dark ? 'dark' : 'light';
+    // A phone's status and navigation bars are drawn over the page's own
+    // background, so their icons have to follow this theme, not the OS one.
+    if (IS_MOBILE) void ipc.platformSetSystemBars(dark).catch(() => {});
   };
 
   // The native title bar is painted by Windows, not by this stylesheet, so it

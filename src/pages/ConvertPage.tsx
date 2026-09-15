@@ -35,6 +35,7 @@ import {
   kindOf,
 } from '@/lib/convertOptions';
 import { formatBytes, formatDuration, prettyCodec, truncateMiddle } from '@/lib/format';
+import { IS_MOBILE } from '@/lib/platform';
 import * as ipc from '@/services/ipc';
 import {
   selectActiveJobs,
@@ -91,6 +92,7 @@ export function ConvertPage({ settings }: { settings: Settings }) {
   // one, and only while this screen is mounted -- dropping a file on Home has
   // nothing to do there.
   useEffect(() => {
+    if (IS_MOBILE) return;
     const pending = getCurrentWebview().onDragDropEvent((event) => {
       if (event.payload.type === 'over') {
         setDragging(true);
@@ -125,13 +127,25 @@ export function ConvertPage({ settings }: { settings: Settings }) {
   }, [catalogue, t]);
 
   const pickFiles = useCallback(async () => {
+    // The Android picker returns content URIs that FFmpeg cannot open; the
+    // platform side copies the choices somewhere it can and returns those.
+    if (IS_MOBILE) {
+      try {
+        const picked = await ipc.platformPickMediaFiles();
+        if (picked.length > 0) void addFiles(picked);
+      } catch (caught) {
+        const info = ipc.toAppError(caught);
+        pushToast({ tone: 'error', title: info.title, body: info.message });
+      }
+      return;
+    }
     const selected = await open({
       multiple: true,
       filters: [{ name: t('convert.mediaFiles'), extensions: [...INPUT_EXTENSIONS] }],
     });
     if (Array.isArray(selected)) void addFiles(selected);
     else if (typeof selected === 'string') void addFiles([selected]);
-  }, [addFiles, t]);
+  }, [addFiles, pushToast, t]);
 
   const pickFolder = useCallback(async () => {
     const selected = await open({
@@ -234,8 +248,12 @@ export function ConvertPage({ settings }: { settings: Settings }) {
           <div className="flex flex-col items-center gap-2.5 py-6 text-center">
             <FilePlus2 size={22} className="text-fg-faint" />
             <div>
-              <p className="text-[13.5px] font-medium text-fg">{t('convert.dropTitle')}</p>
-              <p className="mt-0.5 text-[12.5px] text-fg-muted">{t('convert.dropBody')}</p>
+              <p className="text-[13.5px] font-medium text-fg">
+                {t(IS_MOBILE ? 'convert.pickTitle' : 'convert.dropTitle')}
+              </p>
+              <p className="mt-0.5 text-[12.5px] text-fg-muted">
+                {t(IS_MOBILE ? 'convert.pickBody' : 'convert.dropBody')}
+              </p>
             </div>
             <Button size="sm" variant="secondary" className="mt-1" onClick={() => void pickFiles()}>
               {t('convert.chooseFiles')}
@@ -345,31 +363,42 @@ export function ConvertPage({ settings }: { settings: Settings }) {
           />
         </div>
 
-        <div className="mt-3 flex items-center gap-2 border-t border-[var(--border)] pt-3.5">
-          <FolderOpen size={14} className="shrink-0 text-fg-faint" />
-          <span className="min-w-0 flex-1 truncate text-[12px] text-fg-muted">
-            {outputDir == null ? (
-              t('convert.besideSource')
-            ) : (
-              <Tooltip label={outputDir}>
-                <span className="font-mono text-[11.5px]">{truncateMiddle(outputDir, 46)}</span>
-              </Tooltip>
+        {IS_MOBILE ? (
+          // Picked files are private copies, so results always go to the
+          // Downloads folder; there is no other writable place to offer.
+          <div className="mt-3 flex items-start gap-2 border-t border-[var(--border)] pt-3.5">
+            <FolderOpen size={14} className="mt-0.5 shrink-0 text-fg-faint" />
+            <span className="min-w-0 flex-1 text-[12px] text-fg-muted [overflow-wrap:anywhere]">
+              {t('convert.savedTo', { folder: settings.downloadDir })}
+            </span>
+          </div>
+        ) : (
+          <div className="mt-3 flex items-center gap-2 border-t border-[var(--border)] pt-3.5">
+            <FolderOpen size={14} className="shrink-0 text-fg-faint" />
+            <span className="min-w-0 flex-1 truncate text-[12px] text-fg-muted">
+              {outputDir == null ? (
+                t('convert.besideSource')
+              ) : (
+                <Tooltip label={outputDir}>
+                  <span className="font-mono text-[11.5px]">{truncateMiddle(outputDir, 46)}</span>
+                </Tooltip>
+              )}
+            </span>
+            {outputDir != null && (
+              <Button
+                size="sm"
+                variant="ghost"
+                icon={<RotateCcw size={13} />}
+                onClick={() => setOutputDir(null)}
+              >
+                {t('convert.resetFolder')}
+              </Button>
             )}
-          </span>
-          {outputDir != null && (
-            <Button
-              size="sm"
-              variant="ghost"
-              icon={<RotateCcw size={13} />}
-              onClick={() => setOutputDir(null)}
-            >
-              {t('convert.resetFolder')}
+            <Button size="sm" variant="secondary" onClick={() => void pickFolder()}>
+              {t('options.change')}
             </Button>
-          )}
-          <Button size="sm" variant="secondary" onClick={() => void pickFolder()}>
-            {t('options.change')}
-          </Button>
-        </div>
+          </div>
+        )}
 
         <Button
           className="mt-4"
@@ -461,7 +490,7 @@ function StagedRow({ file, onRemove }: { file: StagedFile; onRemove: () => void 
         type="button"
         onClick={onRemove}
         aria-label={t('convert.removeFile')}
-        className="shrink-0 rounded-md p-1 text-fg-faint opacity-0 transition-opacity hover:bg-surface-hover hover:text-fg group-hover:opacity-100 focus-visible:opacity-100"
+        className="reveal-on-hover shrink-0 rounded-md p-1 text-fg-faint transition-opacity hover:bg-surface-hover hover:text-fg"
       >
         <X size={13} />
       </button>

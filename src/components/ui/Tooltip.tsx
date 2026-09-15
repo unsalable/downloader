@@ -11,6 +11,7 @@ import {
 import { createPortal } from 'react-dom';
 
 import { cn } from '@/lib/cn';
+import { IS_MOBILE } from '@/lib/platform';
 
 type Side = 'top' | 'bottom' | 'left' | 'right';
 
@@ -61,6 +62,10 @@ export function Tooltip({ label, side = 'top', delayMs = 380, children }: Toolti
     clearTimer();
     setCoords(null);
   }, [clearTimer]);
+
+  // A touch screen has no hover, and a tap leaves focus behind, which would
+  // pin the tooltip open over whatever was tapped.
+  if (IS_MOBILE) return children;
 
   const trigger = cloneElement(children, {
     ref: (node: HTMLElement | null) => {

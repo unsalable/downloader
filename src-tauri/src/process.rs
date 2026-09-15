@@ -6,6 +6,9 @@
 //!      that could be re-parsed.
 //!   2. Child processes are spawned without a console window, so a download
 //!      never flashes a black box over the user's screen.
+//!
+//! On Android a tool is not always the program that gets started: see
+//! `android::command`.
 
 use std::process::Stdio;
 
@@ -18,6 +21,9 @@ const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
 /// Build a `Command` that will not pop a console window on Windows.
 pub fn command(program: &std::path::Path) -> Command {
+    #[cfg(target_os = "android")]
+    let mut cmd = crate::android::command(program);
+    #[cfg(not(target_os = "android"))]
     let mut cmd = Command::new(program);
     #[cfg(windows)]
     cmd.creation_flags(CREATE_NO_WINDOW);

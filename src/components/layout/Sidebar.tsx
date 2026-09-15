@@ -123,7 +123,7 @@ export function Sidebar({
 }
 
 /** Only the two screens that do background work carry a count. */
-function badgeFor(route: Route, downloading: number, converting: number): number {
+export function badgeFor(route: Route, downloading: number, converting: number): number {
   if (route === 'downloads') return downloading;
   if (route === 'convert') return converting;
   return 0;

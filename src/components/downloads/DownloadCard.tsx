@@ -1,5 +1,4 @@
 import { AnimatePresence, motion } from 'motion/react';
-import { openPath, revealItemInDir } from '@tauri-apps/plugin-opener';
 import {
   ArrowDown,
   ArrowUp,
@@ -24,6 +23,7 @@ import { useTranslation } from '@/i18n';
 import type { TranslationKey } from '@/i18n';
 import { cn } from '@/lib/cn';
 import { basename, clampPercent, formatBytes, formatEta, formatSpeed } from '@/lib/format';
+import { IS_MOBILE, openFile, revealFile } from '@/lib/platform';
 import type { DownloadTask } from '@/types';
 
 interface DownloadCardProps {
@@ -145,7 +145,7 @@ export const DownloadCard = memo(function DownloadCard({
               {task.title}
             </h3>
 
-            <div className="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity duration-150 group-hover:opacity-100 focus-within:opacity-100">
+            <div className="reveal-on-hover flex shrink-0 items-center gap-0.5 transition-opacity duration-150">
               {reorderable && (
                 <>
                   <IconButton
@@ -226,12 +226,16 @@ export const DownloadCard = memo(function DownloadCard({
 
             {isDone && task.outputPath && (
               <div className="flex items-center gap-2">
-                <span className="metric min-w-0 flex-1 truncate text-[11.5px] text-fg-faint">
-                  {basename(task.outputPath)}
-                </span>
+                {/* Beside two buttons a phone has room for a few letters of the
+                    name, which the title above already gives in full. */}
+                {!IS_MOBILE && (
+                  <span className="metric min-w-0 flex-1 truncate text-[11.5px] text-fg-faint">
+                    {basename(task.outputPath)}
+                  </span>
+                )}
                 <button
                   type="button"
-                  onClick={() => void openPath(task.outputPath!)}
+                  onClick={() => void openFile(task.outputPath!)}
                   className="flex shrink-0 items-center gap-1 rounded-[5px] px-1.5 py-1 text-[12px] font-medium text-accent transition-colors hover:bg-accent-soft"
                 >
                   <SquareArrowOutUpRight size={12} />
@@ -239,7 +243,7 @@ export const DownloadCard = memo(function DownloadCard({
                 </button>
                 <button
                   type="button"
-                  onClick={() => void revealItemInDir(task.outputPath!)}
+                  onClick={() => void revealFile(task.outputPath!)}
                   className="flex shrink-0 items-center gap-1 rounded-[5px] px-1.5 py-1 text-[12px] font-medium text-fg-muted transition-colors hover:bg-surface-hover hover:text-fg"
                 >
                   <FolderOpen size={12} />

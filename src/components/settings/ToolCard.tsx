@@ -9,6 +9,7 @@ import { useTranslation } from '@/i18n';
 import type { TranslationKey } from '@/i18n';
 import { cn } from '@/lib/cn';
 import { formatBytes, truncateMiddle } from '@/lib/format';
+import { IS_MOBILE } from '@/lib/platform';
 import type { ToolInstallProgress, ToolStatus } from '@/types';
 
 interface ToolCardProps {
@@ -69,7 +70,7 @@ const SOURCE_LABEL = {
   managed: 'settings.toolSourceManaged',
   system: 'settings.toolSourceSystem',
   custom: 'settings.toolSourceCustom',
-  bundled: 'settings.toolSourceManaged',
+  bundled: 'settings.toolSourceBundled',
   missing: 'settings.toolMissing',
 } as const satisfies Record<ToolStatus['source'], TranslationKey>;
 
@@ -138,7 +139,9 @@ export function ToolCard({
 
           {installing && <InstallProgress progress={installing} className="mt-3" />}
 
-          {!installing && (
+          {/* A tool that ships inside the app has nothing to install, and on a
+              phone a file the user points at would not be allowed to run. */}
+          {!installing && !(status.source === 'bundled' && status.available) && (
             <div className="mt-3 flex flex-wrap items-center gap-2">
               <Button
                 size="sm"
@@ -148,15 +151,17 @@ export function ToolCard({
               >
                 {status.available ? t('settings.toolUpdate') : t('settings.toolInstall')}
               </Button>
-              <Button
-                size="sm"
-                variant="ghost"
-                icon={<FolderSearch size={13} />}
-                onClick={pickFile}
-              >
-                {t('settings.toolLocate')}
-              </Button>
-              {customPath && (
+              {!IS_MOBILE && (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  icon={<FolderSearch size={13} />}
+                  onClick={pickFile}
+                >
+                  {t('settings.toolLocate')}
+                </Button>
+              )}
+              {customPath && !IS_MOBILE && (
                 <Button size="sm" variant="ghost" onClick={onResetPath}>
                   {t('settings.toolReset')}
                 </Button>

@@ -1,0 +1,16 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "desktop",
+  "description": "Launch-at-sign-in, which only the Windows build carries.",
+  "windows": [
+    "main"
+  ],
+  "platforms": [
+    "windows"
+  ],
+  "permissions": [
+    "autostart:allow-enable",
+    "autostart:allow-disable",
+    "autostart:allow-is-enabled"
+  ]
+}

@@ -35,6 +35,7 @@ export const en = {
   'input.invalid': "This doesn't look like a valid media URL.",
   'input.detected': 'Detected platform',
   'input.dropHint': 'Drop a link to analyze it',
+  'input.shareHint': 'Tip: share a link to Universal Downloader from any app.',
 
   'analyze.analyzing': 'Analyzing URL...',
   'analyze.retry': 'Try again',
@@ -121,6 +122,9 @@ export const en = {
   'convert.title': 'Convert',
   'convert.dropTitle': 'Drop files here',
   'convert.dropBody': 'Video or audio files already on your computer.',
+  'convert.pickTitle': 'Choose files to convert',
+  'convert.pickBody': 'Video or audio files already on this phone.',
+  'convert.savedTo': 'Saves to {folder}',
   'convert.chooseFiles': 'Choose files',
   'convert.mediaFiles': 'Media files',
   'convert.addMore': 'Add more',
@@ -213,6 +217,7 @@ export const en = {
   'settings.notifyError': 'Notify on failure',
 
   'settings.downloadDir': 'Download folder',
+  'settings.downloadDirMobileHint': 'Your file manager and gallery find downloads here.',
   'settings.browse': 'Browse',
   'settings.defaultMode': 'Default type',
   'settings.defaultQuality': 'Default quality',
@@ -265,6 +270,7 @@ export const en = {
   'settings.toolSourceManaged': 'Managed by the app',
   'settings.toolSourceSystem': 'Found on PATH',
   'settings.toolSourceCustom': 'Custom path',
+  'settings.toolSourceBundled': 'Included with the app',
 
   'settings.networkTimeout': 'Network timeout',
   'settings.proxy': 'Proxy',
@@ -311,6 +317,8 @@ export const en = {
   'setup.title': 'One-time setup',
   'setup.body':
     'Universal Downloader uses two open-source tools to read media details and merge streams. They are downloaded once and run entirely on your machine.',
+  'setup.bodyMobile':
+    'Universal Downloader reads media details with yt-dlp, an open-source tool. It is downloaded once, about 3 MB, and runs entirely on your phone. FFmpeg is already built in.',
   'setup.engineRequired': 'The download engine is not installed yet.',
   'setup.checking': 'Checking the download engine...',
   'setup.installNow': 'Install now',

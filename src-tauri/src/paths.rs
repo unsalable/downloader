@@ -13,6 +13,18 @@ use crate::error::{AppError, AppResult};
 const APP_DIR_NAME: &str = "UniversalDownloader";
 
 static ROOT: OnceCell<PathBuf> = OnceCell::new();
+static DOWNLOADS: OnceCell<PathBuf> = OnceCell::new();
+
+/// Supply the two locations a mobile OS decides for itself: the app's private
+/// data directory and the shared folder downloads should land in. There is no
+/// `%APPDATA%` to derive them from, so this has to run before anything reads
+/// `root()` -- which on Android means before the database is opened.
+pub fn set_platform_dirs(data: PathBuf, downloads: PathBuf) -> AppResult<()> {
+    std::fs::create_dir_all(&data)?;
+    let _ = ROOT.set(data);
+    let _ = DOWNLOADS.set(downloads);
+    Ok(())
+}
 
 /// `%APPDATA%\UniversalDownloader`, created on first access.
 pub fn root() -> AppResult<&'static Path> {
@@ -70,6 +82,9 @@ pub fn database_path() -> AppResult<PathBuf> {
 
 /// The user's own Downloads folder, falling back to the home directory.
 pub fn default_download_dir() -> PathBuf {
+    if let Some(dir) = DOWNLOADS.get() {
+        return dir.clone();
+    }
     dirs::download_dir()
         .or_else(dirs::home_dir)
         .unwrap_or_else(|| PathBuf::from("."))

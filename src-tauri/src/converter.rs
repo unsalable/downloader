@@ -79,6 +79,8 @@ fn ffprobe_path() -> Option<PathBuf> {
     if let Some(ffmpeg) = tools::ffmpeg_path() {
         let sibling = ffmpeg.with_file_name(if cfg!(windows) {
             "ffprobe.exe"
+        } else if cfg!(target_os = "android") {
+            "libffprobe.so"
         } else {
             "ffprobe"
         });
@@ -592,6 +594,18 @@ impl ConvertManager {
 
         let mut options = request.options.clone();
         options.target_format = target;
+
+        // On Android a picked file is a private copy in the app's cache, so
+        // "beside the source" would be a folder the user cannot reach.
+        #[cfg(target_os = "android")]
+        if options.output_dir.as_deref().is_none_or(|dir| dir.trim().is_empty()) {
+            let dir = self.settings().download_dir;
+            std::fs::create_dir_all(&dir).map_err(|err| {
+                AppError::Permission(format!("{dir} could not be created: {err}"))
+            })?;
+            options.output_dir = Some(dir);
+        }
+
         normalize_output_dir(&mut options)?;
 
         let mut created = Vec::with_capacity(request.input_paths.len());
@@ -880,6 +894,8 @@ impl ConvertManager {
             job.completed_at = Some(util::now_ms());
         });
         log_info!("convert", "wrote {path}");
+        #[cfg(target_os = "android")]
+        crate::android::announce_media(&self.app, &path);
         self.emit_job(id);
         self.emit_changed();
     }

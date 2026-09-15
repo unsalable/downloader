@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Finished downloads live in shared storage; converted imports in the cache. -->
+<paths xmlns:android="http://schemas.android.com/apk/res/android">
+  <external-path name="shared" path="." />
+  <cache-path name="cache" path="." />
+</paths>

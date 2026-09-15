@@ -145,6 +145,21 @@ export const getLicenses = () => invoke<{ packages: LicenseEntry[] }>('get_licen
 export const getAppVersion = () => invoke<string>('get_app_version');
 export const sweepTempFiles = () => invoke<number>('sweep_temp_files');
 
+// -- mobile platform -------------------------------------------------------
+//
+// Only called on Android (see `IS_MOBILE`); the desktop has plugin APIs for
+// the same jobs.
+
+export const platformOpenFile = (path: string) => invoke<void>('platform_open_file', { path });
+export const platformOpenDownloads = () => invoke<void>('platform_open_downloads');
+export const platformPickMediaFiles = () => invoke<string[]>('platform_pick_media_files');
+export const platformSetSystemBars = (dark: boolean) =>
+  invoke<void>('platform_set_system_bars', { dark });
+export const platformTakeSharedText = () => invoke<string | null>('platform_take_shared_text');
+
+/** Dispatched by the Android side when a link is shared into a running app. */
+export const SHARED_TEXT_EVENT = 'ud-shared-text';
+
 // -- events ----------------------------------------------------------------
 
 export const EVENTS = {

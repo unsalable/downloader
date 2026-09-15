@@ -29,6 +29,7 @@ import type { TranslationKey } from '@/i18n';
 import { cn } from '@/lib/cn';
 import { decodeQuality, encodeQuality } from '@/lib/downloadOptions';
 import { formatBytes, truncateMiddle } from '@/lib/format';
+import { IS_MOBILE } from '@/lib/platform';
 import * as ipc from '@/services/ipc';
 import { useSettingsStore } from '@/stores/useSettingsStore';
 import { useToastStore } from '@/stores/useToastStore';
@@ -44,7 +45,7 @@ import type {
 
 type SectionId = 'general' | 'downloads' | 'appearance' | 'performance' | 'shortcuts' | 'advanced';
 
-const SECTIONS: { id: SectionId; label: TranslationKey; icon: typeof Sparkles }[] = [
+const ALL_SECTIONS: { id: SectionId; label: TranslationKey; icon: typeof Sparkles }[] = [
   { id: 'general', label: 'settings.general', icon: Sparkles },
   { id: 'downloads', label: 'settings.downloads', icon: FolderOpen },
   { id: 'appearance', label: 'settings.appearance', icon: Palette },
@@ -52,6 +53,11 @@ const SECTIONS: { id: SectionId; label: TranslationKey; icon: typeof Sparkles }[
   { id: 'shortcuts', label: 'settings.hotkeys', icon: Keyboard },
   { id: 'advanced', label: 'settings.advanced', icon: SlidersHorizontal },
 ];
+
+/** Keyboard shortcuts mean nothing without a keyboard. */
+const SECTIONS = IS_MOBILE
+  ? ALL_SECTIONS.filter((entry) => entry.id !== 'shortcuts')
+  : ALL_SECTIONS;
 
 /** Mirrors the defaults in `settings.rs`, for the per-hotkey reset button. */
 const DEFAULT_HOTKEYS: Record<HotkeyAction, string> = {
@@ -70,8 +76,21 @@ export function SettingsPage({ settings }: { settings: Settings }) {
   const [confirmReset, setConfirmReset] = useState(false);
 
   return (
-    <div className="mx-auto flex w-full max-w-[880px] gap-6 px-6 pb-12">
-      <nav className="sticky top-3 h-fit w-[168px] shrink-0 space-y-0.5" aria-label={t('settings.title')}>
+    <div
+      className={cn(
+        'mx-auto flex w-full max-w-[880px] pb-12',
+        IS_MOBILE ? 'flex-col gap-3 px-4' : 'gap-6 px-6',
+      )}
+    >
+      <nav
+        className={cn(
+          IS_MOBILE
+            ? // A row of tabs that scrolls sideways, pinned under the top bar.
+              'no-scrollbar sticky top-0 z-10 -mx-4 flex gap-1 overflow-x-auto bg-bg/85 px-4 py-2 backdrop-blur-xl'
+            : 'sticky top-3 h-fit w-[168px] shrink-0 space-y-0.5',
+        )}
+        aria-label={t('settings.title')}
+      >
         {SECTIONS.map((entry) => {
           const Icon = entry.icon;
           const active = section === entry.id;
@@ -81,8 +100,9 @@ export function SettingsPage({ settings }: { settings: Settings }) {
               type="button"
               onClick={() => setSection(entry.id)}
               className={cn(
-                'relative flex h-8.5 w-full items-center gap-2.5 rounded-lg px-2.5 text-[13px] font-medium',
+                'relative flex h-8.5 items-center gap-2.5 rounded-lg px-2.5 text-[13px] font-medium',
                 'transition-colors duration-150',
+                IS_MOBILE ? 'shrink-0' : 'w-full',
                 active ? 'text-fg' : 'text-fg-muted hover:bg-surface-hover hover:text-fg',
               )}
             >
@@ -156,39 +176,43 @@ function GeneralSection({ settings, update }: { settings: Settings; update: Upda
   return (
     <>
       <SettingGroup title={t('settings.general')}>
-        <SettingRow
-          title={t('settings.startWithWindows')}
-          description={t('settings.startWithWindowsHint')}
-          control={
-            <Toggle
-              checked={settings.startWithWindows}
-              onChange={(value) => void update({ startWithWindows: value })}
-              label={t('settings.startWithWindows')}
+        {!IS_MOBILE && (
+          <>
+            <SettingRow
+              title={t('settings.startWithWindows')}
+              description={t('settings.startWithWindowsHint')}
+              control={
+                <Toggle
+                  checked={settings.startWithWindows}
+                  onChange={(value) => void update({ startWithWindows: value })}
+                  label={t('settings.startWithWindows')}
+                />
+              }
             />
-          }
-        />
-        <SettingRow
-          title={t('settings.minimizeToTray')}
-          description={t('settings.minimizeToTrayHint')}
-          control={
-            <Toggle
-              checked={settings.minimizeToTray}
-              onChange={(value) => void update({ minimizeToTray: value })}
-              label={t('settings.minimizeToTray')}
+            <SettingRow
+              title={t('settings.minimizeToTray')}
+              description={t('settings.minimizeToTrayHint')}
+              control={
+                <Toggle
+                  checked={settings.minimizeToTray}
+                  onChange={(value) => void update({ minimizeToTray: value })}
+                  label={t('settings.minimizeToTray')}
+                />
+              }
             />
-          }
-        />
-        <SettingRow
-          title={t('settings.closeToTray')}
-          description={t('settings.closeToTrayHint')}
-          control={
-            <Toggle
-              checked={settings.closeToTray}
-              onChange={(value) => void update({ closeToTray: value })}
-              label={t('settings.closeToTray')}
+            <SettingRow
+              title={t('settings.closeToTray')}
+              description={t('settings.closeToTrayHint')}
+              control={
+                <Toggle
+                  checked={settings.closeToTray}
+                  onChange={(value) => void update({ closeToTray: value })}
+                  label={t('settings.closeToTray')}
+                />
+              }
             />
-          }
-        />
+          </>
+        )}
         <SettingRow
           title={t('settings.clipboard')}
           description={t('settings.clipboardHint')}
@@ -275,16 +299,29 @@ function DownloadsSection({ settings, update }: { settings: Settings; update: Up
         <SettingRow
           title={t('settings.downloadDir')}
           description={
-            <Tooltip label={settings.downloadDir}>
-              <span className="font-mono text-[11.5px]">
-                {truncateMiddle(settings.downloadDir, 52)}
-              </span>
-            </Tooltip>
+            IS_MOBILE ? (
+              <>
+                <span className="block font-mono text-[11.5px] [overflow-wrap:anywhere]">
+                  {settings.downloadDir}
+                </span>
+                <span className="mt-1 block">{t('settings.downloadDirMobileHint')}</span>
+              </>
+            ) : (
+              <Tooltip label={settings.downloadDir}>
+                <span className="font-mono text-[11.5px]">
+                  {truncateMiddle(settings.downloadDir, 52)}
+                </span>
+              </Tooltip>
+            )
           }
           control={
-            <Button size="sm" variant="secondary" onClick={pickFolder}>
-              {t('settings.browse')}
-            </Button>
+            // The Android folder picker hands back a document tree, not a
+            // path the downloader could write to, so the folder is fixed there.
+            IS_MOBILE ? undefined : (
+              <Button size="sm" variant="secondary" onClick={pickFolder}>
+                {t('settings.browse')}
+              </Button>
+            )
           }
         />
 
@@ -485,17 +522,20 @@ function PerformanceSection({ settings, update }: { settings: Settings; update: 
           />
         }
       />
-      <SettingRow
-        title={t('settings.hardwareAcceleration')}
-        description={t('settings.hardwareAccelerationHint')}
-        control={
-          <Toggle
-            checked={settings.hardwareAcceleration}
-            onChange={(value) => void update({ hardwareAcceleration: value })}
-            label={t('settings.hardwareAcceleration')}
-          />
-        }
-      />
+      {/* The GPU pass is an NVIDIA encoder, which no phone has. */}
+      {!IS_MOBILE && (
+        <SettingRow
+          title={t('settings.hardwareAcceleration')}
+          description={t('settings.hardwareAccelerationHint')}
+          control={
+            <Toggle
+              checked={settings.hardwareAcceleration}
+              onChange={(value) => void update({ hardwareAcceleration: value })}
+              label={t('settings.hardwareAcceleration')}
+            />
+          }
+        />
+      )}
       <SettingRow
         title={t('settings.cacheLimit')}
         description={
@@ -706,23 +746,25 @@ function AdvancedSection({
             />
           }
         />
-        <SettingRow
-          title={t('settings.logs')}
-          description={t('settings.logsHint')}
-          control={
-            <Button
-              size="sm"
-              variant="secondary"
-              icon={<ScrollText size={13} />}
-              onClick={async () => {
-                const dir = await ipc.getLogDir();
-                await openPath(dir);
-              }}
-            >
-              {t('settings.openLogs')}
-            </Button>
-          }
-        />
+        {!IS_MOBILE && (
+          <SettingRow
+            title={t('settings.logs')}
+            description={t('settings.logsHint')}
+            control={
+              <Button
+                size="sm"
+                variant="secondary"
+                icon={<ScrollText size={13} />}
+                onClick={async () => {
+                  const dir = await ipc.getLogDir();
+                  await openPath(dir);
+                }}
+              >
+                {t('settings.openLogs')}
+              </Button>
+            }
+          />
+        )}
         <SettingRow
           title={t('settings.resetTitle')}
           description={t('settings.resetHint')}

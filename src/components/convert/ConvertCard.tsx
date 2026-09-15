@@ -1,5 +1,4 @@
 import { AnimatePresence, motion } from 'motion/react';
-import { openPath, revealItemInDir } from '@tauri-apps/plugin-opener';
 import {
   ArrowRight,
   Check,
@@ -21,6 +20,7 @@ import { useTranslation } from '@/i18n';
 import type { TranslationKey } from '@/i18n';
 import { cn } from '@/lib/cn';
 import { basename, clampPercent, formatBytes } from '@/lib/format';
+import { IS_MOBILE, openFile, revealFile } from '@/lib/platform';
 import type { ConvertJob } from '@/types';
 
 interface ConvertCardProps {
@@ -119,7 +119,7 @@ export const ConvertCard = memo(function ConvertCard({
                 label={t('convert.remove')}
                 size="sm"
                 tone="danger"
-                className="opacity-0 transition-opacity duration-150 group-hover:opacity-100 focus-visible:opacity-100"
+                className="reveal-on-hover transition-opacity duration-150"
                 onClick={() => onRemove(job.id)}
               />
             )}
@@ -174,12 +174,16 @@ export const ConvertCard = memo(function ConvertCard({
 
             {isDone && job.outputPath && (
               <div className="flex items-center gap-2">
-                <span className="metric min-w-0 flex-1 truncate text-[11.5px] text-fg-faint">
-                  {basename(job.outputPath)}
-                </span>
+                {/* Beside two buttons a phone has room for a few letters of the
+                    name, which the title above already gives in full. */}
+                {!IS_MOBILE && (
+                  <span className="metric min-w-0 flex-1 truncate text-[11.5px] text-fg-faint">
+                    {basename(job.outputPath)}
+                  </span>
+                )}
                 <button
                   type="button"
-                  onClick={() => void openPath(job.outputPath!)}
+                  onClick={() => void openFile(job.outputPath!)}
                   className="flex shrink-0 items-center gap-1 rounded-[5px] px-1.5 py-1 text-[12px] font-medium text-accent transition-colors hover:bg-accent-soft"
                 >
                   <SquareArrowOutUpRight size={12} />
@@ -187,7 +191,7 @@ export const ConvertCard = memo(function ConvertCard({
                 </button>
                 <button
                   type="button"
-                  onClick={() => void revealItemInDir(job.outputPath!)}
+                  onClick={() => void revealFile(job.outputPath!)}
                   className="flex shrink-0 items-center gap-1 rounded-[5px] px-1.5 py-1 text-[12px] font-medium text-fg-muted transition-colors hover:bg-surface-hover hover:text-fg"
                 >
                   <FolderOpen size={12} />

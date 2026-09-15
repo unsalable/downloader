@@ -11,6 +11,8 @@
     "tauri": "tauri",
     "app:dev": "tauri dev",
     "app:build": "tauri build",
+    "android:dev": "tauri android dev",
+    "android:build": "tauri android build --apk --split-per-abi --target aarch64 armv7 x86_64",
     "test:rust": "cargo test --manifest-path src-tauri/Cargo.toml",
     "test:online": "cargo test --manifest-path src-tauri/Cargo.toml --test pipeline -- --ignored --test-threads=1 --nocapture",
     "test:all": "npm run build && npm run test:rust",

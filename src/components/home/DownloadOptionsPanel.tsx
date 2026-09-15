@@ -31,6 +31,7 @@ import {
   watermarkState,
 } from '@/lib/downloadOptions';
 import { formatBytes, truncateMiddle } from '@/lib/format';
+import { IS_MOBILE } from '@/lib/platform';
 import * as ipc from '@/services/ipc';
 import type { DownloadOptions } from '@/stores/useAnalysisStore';
 import { useToolsStore } from '@/stores/useToolsStore';
@@ -206,13 +207,16 @@ export function DownloadOptionsPanel({
               {truncateMiddle(outputDir, 46)}
             </span>
           </Tooltip>
-          <button
-            type="button"
-            onClick={pickFolder}
-            className="shrink-0 rounded-md px-2 py-1 text-[12.5px] font-medium text-accent transition-colors hover:bg-accent-soft"
-          >
-            {t('options.change')}
-          </button>
+          {/* Android has no folder picker that yields a writable path. */}
+          {!IS_MOBILE && (
+            <button
+              type="button"
+              onClick={pickFolder}
+              className="shrink-0 rounded-md px-2 py-1 text-[12.5px] font-medium text-accent transition-colors hover:bg-accent-soft"
+            >
+              {t('options.change')}
+            </button>
+          )}
         </div>
       </div>
 

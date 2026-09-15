@@ -2,6 +2,7 @@ import { AnimatePresence, motion } from 'motion/react';
 import { AlertTriangle, CheckCircle2, Info, X, XCircle } from 'lucide-react';
 
 import { cn } from '@/lib/cn';
+import { IS_MOBILE } from '@/lib/platform';
 import { useToastStore, type ToastTone } from '@/stores/useToastStore';
 
 const ICONS: Record<ToastTone, typeof Info> = {
@@ -26,7 +27,11 @@ export function Toaster() {
     <div
       // Non-interactive wrapper so the column never blocks clicks on the app
       // behind it; each card re-enables pointer events for itself.
-      className="pointer-events-none fixed bottom-5 right-5 z-[950] flex w-[340px] flex-col gap-2.5"
+      className={cn(
+        'pointer-events-none fixed z-[950] flex flex-col gap-2.5',
+        // On a phone the column spans the screen, clear of the bottom tabs.
+        IS_MOBILE ? 'inset-x-3 bottom-[74px]' : 'bottom-5 right-5 w-[340px]',
+      )}
       role="region"
       aria-live="polite"
     >

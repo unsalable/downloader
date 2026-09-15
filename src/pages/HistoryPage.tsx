@@ -1,5 +1,4 @@
 import { AnimatePresence, motion } from 'motion/react';
-import { openPath, revealItemInDir } from '@tauri-apps/plugin-opener';
 import {
   Download,
   FileWarning,
@@ -22,6 +21,7 @@ import { useThumbnail } from '@/hooks/useThumbnail';
 import { useTranslation } from '@/i18n';
 import { cn } from '@/lib/cn';
 import { basename, formatBytes, formatDate } from '@/lib/format';
+import { IS_MOBILE, openFile, revealFile } from '@/lib/platform';
 import * as ipc from '@/services/ipc';
 import { useToastStore } from '@/stores/useToastStore';
 import type { HistoryEntry } from '@/types';
@@ -100,8 +100,14 @@ export function HistoryPage({ onGoHome }: { onGoHome: () => void }) {
 
   return (
     <div className="mx-auto w-full max-w-[820px] px-6 pb-12">
-      <div className="sticky top-0 z-10 -mx-6 flex items-center gap-3 bg-bg/85 px-6 py-3 backdrop-blur-xl">
-        <div className="w-[260px]">
+      <div
+        className={cn(
+          'sticky top-0 z-10 -mx-6 flex items-center bg-bg/85 px-6 py-3 backdrop-blur-xl',
+          // On a phone the search field takes the first line to itself.
+          IS_MOBILE ? 'flex-wrap gap-x-3 gap-y-1.5' : 'gap-3',
+        )}
+      >
+        <div className={IS_MOBILE ? 'w-full' : 'w-[260px]'}>
           <TextInput
             value={query}
             onChange={(event) => setQuery(event.target.value)}
@@ -201,6 +207,8 @@ const HistoryRow = memo(function HistoryRow({
       className={cn(
         'group flex items-center gap-3 rounded-[var(--radius-card)] border border-[var(--border)]',
         'bg-surface p-2.5 transition-colors duration-200 hover:border-[var(--border-strong)]',
+        // Four buttons beside the title leave a phone no room to read it.
+        IS_MOBILE && 'flex-wrap',
       )}
     >
       <div className="relative aspect-video w-[88px] shrink-0 overflow-hidden rounded-lg bg-surface-sunken">
@@ -230,20 +238,25 @@ const HistoryRow = memo(function HistoryRow({
         )}
       </div>
 
-      <div className="flex shrink-0 items-center gap-0.5">
+      <div
+        className={cn(
+          'flex shrink-0 items-center gap-0.5',
+          IS_MOBILE && '-mb-1 w-full justify-end border-t border-[var(--border)] pt-1.5',
+        )}
+      >
         {entry.fileExists && (
           <>
             <IconButton
               icon={<SquareArrowOutUpRight size={14} />}
               label={t('history.open')}
               size="sm"
-              onClick={() => void openPath(entry.filePath)}
+              onClick={() => void openFile(entry.filePath)}
             />
             <IconButton
               icon={<FolderOpen size={14} />}
               label={t('history.folder')}
               size="sm"
-              onClick={() => void revealItemInDir(entry.filePath)}
+              onClick={() => void revealFile(entry.filePath)}
             />
           </>
         )}

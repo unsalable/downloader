@@ -279,6 +279,28 @@
   .no-drag {
     -webkit-user-drag: none;
   }
+
+  /* A strip that scrolls sideways under a finger; a bar under it is noise. */
+  .no-scrollbar {
+    scrollbar-width: none;
+  }
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+
+  /* Row actions that stay out of the way until the pointer is over the row.
+     A touch screen has no hover to reveal them with, so there they are simply
+     always shown. */
+  @media (hover: hover) {
+    .reveal-on-hover {
+      opacity: 0;
+    }
+    .group:hover .reveal-on-hover,
+    .reveal-on-hover:focus-within,
+    .reveal-on-hover:focus-visible {
+      opacity: 1;
+    }
+  }
 }
 
 /* ---------------------------------------------------------------------------

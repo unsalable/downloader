@@ -102,7 +102,9 @@ impl Default for Settings {
             start_with_windows: false,
             minimize_to_tray: true,
             close_to_tray: false,
-            clipboard_monitoring: true,
+            // Android announces every clipboard read with a banner, and its share
+            // sheet is the natural way to hand a link over anyway.
+            clipboard_monitoring: !cfg!(target_os = "android"),
             notifications_enabled: true,
             notify_on_complete: true,
             notify_on_error: true,
@@ -121,7 +123,8 @@ impl Default for Settings {
             show_animated_background: true,
 
             low_resource_mode: false,
-            hardware_acceleration: true,
+            // The GPU pass is an NVIDIA encoder; a phone would only ever fail it.
+            hardware_acceleration: !cfg!(target_os = "android"),
             cache_limit_mb: 256,
 
             ffmpeg_path: None,

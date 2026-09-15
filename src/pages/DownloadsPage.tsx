@@ -60,11 +60,11 @@ export function DownloadsPage({ onGoHome }: { onGoHome: () => void }) {
 
   return (
     <div className="mx-auto w-full max-w-[760px] px-6 pb-12">
-      <div className="sticky top-0 z-10 -mx-6 flex items-center gap-2 bg-bg/85 px-6 py-3 backdrop-blur-xl">
+      <div className="sticky top-0 z-10 -mx-6 flex flex-wrap items-center gap-2 bg-bg/85 px-6 py-3 backdrop-blur-xl">
         <span className="text-[12.5px] text-fg-muted">
           {t('topbar.activeCount', { n: groups.active.length })}
         </span>
-        <div className="ml-auto flex items-center gap-1.5">
+        <div className="ml-auto flex flex-wrap items-center justify-end gap-1.5">
           {anyRunning && (
             <Button
               size="sm"

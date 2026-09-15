@@ -480,6 +480,8 @@ impl QueueManager {
         self.persist();
         self.emit_task(id);
         self.emit_changed();
+        #[cfg(target_os = "android")]
+        crate::android::announce_media(&self.app, &path);
         crate::notify::download_complete(&self.app, &self.settings(), &entry);
     }
 

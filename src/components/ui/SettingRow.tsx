@@ -24,17 +24,19 @@ export function SettingRow({
     <div
       className={cn(
         'flex gap-4 px-4 py-3.5',
-        stacked ? 'flex-col' : 'items-center justify-between',
+        // Wrapping lets a wide control drop under its label on a narrow screen;
+        // the label's minimum width is what decides when that happens.
+        stacked ? 'flex-col' : 'flex-wrap items-center justify-between',
         className,
       )}
     >
-      <div className={cn('min-w-0', stacked ? 'w-full' : 'flex-1')}>
+      <div className={cn(stacked ? 'w-full min-w-0' : 'min-w-[min(100%,12rem)] flex-1')}>
         <div className="text-[13.5px] font-medium text-fg">{title}</div>
         {description && (
           <p className="mt-0.5 text-[12.5px] leading-relaxed text-fg-muted">{description}</p>
         )}
       </div>
-      {control && <div className={cn('shrink-0', stacked && 'w-full')}>{control}</div>}
+      {control && <div className={cn('max-w-full shrink-0', stacked && 'w-full')}>{control}</div>}
       {children}
     </div>
   );

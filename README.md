@@ -1,14 +1,16 @@
 # Universal Downloader
 
-A Windows desktop app for downloading media from a link. Paste a URL, it reads
-what the source publishes, shows the real qualities on offer, and downloads the
-one you pick. No ads, no account, no telemetry.
+An app for Windows and Android that downloads media from a link. Paste a URL,
+it reads what the source publishes, shows the real qualities on offer, and
+downloads the one you pick. No ads, no account, no telemetry.
 
 Built with Tauri 2, React 19, TypeScript and Rust.
 
 ## Download
 
-Grab the installer from the [releases page](https://github.com/unsalable/downloader/releases/latest):
+Everything is on the [releases page](https://github.com/unsalable/downloader/releases/latest).
+
+### Windows
 
 - [`UniversalDownloader_x64-setup.exe`](https://github.com/unsalable/downloader/releases/latest/download/UniversalDownloader_x64-setup.exe) -- normal install, per user, no admin rights needed.
 - [`UniversalDownloader_x64.msi`](https://github.com/unsalable/downloader/releases/latest/download/UniversalDownloader_x64.msi) -- for managed or scripted deployment.
@@ -18,6 +20,21 @@ updates it in place; settings, history and the downloaded tools are kept.
 
 Windows 10/11, 64-bit. The installers are not code-signed, so SmartScreen warns on first
 run: choose **More info -> Run anyway**.
+
+### Android
+
+- [`UniversalDownloader_android_arm64.apk`](https://github.com/unsalable/downloader/releases/latest/download/UniversalDownloader_android_arm64.apk) -- practically every phone from the last several years. Pick this one if unsure.
+- [`UniversalDownloader_android_armv7.apk`](https://github.com/unsalable/downloader/releases/latest/download/UniversalDownloader_android_armv7.apk) -- older 32-bit phones.
+- [`UniversalDownloader_android_x86_64.apk`](https://github.com/unsalable/downloader/releases/latest/download/UniversalDownloader_android_x86_64.apk) -- emulators and x86 Chromebooks.
+
+Android 7.0 or newer. The app is not on Google Play: open the APK on the phone
+and allow installs from that source when Android asks. Every build is signed
+with the same key, so a newer APK installs over the old one and keeps settings
+and history.
+
+Downloads land in `Download/Universal Downloader`, where the gallery and file
+manager find them. To download from another app, use its **Share** button and
+pick Universal Downloader.
 
 ---
 
@@ -99,6 +116,30 @@ The trait is used for static dispatch rather than behind `dyn`: its methods are
 async and the set of providers is closed, so calling them directly keeps the
 path allocation-free while still making the shared contract explicit.
 
+### Android
+
+The phone build is the same Rust core and the same interface. What differs is
+confined to `src-tauri/src/android.rs`, a Kotlin plugin in
+`src-tauri/gen/android` (`BridgePlugin.kt`, `BackgroundWorkService.kt`) and a
+handful of `IS_MOBILE` branches in the front end.
+
+- **Tools.** Android refuses to run a file an app has downloaded, so Python 3,
+  FFmpeg, ffprobe and QuickJS ship inside the APK as native libraries -- the
+  packaging maintained by [youtubedl-android](https://github.com/JunkFood02/youtubedl-android),
+  whose `jni` folders the Gradle build extracts. Their support libraries are
+  unpacked once per install. yt-dlp itself is a Python program, so it is still
+  fetched on request and kept up to date exactly as on Windows; the bundled
+  interpreter runs it, and QuickJS is passed to it as the JavaScript runtime.
+- **Files.** Downloads are written to the shared Downloads folder and then
+  announced to the media index. Files picked for conversion arrive as content
+  URIs, so they are copied into the cache first, and results go to Downloads.
+- **Background.** A foreground service runs while anything is downloading or
+  converting; without it Android freezes the app as soon as it leaves the
+  screen. It stops when the queue is empty.
+- **Interface.** A bottom tab bar replaces the sidebar, Back returns to Home,
+  and links shared from other apps are analysed on arrival. Desktop-only
+  settings (tray, autostart, shortcuts, tool paths, folder pickers) are hidden.
+
 ### Two external tools
 
 Neither is bundled. Both are fetched once, on request, into the app's own data
@@ -177,12 +218,30 @@ npm run app:dev      # Vite + Tauri, hot reload
 Other scripts:
 
 ```bash
-npm run build        # type-check and build the front end
-npm run app:build    # production build + NSIS installer
-npm run test:rust    # Rust unit and hermetic integration tests
-npm run test:online  # network tests (installs the engine, downloads real files)
-npm run lint:rust    # clippy, warnings denied
+npm run build          # type-check and build the front end
+npm run app:build      # production build + NSIS installer
+npm run android:build  # signed release APKs for arm64, armv7 and x86_64
+npm run android:dev    # run on a connected phone or emulator
+npm run test:rust      # Rust unit and hermetic integration tests
+npm run test:online    # network tests (installs the engine, downloads real files)
+npm run lint:rust      # clippy, warnings denied
 ```
+
+The Android build needs JDK 17, the Android SDK with NDK r29, and the Rust
+targets `aarch64-linux-android`, `armv7-linux-androideabi` and
+`x86_64-linux-android`, with `JAVA_HOME`, `ANDROID_HOME` and `NDK_HOME` set.
+Release APKs are signed from `src-tauri/gen/android/keystore.properties`, which
+is not in the repository:
+
+```properties
+storeFile=C:/path/to/universal-downloader.jks
+storePassword=...
+keyAlias=universal-downloader
+keyPassword=...
+```
+
+Without it the release build is produced unsigned. Keep the keystore safe: an
+APK signed with a different key cannot update an installed copy.
 
 There is no JavaScript linter configured. `typescript-eslint` does not yet
 support TypeScript 7, and forcing it past its peer range would leave a parser
@@ -235,7 +294,8 @@ python scripts/generate_licenses.py   # third-party licence list for About
 
 ## Where things are stored
 
-Everything the app writes lives under `%APPDATA%\UniversalDownloader`:
+Everything the app writes lives under `%APPDATA%\UniversalDownloader` (on
+Android, in the app's private storage):
 
 ```
 library.db     settings, history and the durable queue (SQLite, WAL)

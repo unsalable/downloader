@@ -145,6 +145,18 @@ pub fn base_args(settings: &Settings) -> Vec<String> {
         args.push(format!("User-Agent:{agent}"));
     }
 
+    // YouTube's player has to be run through JavaScript before most formats
+    // are offered. yt-dlp only looks for Deno by default, which a phone does
+    // not have; the APK carries QuickJS for this.
+    #[cfg(target_os = "android")]
+    {
+        args.push("--js-runtimes".to_string());
+        args.push(format!(
+            "quickjs:{}",
+            crate::android::quickjs_binary().display()
+        ));
+    }
+
     args
 }
 

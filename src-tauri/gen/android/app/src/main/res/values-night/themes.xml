@@ -1,0 +1,8 @@
+<resources xmlns:tools="http://schemas.android.com/tools">
+    <!-- Base application theme. -->
+    <style name="Theme.universal_downloader" parent="Theme.MaterialComponents.DayNight.NoActionBar">
+        <item name="android:windowBackground">@color/app_background</item>
+        <item name="colorPrimary">@color/app_accent</item>
+        <item name="colorAccent">@color/app_accent</item>
+    </style>
+</resources>

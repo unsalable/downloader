@@ -1,6 +1,8 @@
 import { motion } from 'motion/react';
 
 import { useTranslation } from '@/i18n';
+import { cn } from '@/lib/cn';
+import { IS_MOBILE } from '@/lib/platform';
 
 /**
  * The Home headline. Entrance is a short, staggered rise -- it plays once on
@@ -15,7 +17,10 @@ export function Hero() {
         initial={{ opacity: 0, y: 14 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.55, ease: [0.22, 1, 0.36, 1] }}
-        className="text-[44px] font-semibold leading-[1.04] tracking-[-0.045em] text-fg"
+        className={cn(
+          'font-semibold leading-[1.04] tracking-[-0.045em] text-fg',
+          IS_MOBILE ? 'text-[36px]' : 'text-[44px]',
+        )}
       >
         {t('hero.title1')}
         <br />

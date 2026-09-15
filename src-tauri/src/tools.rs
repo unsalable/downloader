@@ -5,6 +5,11 @@
 //! cleanest to keep as a separate process the user opts into. Both are fetched
 //! once, on request, into the app's own data directory -- and a copy the user
 //! already has on PATH is preferred over downloading anything at all.
+//!
+//! Android differs in one respect: nothing an app downloads may be executed
+//! there, so FFmpeg ships inside the APK and is always present. yt-dlp is still
+//! fetched on request -- it is a Python program, and the interpreter that runs
+//! it is the part the APK carries.
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -21,14 +26,24 @@ use crate::model::{ToolKind, ToolSource, ToolStatus, ToolsState};
 use crate::settings::Settings;
 use crate::{log_info, log_warn, paths, process};
 
+#[cfg(not(target_os = "android"))]
 const ENGINE_URL: &str = "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe";
+
+/// The platform-independent zipapp, run by the Python the APK bundles.
+#[cfg(target_os = "android")]
+const ENGINE_URL: &str = "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp";
 
 /// The shared build is 77 MB against 170 MB for the static one, and the extra
 /// DLLs land in the same directory as the executable.
+#[cfg(not(target_os = "android"))]
 const FFMPEG_URL: &str =
     "https://github.com/yt-dlp/FFmpeg-Builds/releases/latest/download/ffmpeg-master-latest-win64-gpl-shared.zip";
 
+#[cfg(not(target_os = "android"))]
 const ENGINE_EXE: &str = "yt-dlp.exe";
+#[cfg(target_os = "android")]
+const ENGINE_EXE: &str = "yt-dlp";
+#[cfg(not(target_os = "android"))]
 const FFMPEG_EXE: &str = "ffmpeg.exe";
 
 static STATE: Lazy<RwLock<ToolsState>> = Lazy::new(|| {
@@ -98,10 +113,27 @@ pub fn require_ffmpeg() -> AppResult<PathBuf> {
     ffmpeg_path().ok_or(AppError::FfmpegMissing)
 }
 
+/// What yt-dlp is given as `--ffmpeg-location`, so it uses the same FFmpeg the
+/// app does rather than whatever is on PATH.
+///
+/// Normally that is the containing directory. On Android the binaries are
+/// named `libffmpeg.so` and `libffprobe.so`, which yt-dlp would not find by
+/// looking in a directory; handed the file itself, it takes the name as given
+/// and derives the ffprobe beside it by substituting the word.
+pub fn ffmpeg_location() -> Option<String> {
+    let ffmpeg = ffmpeg_path()?;
+    #[cfg(target_os = "android")]
+    let location = Some(ffmpeg.as_path());
+    #[cfg(not(target_os = "android"))]
+    let location = ffmpeg.parent();
+    location.map(|path| path.to_string_lossy().into_owned())
+}
+
 fn managed_engine() -> AppResult<PathBuf> {
     Ok(paths::tools_dir()?.join(ENGINE_EXE))
 }
 
+#[cfg(not(target_os = "android"))]
 fn managed_ffmpeg() -> AppResult<PathBuf> {
     Ok(paths::tools_dir()?.join("ffmpeg").join(FFMPEG_EXE))
 }
@@ -130,6 +162,12 @@ pub async fn discovered(settings: &Settings) -> ToolsState {
 
 /// The caller holds `DISCOVERY`.
 async fn discover_all(settings: &Settings) -> ToolsState {
+    // Neither tool can start until the libraries they link against have been
+    // unpacked from the APK. That is a no-op on every launch but the first
+    // after an install or update.
+    #[cfg(target_os = "android")]
+    prepare_android_runtime(false).await;
+
     let engine = detect_kind(ToolKind::Engine, settings).await;
     let ffmpeg = detect_kind(ToolKind::Ffmpeg, settings).await;
 
@@ -161,46 +199,72 @@ fn slot(state: &mut ToolsState, kind: ToolKind) -> &mut ToolStatus {
 async fn detect_kind(kind: ToolKind, settings: &Settings) -> ToolStatus {
     match kind {
         ToolKind::Engine => {
-            detect(
-                kind,
-                settings.engine_path.as_deref(),
-                managed_engine().ok(),
-                "yt-dlp",
-                &["--version".to_string()],
-            )
-            .await
+            detect(kind, engine_candidates(settings), &["--version".to_string()]).await
         }
         ToolKind::Ffmpeg => {
-            detect(
-                kind,
-                settings.ffmpeg_path.as_deref(),
-                managed_ffmpeg().ok(),
-                "ffmpeg",
-                &["-version".to_string()],
-            )
-            .await
+            detect(kind, ffmpeg_candidates(settings), &["-version".to_string()]).await
         }
     }
 }
 
-async fn detect(
-    kind: ToolKind,
+/// Order matters: an explicit choice wins, then the copy this app manages,
+/// then whatever the system already provides.
+#[cfg(not(target_os = "android"))]
+fn engine_candidates(settings: &Settings) -> Vec<(PathBuf, ToolSource)> {
+    ordered_candidates(settings.engine_path.as_deref(), managed_engine().ok(), "yt-dlp")
+}
+
+#[cfg(not(target_os = "android"))]
+fn ffmpeg_candidates(settings: &Settings) -> Vec<(PathBuf, ToolSource)> {
+    ordered_candidates(settings.ffmpeg_path.as_deref(), managed_ffmpeg().ok(), "ffmpeg")
+}
+
+#[cfg(not(target_os = "android"))]
+fn ordered_candidates(
     custom: Option<&str>,
     managed: Option<PathBuf>,
     path_name: &str,
-    version_args: &[String],
-) -> ToolStatus {
-    // Order matters: an explicit choice wins, then the copy this app manages,
-    // then whatever the system already provides.
-    let candidates: Vec<(PathBuf, ToolSource)> = [
+) -> Vec<(PathBuf, ToolSource)> {
+    [
         custom.map(|value| (PathBuf::from(value), ToolSource::Custom)),
         managed.map(|value| (value, ToolSource::Managed)),
         process::which(path_name).map(|value| (value, ToolSource::System)),
     ]
     .into_iter()
     .flatten()
-    .collect();
+    .collect()
+}
 
+/// A custom path cannot be honoured on Android: a file the user points at
+/// would not be allowed to run. Only the managed copy counts.
+#[cfg(target_os = "android")]
+fn engine_candidates(_settings: &Settings) -> Vec<(PathBuf, ToolSource)> {
+    managed_engine()
+        .ok()
+        .map(|path| (path, ToolSource::Managed))
+        .into_iter()
+        .collect()
+}
+
+#[cfg(target_os = "android")]
+fn ffmpeg_candidates(_settings: &Settings) -> Vec<(PathBuf, ToolSource)> {
+    vec![(crate::android::ffmpeg_binary(), ToolSource::Bundled)]
+}
+
+#[cfg(target_os = "android")]
+async fn prepare_android_runtime(force: bool) {
+    match tokio::task::spawn_blocking(move || crate::android::prepare_runtime(force)).await {
+        Ok(Ok(())) => {}
+        Ok(Err(err)) => log_warn!("tools", "the bundled runtime could not be unpacked: {err}"),
+        Err(err) => log_warn!("tools", "unpacking the bundled runtime panicked: {err}"),
+    }
+}
+
+async fn detect(
+    kind: ToolKind,
+    candidates: Vec<(PathBuf, ToolSource)>,
+    version_args: &[String],
+) -> ToolStatus {
     for (path, source) in candidates {
         if !path.is_file() {
             continue;
@@ -319,6 +383,17 @@ async fn install_engine(settings: &Settings, on_progress: InstallProgress<'_>) -
     replace_path(&temp, &target)
 }
 
+/// FFmpeg is part of the APK, so "installing" it can only mean unpacking its
+/// libraries again -- which is also the repair for a damaged copy.
+#[cfg(target_os = "android")]
+async fn install_ffmpeg(_settings: &Settings, on_progress: InstallProgress<'_>) -> AppResult<()> {
+    on_progress(0, None, "extracting");
+    tokio::task::spawn_blocking(|| crate::android::prepare_runtime(true))
+        .await
+        .map_err(|err| AppError::Other(format!("unpacking FFmpeg failed: {err}")))?
+}
+
+#[cfg(not(target_os = "android"))]
 async fn install_ffmpeg(settings: &Settings, on_progress: InstallProgress<'_>) -> AppResult<()> {
     let tools_dir = paths::tools_dir()?;
     let dir = tools_dir.join("ffmpeg");
@@ -407,6 +482,7 @@ fn remove_path(path: &Path) {
 
 /// Pull just the executables and their DLLs out of the release archive.
 /// `ffplay` is skipped: nothing in this app plays media back.
+#[cfg(not(target_os = "android"))]
 fn extract_ffmpeg(archive: &Path, dest: &Path) -> AppResult<()> {
     let file = std::fs::File::open(archive)?;
     let mut zip = zip::ZipArchive::new(file)
