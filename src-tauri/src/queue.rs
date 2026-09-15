@@ -432,7 +432,10 @@ impl QueueManager {
         match outcome {
             Ok(result) => self.complete(&task.id, result),
             Err(AppError::Canceled) => self.settle_interruption(&task.id, control.state()),
-            Err(err) => self.fail(&task.id, err),
+            Err(err) => {
+                let err = crate::net::explain_failure(&self.app, err).await;
+                self.fail(&task.id, err)
+            }
         }
     }
 

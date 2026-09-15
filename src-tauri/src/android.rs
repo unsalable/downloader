@@ -49,6 +49,10 @@ const FFMPEG: &str = "libffmpeg.so";
 const FFMPEG_ARCHIVE: &str = "libffmpeg.zip.so";
 const QUICKJS: &str = "libqjs.so";
 
+/// Kept in its own directory: the unpacked runtime is replaced whole.
+const PYTHON_STARTUP: &str = "python-startup";
+const SITECUSTOMIZE: &str = include_str!("sitecustomize.py");
+
 /// The code `BridgePlugin.installApk` rejects with when the user did not let
 /// this app install others.
 const INSTALL_PERMISSION_DENIED: &str = "INSTALL_PERMISSION_DENIED";
@@ -129,7 +133,8 @@ fn runtime_dir(name: &str) -> AppResult<PathBuf> {
     Ok(paths::tools_dir()?.join("runtime").join(name))
 }
 
-/// Unpack the libraries Python and FFmpeg link against.
+/// Unpack the libraries Python and FFmpeg link against, and put the app's own
+/// start-up code for Python beside them.
 ///
 /// Each archive is stamped with the size, modification time and location of
 /// the copy it came from. An app update installs the APK's libraries afresh,
@@ -137,7 +142,25 @@ fn runtime_dir(name: &str) -> AppResult<PathBuf> {
 /// know anything about version numbers.
 pub fn prepare_runtime(force: bool) -> AppResult<()> {
     unpack(PYTHON_ARCHIVE, "python", force)?;
-    unpack(FFMPEG_ARCHIVE, "ffmpeg", force)
+    unpack(FFMPEG_ARCHIVE, "ffmpeg", force)?;
+    write_python_startup()
+}
+
+/// Python imports a `sitecustomize` module from its path before the program it
+/// runs; this app's gives the engine the same DNS fallback that the app's own
+/// requests have (see `net::dns`). It is written whenever it differs from the
+/// copy built into this version of the app.
+fn write_python_startup() -> AppResult<()> {
+    let dir = runtime_dir(PYTHON_STARTUP)?;
+    let file = dir.join("sitecustomize.py");
+    if std::fs::read(&file).ok().as_deref() == Some(SITECUSTOMIZE.as_bytes()) {
+        return Ok(());
+    }
+    std::fs::create_dir_all(&dir)?;
+    let staging = file.with_extension("staging");
+    std::fs::write(&staging, SITECUSTOMIZE)?;
+    std::fs::rename(&staging, &file)?;
+    Ok(())
 }
 
 fn unpack(archive_name: &str, dir_name: &str, force: bool) -> AppResult<()> {
@@ -232,9 +255,9 @@ fn extract(archive: &Path, dest: &Path) -> AppResult<()> {
 /// A binary from the native library directory is started directly. Anything
 /// else is a Python program -- in practice yt-dlp -- and is handed to the
 /// bundled interpreter. Both get the same environment: the unpacked library
-/// directories, the interpreter's home and certificate bundle, and a writable
-/// temp directory. FFmpeg is started by yt-dlp as well as by the app, so one
-/// environment has to suit both.
+/// directories, the interpreter's home, certificate bundle and start-up code,
+/// and a writable temp directory. FFmpeg is started by yt-dlp as well as by
+/// the app, so one environment has to suit both.
 pub fn command(program: &Path) -> Command {
     let env = environment();
 
@@ -260,8 +283,15 @@ pub fn command(program: &Path) -> Command {
         _ => env.native_library_dir.display().to_string(),
     };
 
+    // The phone's resolver has lately been failing where the public ones
+    // answered: the engine asks those first instead of waiting on it again.
+    if crate::net::dns::prefer_fallback() {
+        cmd.env("UD_DNS_FALLBACK_FIRST", "1");
+    }
+
     cmd.env("LD_LIBRARY_PATH", library_path)
         .env("PYTHONHOME", python.join("usr"))
+        .env("PYTHONPATH", runtime_dir(PYTHON_STARTUP).unwrap_or_default())
         .env("SSL_CERT_FILE", python.join("usr/etc/tls/cert.pem"))
         .env("HOME", &env.files_dir)
         .env("TMPDIR", &env.cache_dir)
@@ -409,6 +439,63 @@ pub async fn open_downloads(app: AppHandle) -> AppResult<()> {
     blocking(app, |bridge| bridge.call::<serde_json::Value>("openDownloads", ()))
         .await
         .map(|_| ())
+}
+
+/// The app's page in the system settings, where it is allowed to use Wi-Fi and
+/// mobile data.
+pub async fn open_app_settings(app: AppHandle) -> AppResult<()> {
+    blocking(app, |bridge| bridge.call::<serde_json::Value>("openAppSettings", ()))
+        .await
+        .map(|_| ())
+}
+
+/// What Android knows about this app's connection.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NetworkStatus {
+    /// The phone has a network, whether or not this app may use it.
+    pub connected: bool,
+    /// Android is not letting this app use the network: data restrictions,
+    /// battery rules, or a VPN that blocks connections without it.
+    pub blocked: bool,
+    #[serde(default)]
+    pub vpn: bool,
+    /// The network has been checked to reach the internet.
+    #[serde(default)]
+    pub validated: bool,
+    /// The Private DNS server in use: a host name, or "automatic".
+    #[serde(default)]
+    pub private_dns: Option<String>,
+    #[serde(default)]
+    pub data_saver: bool,
+}
+
+impl NetworkStatus {
+    /// One line for the technical details, e.g. "connected, VPN, Private DNS
+    /// dns.example".
+    pub fn describe(&self) -> String {
+        let state = match (self.connected, self.blocked, self.validated) {
+            (false, _, _) => "no network",
+            (true, true, _) => "connected, blocked for this app",
+            (true, false, true) => "connected",
+            (true, false, false) => "connected, internet not confirmed",
+        };
+        let mut facts = vec![state.to_string()];
+        if self.vpn {
+            facts.push("VPN".into());
+        }
+        if let Some(server) = &self.private_dns {
+            facts.push(format!("Private DNS {server}"));
+        }
+        if self.data_saver {
+            facts.push("Data Saver".into());
+        }
+        facts.join(", ")
+    }
+}
+
+pub async fn network_status(app: AppHandle) -> AppResult<NetworkStatus> {
+    blocking(app, |bridge| bridge.call::<NetworkStatus>("networkStatus", ())).await
 }
 
 /// Let the user choose media files to convert.

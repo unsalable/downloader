@@ -307,6 +307,8 @@ export const tr: Record<TranslationKey, string> = {
   'about.privacyTitle': 'İndirmeleriniz cihazınızda kalır.',
   'about.privacyBody':
     'Hesap yok, reklam yok, analitik yok. Bağlantılar bu makinede çalışan araçlarla çözümlenir ve yalnızca medya kaynağının kendisine ağ isteği yapılır.',
+  'about.privacyBodyMobile':
+    "Hesap yok, reklam yok, analitik yok. Bağlantılar telefonunuzda çözümlenir. İstekler yalnızca medya kaynağına, güncellemeleri denetlemek için GitHub'a ve telefonunuzun DNS'i bir siteyi bulamazsa adresini sormak için herkese açık bir DNS çözümleyicisine (Cloudflare veya Google) gider.",
   'about.licenses': 'Açık kaynak kütüphaneler',
   'about.externalTools': 'Harici araçlar',
 
@@ -373,6 +375,12 @@ export const tr: Record<TranslationKey, string> = {
     'Hiçbir sağlayıcı bu adresten medya okuyamadı ve doğrudan bir medya dosyası da bulunamadı.',
   'error.network.title': 'Kaynağa ulaşamadık',
   'error.network.message': 'Bağlantınızı kontrol edip tekrar deneyin.',
+  'error.offline.title': 'İnternet bağlantısı yok',
+  'error.offline.message': "Wi-Fi'ye veya mobil veriye bağlanıp tekrar deneyin.",
+  'error.networkBlocked.title': 'Universal Downloader internete çıkamıyor',
+  'error.networkBlocked.message':
+    "Telefonunuz bağlı ama bu uygulama bağlantıyı kullanamıyor. Ayarlardan Universal Downloader'ın Wi-Fi ve mobil veri kullanmasına izin verin, varsa VPN, güvenlik duvarı veya reklam engelleyiciyi kontrol edip tekrar deneyin.",
+  'error.networkBlocked.action': 'Uygulama ayarlarını aç',
   'error.forbidden.title': 'Bu medyaya erişemedik',
   'error.forbidden.message':
     'Kaynak oturum açmayı gerektiriyor olabilir veya şu anda herkese açık indirmeyi desteklemiyor olabilir.',

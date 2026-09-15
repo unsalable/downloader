@@ -74,7 +74,7 @@ export function AboutPage() {
           <div>
             <h3 className="text-[13.5px] font-semibold text-fg">{t('about.privacyTitle')}</h3>
             <p className="mt-1 text-[12.5px] leading-relaxed text-fg-muted">
-              {t('about.privacyBody')}
+              {t(IS_MOBILE ? 'about.privacyBodyMobile' : 'about.privacyBody')}
             </p>
           </div>
         </div>

@@ -261,6 +261,7 @@ npm run app:build      # production build + NSIS installer
 npm run android:build  # signed release APKs for arm64, armv7 and x86_64
 npm run android:dev    # run on a connected phone or emulator
 npm run test:rust      # Rust unit and hermetic integration tests
+npm run test:python    # the DNS fallback the phone app loads into yt-dlp
 npm run test:online    # network tests (installs the engine, downloads real files)
 npm run lint:rust      # clippy, warnings denied
 ```
@@ -353,6 +354,13 @@ Downloads themselves go to your own Downloads folder by default.
 No account, no ads, no analytics, no telemetry. Links are resolved by tools
 running on this machine, and the only network requests made are to the media
 source itself and — when you ask for it — to GitHub to fetch the two tools.
+
+The phone app also asks GitHub whether a newer build exists. And when the
+phone's own DNS cannot find a site's address — a VPN or Private DNS server that
+does not answer, or a filter that refuses the name — the app asks a public
+DNS-over-HTTPS resolver (Cloudflare's 1.1.1.1 or Google's 8.8.8.8) instead.
+Only the site's host name is sent, and nothing is asked of it while the phone's
+DNS answers.
 
 Thumbnails are fetched once, cached on disk and handed to the interface as data
 URLs, so the content-security policy can forbid remote image origins outright

@@ -175,13 +175,20 @@ pub fn detect_platform(url: String) -> PlatformId {
 }
 
 #[tauri::command]
-pub async fn analyze_url(state: State<'_, AppState>, url: String) -> AppResult<MediaMetadata> {
+pub async fn analyze_url(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    url: String,
+) -> AppResult<MediaMetadata> {
     let settings = state.settings();
     let trimmed = url.trim();
     if trimmed.is_empty() {
         return Err(AppError::InvalidUrl("no address was given".into()));
     }
-    let metadata = providers::analyze(trimmed, &settings).await?;
+    let metadata = match providers::analyze(trimmed, &settings).await {
+        Ok(metadata) => metadata,
+        Err(err) => return Err(net::explain_failure(&app, err).await),
+    };
     providers::remember_analysis(trimmed, &settings, &metadata);
     Ok(metadata)
 }
@@ -479,6 +486,17 @@ pub async fn platform_open_file(app: AppHandle, path: String) -> AppResult<()> {
 pub async fn platform_open_downloads(app: AppHandle) -> AppResult<()> {
     #[cfg(target_os = "android")]
     return crate::android::open_downloads(app).await;
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = app;
+        android_only()
+    }
+}
+
+#[tauri::command]
+pub async fn platform_open_app_settings(app: AppHandle) -> AppResult<()> {
+    #[cfg(target_os = "android")]
+    return crate::android::open_app_settings(app).await;
     #[cfg(not(target_os = "android"))]
     {
         let _ = app;

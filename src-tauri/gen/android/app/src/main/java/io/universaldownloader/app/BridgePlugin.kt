@@ -8,6 +8,8 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Color
 import android.media.MediaScannerConnection
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
@@ -199,6 +201,55 @@ class BridgePlugin(private val activity: Activity) : Plugin(activity) {
             .getMimeTypeFromExtension(File(args.path).extension.lowercase())
         MediaScannerConnection.scanFile(activity.applicationContext, arrayOf(args.path), arrayOf(type), null)
         invoke.resolve()
+    }
+
+    /**
+     * What Android knows about this app's connection, asked when a host name
+     * could not be looked up: an app is told "No address associated with
+     * hostname" whether the phone is offline, the app is not allowed online,
+     * or a DNS server is not answering.
+     */
+    @Command
+    fun networkStatus(invoke: Invoke) {
+        val manager = activity.getSystemService(ConnectivityManager::class.java)
+        // Still the only call that reports an app blocked from the network
+        // without waiting for a callback.
+        @Suppress("DEPRECATION")
+        val blocked = manager.activeNetworkInfo?.detailedState == android.net.NetworkInfo.DetailedState.BLOCKED
+        // Null while this app is blocked, as well as when there is no network.
+        val network = manager.activeNetwork
+        val capabilities = network?.let { manager.getNetworkCapabilities(it) }
+        @Suppress("DEPRECATION")
+        val vpn = manager.allNetworks.any {
+            manager.getNetworkCapabilities(it)?.hasTransport(NetworkCapabilities.TRANSPORT_VPN) == true
+        }
+
+        val result = JSObject()
+        result.put("connected", network != null || blocked)
+        result.put("blocked", blocked)
+        result.put("vpn", vpn)
+        result.put("validated", capabilities?.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED) == true)
+        result.put("dataSaver", manager.restrictBackgroundStatus == ConnectivityManager.RESTRICT_BACKGROUND_STATUS_ENABLED)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            val link = network?.let { manager.getLinkProperties(it) }
+            val privateDns = link?.privateDnsServerName ?: if (link?.isPrivateDnsActive == true) "automatic" else null
+            privateDns?.let { result.put("privateDns", it) }
+        }
+        invoke.resolve(result)
+    }
+
+    /** This app's page in the system settings, where its data use is allowed. */
+    @Command
+    fun openAppSettings(invoke: Invoke) {
+        try {
+            activity.startActivity(
+                Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:${activity.packageName}"))
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            )
+            invoke.resolve()
+        } catch (ex: Exception) {
+            invoke.reject(ex.message ?: "the app's settings could not be opened")
+        }
     }
 
     @Command

@@ -26,7 +26,7 @@ use crate::model::{
 };
 use crate::providers::{self, detect};
 use crate::settings::Settings;
-use crate::{log_debug, paths, process, tools};
+use crate::{log_debug, net, paths, process, tools};
 
 pub const PROVIDER_ID: &str = "engine";
 
@@ -130,6 +130,13 @@ pub fn classify_engine_error(stderr: &str) -> AppError {
     // the broader 4xx check, and a missing extractor before anything else.
     if has(&["unsupported url", "no suitable extractor", "is not a valid url"]) {
         return AppError::Unsupported(first_error_line(stderr));
+    }
+
+    // A request that never reached the source says nothing about the media.
+    // It goes ahead of the checks below, which look for words such as "geo" or
+    // "paid" that the id quoted in the same line could happen to contain.
+    if net::is_lookup_failure(stderr) || has(&["network is unreachable"]) {
+        return AppError::Network(first_error_line(stderr));
     }
 
     if has(&[
@@ -870,6 +877,21 @@ mod tests {
         let err = classify_engine_error("ERROR: Unable to download webpage: getaddrinfo failed");
         assert_eq!(err.code(), "network");
         assert!(err.retryable());
+    }
+
+    #[test]
+    fn a_failed_lookup_is_a_network_error_whatever_the_id_spells() {
+        // As reported from a phone whose DNS gave no answer, and the same
+        // with the backup lookup's reason and an id that contains "geo".
+        let reported = "ERROR: [vm.tiktok] ZSq4hQv5y: Unable to download webpage: [Errno 7] No address associated with hostname (caused by TransportError('[Errno 7] No address associated with hostname'))";
+        let with_backup = "ERROR: [vm.tiktok] ZSgeo4Qv5: Unable to download webpage: [Errno 7] No address associated with hostname; backup lookup: 1.1.1.1 timed out, 8.8.8.8 timed out (caused by TransportError('...'))";
+
+        for stderr in [reported, with_backup] {
+            let err = classify_engine_error(stderr);
+            assert_eq!(err.code(), "network", "misclassified: {stderr}");
+            assert!(err.retryable());
+            assert!(err.technical().is_some_and(|detail| detail.contains("No address associated with hostname")));
+        }
     }
 
     #[test]

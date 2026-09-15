@@ -227,6 +227,14 @@ export function HomePage({
     );
   };
 
+  // What the user can do about a failure, beyond trying again.
+  const errorAction =
+    error?.code === 'engineMissing'
+      ? { label: t('setup.installNow'), onClick: installEngine }
+      : error?.code === 'networkBlocked' && IS_MOBILE
+        ? { label: t('error.networkBlocked.action'), onClick: () => void ipc.platformOpenAppSettings() }
+        : undefined;
+
   const isCollapsed = phase !== 'idle';
 
   return (
@@ -311,9 +319,7 @@ export function HomePage({
               key="error"
               error={error}
               onRetry={() => startAnalysis(url)}
-              {...(error.code === 'engineMissing'
-                ? { extraAction: { label: t('setup.installNow'), onClick: installEngine } }
-                : {})}
+              extraAction={errorAction}
             />
           )}
 

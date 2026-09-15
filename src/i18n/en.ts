@@ -306,6 +306,8 @@ export const en = {
   'about.privacyTitle': 'Your downloads stay on your device.',
   'about.privacyBody':
     'No account, no ads, no analytics. Links are resolved by tools running on this machine, and the only network requests made are to the media source itself.',
+  'about.privacyBodyMobile':
+    "No account, no ads, no analytics. Links are resolved on your phone. Requests go only to the media source, to GitHub to check for updates and, if your phone's DNS can't find a site, to a public DNS resolver (Cloudflare or Google) for its address.",
   'about.licenses': 'Open source libraries',
   'about.externalTools': 'External tools',
 
@@ -374,6 +376,12 @@ export const en = {
     'No provider could read media from this address, and no direct media file was found.',
   'error.network.title': "We couldn't reach the source",
   'error.network.message': 'Check your connection and try again.',
+  'error.offline.title': "You're offline",
+  'error.offline.message': 'Connect to Wi-Fi or mobile data and try again.',
+  'error.networkBlocked.title': "Universal Downloader can't get online",
+  'error.networkBlocked.message':
+    "Your phone is connected, but this app can't use the connection. Allow Universal Downloader to use Wi-Fi and mobile data in its settings, check any VPN, firewall or ad blocker, then try again.",
+  'error.networkBlocked.action': 'Open app settings',
   'error.forbidden.title': "We couldn't access this media",
   'error.forbidden.message':
     'The source may require login or may not currently support public downloads.',

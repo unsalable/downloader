@@ -154,6 +154,8 @@ export const sweepTempFiles = () => invoke<number>('sweep_temp_files');
 
 export const platformOpenFile = (path: string) => invoke<void>('platform_open_file', { path });
 export const platformOpenDownloads = () => invoke<void>('platform_open_downloads');
+/** The app's page in the system settings, where its network access is allowed. */
+export const platformOpenAppSettings = () => invoke<void>('platform_open_app_settings');
 export const platformPickMediaFiles = () => invoke<string[]>('platform_pick_media_files');
 export const platformSetSystemBars = (dark: boolean) =>
   invoke<void>('platform_set_system_bars', { dark });

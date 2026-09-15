@@ -21,6 +21,15 @@ pub enum AppError {
     #[error("network error: {0}")]
     Network(String),
 
+    /// The phone has no network to use.
+    #[error("offline: {0}")]
+    Offline(String),
+
+    /// The phone has a network, but this app cannot get through it: Android,
+    /// a VPN or a firewall is not letting it, or its DNS is not answering.
+    #[error("no internet access for this app: {0}")]
+    NetworkBlocked(String),
+
     #[error("access denied ({status})")]
     Forbidden { status: u16, detail: String },
 
@@ -64,6 +73,8 @@ impl AppError {
             Self::InvalidUrl(_) => "invalidUrl",
             Self::Unsupported(_) => "unsupported",
             Self::Network(_) => "network",
+            Self::Offline(_) => "offline",
+            Self::NetworkBlocked(_) => "networkBlocked",
             Self::Forbidden { .. } => "forbidden",
             Self::NotFound { .. } => "notFound",
             Self::EngineMissing => "engineMissing",
@@ -85,6 +96,8 @@ impl AppError {
         matches!(
             self,
             Self::Network(_)
+                | Self::Offline(_)
+                | Self::NetworkBlocked(_)
                 | Self::Forbidden { .. }
                 | Self::Engine(_)
                 | Self::Io(_)
@@ -103,6 +116,11 @@ impl AppError {
             "network" => (
                 "We couldn't reach the source",
                 "Check your connection and try again.",
+            ),
+            "offline" => ("You're offline", "Connect to Wi-Fi or mobile data and try again."),
+            "networkBlocked" => (
+                "Universal Downloader can't get online",
+                "Your phone is connected, but this app can't use the connection. Allow Universal Downloader to use Wi-Fi and mobile data in its settings, check any VPN, firewall or ad blocker, then try again.",
             ),
             "forbidden" => (
                 "We couldn't access this media",
@@ -184,13 +202,32 @@ impl From<std::io::Error> for AppError {
 impl From<reqwest::Error> for AppError {
     fn from(value: reqwest::Error) -> Self {
         if value.is_timeout() {
-            Self::Network(format!("timed out: {value}"))
+            Self::Network(format!("timed out: {}", with_causes(&value)))
         } else if let Some(status) = value.status() {
             Self::from_status(status.as_u16(), value.to_string())
         } else {
-            Self::Network(value.to_string())
+            Self::Network(with_causes(&value))
         }
     }
+}
+
+/// An error with the chain of errors behind it. A request error on its own
+/// only says which address failed ("error sending request for url (...)");
+/// why -- a lookup that found nothing, a refused connection -- is in its
+/// sources.
+fn with_causes(err: &(dyn std::error::Error + 'static)) -> String {
+    let mut text = err.to_string();
+    let mut cause = err.source();
+    while let Some(source) = cause {
+        let part = source.to_string();
+        // Wrappers often repeat what they wrap.
+        if !text.ends_with(&part) {
+            text.push_str(": ");
+            text.push_str(&part);
+        }
+        cause = source.source();
+    }
+    text
 }
 
 impl From<rusqlite::Error> for AppError {

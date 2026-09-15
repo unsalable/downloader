@@ -223,6 +223,7 @@ pub fn run() {
             commands::new_task_id,
             commands::platform_open_file,
             commands::platform_open_downloads,
+            commands::platform_open_app_settings,
             commands::platform_pick_media_files,
             commands::platform_set_system_bars,
             commands::platform_take_shared_text,

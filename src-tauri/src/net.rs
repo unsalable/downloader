@@ -4,6 +4,8 @@
 //! across a queue rather than renegotiated per file. It is rebuilt only when a
 //! setting that affects transport (proxy, timeout, user agent) changes.
 
+pub mod dns;
+
 use std::sync::RwLock;
 use std::time::Duration;
 
@@ -93,6 +95,13 @@ fn build(settings: &Settings) -> AppResult<reqwest::Client> {
         builder = builder.use_rustls_tls();
     }
 
+    // A phone's DNS is whatever its network, VPN or Private DNS setting makes
+    // it, and it is not always answering.
+    #[cfg(target_os = "android")]
+    {
+        builder = builder.dns_resolver(std::sync::Arc::new(dns::FallbackResolver));
+    }
+
     builder
         .build()
         .map_err(|err| AppError::Network(format!("could not create the HTTP client: {err}")))
@@ -117,5 +126,90 @@ pub fn header_map(pairs: &[(String, String)]) -> HeaderMap {
 pub fn invalidate() {
     if let Ok(mut guard) = CLIENT.write() {
         *guard = None;
+    }
+}
+
+/// How the resolvers of the platforms the app and its tools run on word "that
+/// host name could not be looked up".
+const LOOKUP_FAILURES: &[&str] = &[
+    // Android
+    "no address associated with hostname",
+    // Linux
+    "name or service not known",
+    "temporary failure in name resolution",
+    // macOS
+    "nodename nor servname provided",
+    // Windows
+    "no such host is known",
+    "getaddrinfo failed",
+    // Rust's own wording, whatever the platform
+    "failed to lookup address information",
+    "dns error",
+];
+
+/// Whether an error's text says that a host name could not be looked up.
+pub fn is_lookup_failure(text: &str) -> bool {
+    let lower = text.to_ascii_lowercase();
+    LOOKUP_FAILURES.iter().any(|needle| lower.contains(needle))
+}
+
+/// A failed lookup, told apart by what Android knows about the connection.
+///
+/// "No address associated with hostname" is all an app is told whether the
+/// phone is offline, Android or a VPN is not letting this app online, or a
+/// DNS server is not answering -- and by the time it reaches here, the public
+/// resolvers have not answered either. What the user should do differs, so
+/// the phone is asked which it is. Its answer also goes into the technical
+/// details, which is what someone helping the user will look at.
+#[cfg(target_os = "android")]
+pub async fn explain_failure(app: &tauri::AppHandle, err: AppError) -> AppError {
+    let AppError::Network(detail) = &err else {
+        return err;
+    };
+    if !is_lookup_failure(detail) {
+        return err;
+    }
+    match crate::android::network_status(app.clone()).await {
+        Ok(status) => {
+            let detail = format!("{detail} [Android: {}]", status.describe());
+            if status.connected {
+                AppError::NetworkBlocked(detail)
+            } else {
+                AppError::Offline(detail)
+            }
+        }
+        Err(status_err) => {
+            crate::log_warn!("net", "the connection could not be checked: {status_err}");
+            err
+        }
+    }
+}
+
+/// On the desktop, a failed lookup is reported as it is.
+#[cfg(not(target_os = "android"))]
+pub async fn explain_failure(_app: &tauri::AppHandle, err: AppError) -> AppError {
+    err
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn lookup_failures_are_recognised_in_every_wording() {
+        let failures = [
+            // The engine on the phone the report came from.
+            "ERROR: [vm.tiktok] ZSq4hQv5y: Unable to download webpage: [Errno 7] No address associated with hostname (caused by TransportError('[Errno 7] No address associated with hostname'))",
+            "error sending request for url (https://vt.tiktok.com/ZSq4hQv5y/): client error (Connect): dns error: failed to lookup address information: No address associated with hostname",
+            "ERROR: Unable to download webpage: <urlopen error [Errno -2] Name or service not known>",
+            "ERROR: Unable to download webpage: [Errno 11001] getaddrinfo failed",
+            "ERROR: Unable to download webpage: [Errno 8] nodename nor servname provided, or not known",
+        ];
+        for failure in failures {
+            assert!(is_lookup_failure(failure), "not recognised: {failure}");
+        }
+
+        assert!(!is_lookup_failure("ERROR: Unable to download webpage: HTTP Error 404: Not Found"));
+        assert!(!is_lookup_failure("error sending request: operation timed out"));
     }
 }
