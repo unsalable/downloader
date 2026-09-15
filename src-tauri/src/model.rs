@@ -169,6 +169,12 @@ pub struct MediaMetadata {
     pub entry_count: Option<u32>,
     pub watermark_support: WatermarkSupport,
     pub warnings: Vec<String>,
+    /// Every item of a carousel, gallery or album, in the source's order. The
+    /// fields above describe the first one, which is what the link downloads
+    /// as a whole; a request names any other by its position. Not sent to the
+    /// UI, for the same reason stream addresses are not.
+    #[serde(skip)]
+    pub entries: Vec<MediaMetadata>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -213,6 +219,10 @@ pub struct DownloadRequest {
     pub title: Option<String>,
     pub thumbnail_url: Option<String>,
     pub platform: Option<PlatformId>,
+    /// 1-based position of one item of a carousel or gallery. `None` means the
+    /// link as a whole, which for a gallery is its first item.
+    #[serde(default)]
+    pub entry: Option<u32>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

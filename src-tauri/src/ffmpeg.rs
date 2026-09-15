@@ -166,6 +166,13 @@ pub async fn convert(
         .unwrap_or("mp4")
         .to_ascii_lowercase();
 
+    // A picture has no container to repackage into: a copy would only put the
+    // same JPEG bytes in a file named .png. It is always encoded.
+    if is_image_target(&target) {
+        let args = image_conversion_args(input, output, &target);
+        return run_with_progress(&args, None, control, on_progress).await;
+    }
+
     // Try a stream copy first: if the codecs already fit the container this is
     // a fast repackage rather than a re-encode.
     let copy_args = conversion_args(input, output, &target, source_audio_bitrate, true, false);
@@ -270,6 +277,44 @@ fn conversion_args(
         args.push("+faststart".into());
     }
 
+    args.push(output.to_string_lossy().into_owned());
+    args
+}
+
+fn is_image_target(target: &str) -> bool {
+    matches!(target, "jpg" | "jpeg" | "png" | "webp")
+}
+
+/// Write the first frame of `input` as a single picture. Animated sources
+/// (a GIF, an animated WebP) become their first frame, which is what a
+/// still-image format can hold.
+fn image_conversion_args(input: &Path, output: &Path, target: &str) -> Vec<String> {
+    let mut args = base_args();
+    args.push("-i".into());
+    args.push(input.to_string_lossy().into_owned());
+    args.extend(["-frames:v".into(), "1".into(), "-an".into()]);
+
+    match target {
+        "png" => args.extend(["-c:v".into(), "png".into()]),
+        "webp" => args.extend([
+            "-c:v".into(),
+            "libwebp".into(),
+            "-quality".into(),
+            "90".into(),
+        ]),
+        // JPEG has no alpha and wants full-range 4:2:0 for the widest support.
+        _ => args.extend([
+            "-c:v".into(),
+            "mjpeg".into(),
+            "-q:v".into(),
+            "2".into(),
+            "-pix_fmt".into(),
+            "yuvj420p".into(),
+        ]),
+    }
+
+    // The image muxer otherwise expects a numbered sequence of files.
+    args.extend(["-update".into(), "1".into()]);
     args.push(output.to_string_lossy().into_owned());
     args
 }
@@ -539,5 +584,30 @@ mod tests {
     fn the_output_path_is_always_the_final_argument() {
         let args = args_for("mp4", true, false);
         assert_eq!(args.last().unwrap(), "out.mp4");
+    }
+
+    #[test]
+    fn a_picture_is_encoded_into_the_format_asked_for_never_copied() {
+        let encoder_for = |target: &str| {
+            let output = format!("out.{target}");
+            let args = image_conversion_args(Path::new("in.jpg"), Path::new(&output), target);
+            assert!(!args.iter().any(|a| a == "copy"), "{target}");
+            assert!(args.windows(2).any(|w| w[0] == "-frames:v" && w[1] == "1"), "{target}");
+            assert_eq!(args.last().unwrap(), &output);
+            codec_after(&args, "-c:v")
+        };
+        assert_eq!(encoder_for("png"), "png");
+        assert_eq!(encoder_for("jpg"), "mjpeg");
+        assert_eq!(encoder_for("webp"), "libwebp");
+    }
+
+    #[test]
+    fn only_still_image_formats_take_the_picture_path() {
+        for target in ["jpg", "jpeg", "png", "webp"] {
+            assert!(is_image_target(target), "{target}");
+        }
+        for target in ["mp4", "webm", "mp3", "gif"] {
+            assert!(!is_image_target(target), "{target}");
+        }
     }
 }

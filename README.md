@@ -52,6 +52,10 @@ pick Universal Downloader.
 - **Picks the best combination for you**, merging separate video and audio
   streams when that is what "best quality" requires, and telling you *before*
   you start if that merge needs a tool you have not installed yet.
+- **Downloads photos, not just videos** — Instagram photos and carousels, X
+  photos, TikTok photo posts, Reddit images and galleries, and Pinterest pins,
+  each at the largest size the platform publishes. A carousel downloads item by
+  item, videos and photos alike, each as the file it actually is.
 - **Downloads fast.** Transfers are issued as bounded ranged requests rather
   than one long connection, which is what several large hosts throttle. On one
   measured CDN this is the difference between 35 kB/s and 15 MB/s.
@@ -116,7 +120,19 @@ src-tauri/src/           Rust core
 Every source adapter implements the same three-method `MediaProvider` trait
 (`id`, `can_handle`, `analyze`) in `src-tauri/src/providers/mod.rs`. Adding a
 platform means adding a module and a branch in `analyze`. Resolution order is:
-a direct media file → the engine → the generic page reader → unsupported.
+a direct media file → a photo post → the engine → the generic page reader →
+unsupported.
+
+The engine is a video tool, and photo posts are where that shows. It is run
+with `--ignore-no-formats-error`, so a post with pictures and no stream is
+reported rather than refused, and on Instagram and Pinterest the pictures it
+lists are offered at full size. For the platforms whose photos it does not
+return at all -- X, Reddit and TikTok photo mode -- `providers/photos/` reads
+the post from the same public data the platform's website loads for a
+signed-out visitor, before the engine is started; anything that turns out to
+be a video is left to the engine as before. A gallery is one analysis with
+every item in it (`MediaMetadata::entries`), and each queued item names its
+position, so it downloads that item and not the first one again.
 
 The trait is used for static dispatch rather than behind `dyn`: its methods are
 async and the set of providers is closed, so calling them directly keeps the
@@ -283,6 +299,9 @@ catches up.
   a controlled variable rather than a guess about some CDN.
 - `src-tauri/tests/pipeline.rs` — `#[ignore]`d online tests that install the
   engine, read live metadata, and download a real file end to end.
+- `src-tauri/tests/photos.rs` — `#[ignore]`d online tests that read photo posts
+  on each platform and download real pictures through the queue's own path,
+  plus a check that videos on the same platforms still go to the engine.
 
 ### Driving the UI during development
 

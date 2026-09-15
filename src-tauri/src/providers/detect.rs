@@ -44,7 +44,9 @@ const VIDEO_EXTENSIONS: &[&str] = &[
     "mp4", "webm", "mkv", "mov", "m4v", "avi", "flv", "ts", "mpg", "mpeg", "3gp", "ogv",
 ];
 const AUDIO_EXTENSIONS: &[&str] = &["mp3", "m4a", "aac", "wav", "opus", "ogg", "flac", "wma"];
-const IMAGE_EXTENSIONS: &[&str] = &["jpg", "jpeg", "png", "webp", "gif", "avif", "bmp", "tiff"];
+const IMAGE_EXTENSIONS: &[&str] = &[
+    "jpg", "jpeg", "png", "webp", "gif", "avif", "bmp", "tiff", "heic", "heif",
+];
 
 pub struct UrlInfo {
     pub host: String,

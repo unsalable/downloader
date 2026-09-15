@@ -111,6 +111,11 @@ export interface DownloadRequest {
   title: string | null;
   thumbnailUrl: string | null;
   platform: PlatformId | null;
+  /**
+   * 1-based position of one item of a carousel or gallery; null for the link
+   * as a whole. Set by the backend when it queues a gallery item by item.
+   */
+  entry?: number | null;
 }
 
 export type DownloadStatus =
@@ -377,7 +382,7 @@ export interface LicenseEntry {
   name: string;
   version: string;
   license: string;
-  kind: 'npm' | 'cargo' | 'font' | 'external-tool';
+  kind: 'npm' | 'cargo' | 'font' | 'asset' | 'external-tool';
   url: string;
   note?: string;
 }

@@ -154,6 +154,7 @@ impl DirectProvider {
             entry_count: None,
             watermark_support: WatermarkSupport::NotApplicable,
             warnings: Vec::new(),
+            entries: Vec::new(),
         })
     }
 }

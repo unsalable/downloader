@@ -661,6 +661,7 @@ mod tests {
                 title: None,
                 thumbnail_url: None,
                 platform: None,
+                entry: None,
             },
         }
     }

@@ -134,18 +134,27 @@ pub async fn execute(
 
     // Fresh metadata means fresh (unexpired) stream URLs. An analysis the user
     // made moments ago is fresh enough, and repeating it is the costliest step.
-    let (metadata, reused) = match providers::recent_analysis(&request.url, settings) {
-        Some(metadata) => (metadata, true),
-        None => (providers::analyze(&request.url, settings).await?, false),
+    let metadata = match providers::recent_analysis(&request.url, settings) {
+        Some(metadata) => {
+            log_debug!("downloader", "task {task_id}: reusing the analysis made moments ago");
+            metadata
+        }
+        None => {
+            let metadata = providers::analyze(&request.url, settings).await?;
+            // The other items of a gallery are queued behind this one and can
+            // share it, rather than each asking the platform again.
+            providers::remember_analysis(&request.url, settings, &metadata);
+            metadata
+        }
     };
-    if reused {
-        log_debug!("downloader", "task {task_id}: reusing the analysis made moments ago");
-    }
 
-    let result = download_analyzed(task_id, request, settings, control, on_update, &temp_dir, metadata).await;
+    let result = match providers::select_entry(metadata, request.entry) {
+        Ok(item) => download_analyzed(task_id, request, settings, control, on_update, &temp_dir, item).await,
+        Err(err) => Err(err),
+    };
     // The streams it named may be what failed; a retry has to look again. A
     // pause is not a failure, and resuming may still use it.
-    if reused && matches!(&result, Err(err) if !matches!(err, AppError::Canceled)) {
+    if matches!(&result, Err(err) if !matches!(err, AppError::Canceled)) {
         providers::forget_analysis(&request.url);
     }
     result

@@ -138,11 +138,18 @@ function reconcileOptions(options: DownloadOptions, metadata: MediaMetadata): Do
   const hasImage = metadata.formats.some((format) => format.kind === 'image');
 
   if (next.mode === 'video' && !hasVideo) {
-    next.mode = hasAudio ? 'audio' : 'image';
+    // A photo post may come with a soundtrack, but the photos are the post.
+    next.mode = hasImage ? 'image' : 'audio';
   } else if (next.mode === 'audio' && !hasAudio) {
     next.mode = hasVideo ? 'video' : 'image';
   } else if (next.mode === 'image' && !hasImage) {
     next.mode = hasVideo ? 'video' : 'audio';
+  }
+
+  // A default container belongs to the default mode: an MP4 preference means
+  // nothing for a photo, and would otherwise try to "convert" one into video.
+  if (next.mode !== options.mode) {
+    next.container = null;
   }
 
   // Only offer "without watermark" where a clean rendition genuinely exists.

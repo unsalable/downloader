@@ -8,11 +8,15 @@
 //! are async, the set of providers is closed and known at compile time, and
 //! calling them directly keeps the resolution path allocation-free while still
 //! making the shared contract explicit.
+//!
+//! [`photos`] is the exception to the shape: it reads only the photo posts of
+//! a few platforms, and answers "not one of mine" for everything else.
 
 pub mod detect;
 pub mod direct;
 pub mod engine;
 pub mod generic;
+pub mod photos;
 
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
@@ -20,7 +24,7 @@ use std::time::{Duration, Instant};
 use once_cell::sync::Lazy;
 
 use crate::error::{AppError, AppResult};
-use crate::model::{MediaMetadata, PlatformId};
+use crate::model::{FormatKind, MediaFormat, MediaKind, MediaMetadata, PlatformId};
 use crate::settings::Settings;
 use crate::{log_debug, log_warn, tools};
 
@@ -80,9 +84,10 @@ impl MediaProvider for GenericProvider {
 
 /// Resolution order, matching the documented provider priority:
 ///   1. a direct media file, which needs no extraction at all
-///   2. the engine, which covers the named platforms and many more
-///   3. the generic page reader
-///   4. unsupported
+///   2. a photo post the engine cannot read (X, Reddit, TikTok photo mode)
+///   3. the engine, which covers the named platforms and many more
+///   4. the generic page reader
+///   5. unsupported
 pub async fn analyze(url: &str, settings: &Settings) -> AppResult<MediaMetadata> {
     let info = detect::classify(url)
         .ok_or_else(|| AppError::InvalidUrl(format!("not an http(s) address: {url}")))?;
@@ -103,6 +108,17 @@ pub async fn analyze(url: &str, settings: &Settings) -> AppResult<MediaMetadata>
         }
     }
 
+    // One HTTP request each, so they go ahead of starting the engine: a photo
+    // post answered here never costs a process launch. Anything they do not
+    // recognise as a photo post, or fail to read, is the engine's to try.
+    let mut mixed = None;
+    match photos::analyze(url, info.platform, settings).await {
+        Ok(photos::Reading::Photos(metadata)) => return Ok(*metadata),
+        Ok(photos::Reading::WithVideos(post)) => mixed = Some(post),
+        Ok(photos::Reading::Elsewhere) => {}
+        Err(err) => log_warn!("providers", "photo reader failed for {}: {err}", info.host),
+    }
+
     let engine_available = tools::engine_path().is_some();
     let mut engine_error: Option<AppError> = None;
 
@@ -111,7 +127,7 @@ pub async fn analyze(url: &str, settings: &Settings) -> AppResult<MediaMetadata>
         if MediaProvider::can_handle(&engine, url) {
             log_debug!("providers", "trying engine for {}", info.host);
             match MediaProvider::analyze(&engine, url, settings).await {
-                Ok(metadata) => return Ok(metadata),
+                Ok(metadata) => return Ok(photos::complete(metadata, mixed, settings).await),
                 Err(AppError::Unsupported(detail)) => {
                     log_debug!("providers", "engine does not know {}: {detail}", info.host);
                     engine_error = Some(AppError::Unsupported(detail));
@@ -215,18 +231,117 @@ pub fn forget_analysis(url: &str) {
         .retain(|entry| !entry.urls.iter().any(|known| known == url));
 }
 
-/// Expand a gallery, carousel or album into one URL per item.
-pub async fn expand_entries(url: &str, settings: &Settings) -> AppResult<Vec<String>> {
-    if tools::engine_path().is_none() {
-        return Ok(vec![url.to_string()]);
+// -- galleries -----------------------------------------------------------------
+
+/// Metadata for a carousel, gallery or album, from its items in order.
+///
+/// The link as a whole previews and downloads as its first item, so that item
+/// supplies the streams; the post supplies the title. Items are named after
+/// the post with their position -- the source's own per-item titles are
+/// usually all the same, and files named that way would only be told apart by
+/// the order they happened to finish in. A single item is simply that item.
+pub fn gallery(
+    title: Option<String>,
+    canonical_url: Option<String>,
+    mut items: Vec<MediaMetadata>,
+) -> Option<MediaMetadata> {
+    match items.len() {
+        0 => return None,
+        1 => return items.pop(),
+        _ => {}
     }
-    EngineProvider.expand_entries(url, settings).await
+
+    let title = title
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| items[0].title.clone());
+    for (index, item) in items.iter_mut().enumerate() {
+        item.title = format!("{title} ({})", index + 1);
+    }
+
+    let mut post = items[0].clone();
+    post.title = title;
+    if let Some(url) = canonical_url {
+        post.canonical_url = url;
+    }
+    post.media_kind = MediaKind::Gallery;
+    post.entry_count = Some(items.len() as u32);
+    post.entries = items;
+    Some(post)
+}
+
+/// The item a download names: one entry of a gallery, or the link itself.
+pub fn select_entry(metadata: MediaMetadata, entry: Option<u32>) -> AppResult<MediaMetadata> {
+    let Some(position) = entry else {
+        return Ok(metadata);
+    };
+    if metadata.entries.is_empty() && position == 1 {
+        return Ok(metadata);
+    }
+
+    let count = metadata.entries.len();
+    let index = (position as usize).checked_sub(1);
+    let MediaMetadata { entries, .. } = metadata;
+    index
+        .and_then(|index| entries.into_iter().nth(index))
+        .ok_or_else(|| AppError::NotFound {
+            status: 404,
+            detail: format!("item {position} is no longer part of this post, which now has {count}"),
+        })
+}
+
+/// A picture as a downloadable format.
+///
+/// The container is read from the address, which is what the CDNs these come
+/// from name their files by; JPEG is the answer when the address does not say.
+pub fn image_format(
+    id: impl Into<String>,
+    url: impl Into<String>,
+    width: Option<u32>,
+    height: Option<u32>,
+    http_headers: Vec<(String, String)>,
+) -> MediaFormat {
+    let url = url.into();
+    let container = detect::classify(&url)
+        .and_then(|info| info.direct_extension)
+        .filter(|extension| detect::is_image_extension(extension))
+        .map(|extension| if extension == "jpeg" { "jpg".to_string() } else { extension })
+        .unwrap_or_else(|| "jpg".to_string());
+
+    let quality_label = match (width, height) {
+        (Some(w), Some(h)) if w > 0 && h > 0 => format!("{w}x{h}"),
+        _ => "Original".to_string(),
+    };
+
+    MediaFormat {
+        id: id.into(),
+        kind: FormatKind::Image,
+        container,
+        protocol: "https".to_string(),
+        has_video: false,
+        has_audio: false,
+        width,
+        height,
+        fps: None,
+        vcodec: None,
+        acodec: None,
+        tbr: None,
+        vbr: None,
+        abr: None,
+        filesize: None,
+        filesize_approx: None,
+        quality_label,
+        watermarked: None,
+        note: None,
+        needs_engine_download: false,
+        url: Some(url),
+        http_headers,
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{MediaKind, WatermarkSupport};
+    use crate::model::WatermarkSupport;
 
     // The kept analyses are process-wide, so each test uses addresses of its own.
     fn metadata(url: &str, canonical: &str) -> MediaMetadata {
@@ -250,7 +365,96 @@ mod tests {
             entry_count: None,
             watermark_support: WatermarkSupport::NotApplicable,
             warnings: Vec::new(),
+            entries: Vec::new(),
         }
+    }
+
+    fn photo(title: &str, file: &str) -> MediaMetadata {
+        MediaMetadata {
+            title: title.into(),
+            media_kind: MediaKind::Image,
+            thumbnail_url: Some(format!("https://cdn.test/{file}")),
+            formats: vec![image_format(
+                "image",
+                format!("https://cdn.test/{file}"),
+                Some(1080),
+                Some(1350),
+                Vec::new(),
+            )],
+            ..metadata("https://example.test/p/1", "https://example.test/p/1")
+        }
+    }
+
+    #[test]
+    fn a_gallery_previews_as_its_first_item_under_the_post_title() {
+        let post = gallery(
+            Some("Post by someone".into()),
+            Some("https://example.test/p/1/".into()),
+            vec![photo("Video by someone", "a.jpg"), photo("Video by someone", "b.jpg")],
+        )
+        .unwrap();
+
+        assert_eq!(post.title, "Post by someone");
+        assert_eq!(post.media_kind, MediaKind::Gallery);
+        assert_eq!(post.entry_count, Some(2));
+        assert_eq!(post.canonical_url, "https://example.test/p/1/");
+        assert_eq!(post.formats[0].url.as_deref(), Some("https://cdn.test/a.jpg"));
+
+        let titles: Vec<_> = post.entries.iter().map(|item| item.title.as_str()).collect();
+        assert_eq!(titles, ["Post by someone (1)", "Post by someone (2)"]);
+    }
+
+    #[test]
+    fn a_gallery_of_one_is_just_that_item() {
+        let single = gallery(Some("Post".into()), None, vec![photo("Photo by x", "a.jpg")]).unwrap();
+        assert_eq!(single.title, "Photo by x");
+        assert!(single.entries.is_empty());
+        assert_eq!(single.entry_count, None);
+        assert!(gallery(Some("Post".into()), None, Vec::new()).is_none());
+    }
+
+    #[test]
+    fn a_download_names_its_item_by_position() {
+        let post = gallery(
+            None,
+            None,
+            vec![photo("first", "a.jpg"), photo("second", "b.jpg"), photo("third", "c.jpg")],
+        )
+        .unwrap();
+
+        let second = select_entry(post.clone(), Some(2)).unwrap();
+        assert_eq!(second.formats[0].url.as_deref(), Some("https://cdn.test/b.jpg"));
+        assert!(second.entries.is_empty());
+
+        // The link itself is the first item.
+        let whole = select_entry(post.clone(), None).unwrap();
+        assert_eq!(whole.formats[0].url.as_deref(), Some("https://cdn.test/a.jpg"));
+
+        assert_eq!(select_entry(post.clone(), Some(4)).unwrap_err().code(), "notFound");
+        assert_eq!(select_entry(post, Some(0)).unwrap_err().code(), "notFound");
+    }
+
+    #[test]
+    fn a_single_item_answers_to_position_one() {
+        let single = photo("only", "a.jpg");
+        assert!(select_entry(single.clone(), Some(1)).is_ok());
+        assert!(select_entry(single, Some(2)).is_err());
+    }
+
+    #[test]
+    fn an_image_format_takes_its_container_from_the_address() {
+        let format = image_format("i", "https://cdn.test/x/photo.jpeg?sig=1", None, None, Vec::new());
+        assert_eq!(format.container, "jpg");
+        assert_eq!(format.kind, FormatKind::Image);
+        assert_eq!(format.quality_label, "Original");
+
+        let format = image_format("i", "https://cdn.test/x/pin.png", Some(1536), Some(1024), Vec::new());
+        assert_eq!(format.container, "png");
+        assert_eq!(format.quality_label, "1536x1024");
+
+        // No extension, or one that is not a picture: JPEG.
+        assert_eq!(image_format("i", "https://cdn.test/media/abc", None, None, Vec::new()).container, "jpg");
+        assert_eq!(image_format("i", "https://cdn.test/a.mp4", None, None, Vec::new()).container, "jpg");
     }
 
     #[test]

@@ -135,6 +135,13 @@
       "url": "https://www.npmjs.com/package/zustand"
     },
     {
+      "name": "base64",
+      "version": "",
+      "license": "MIT OR Apache-2.0",
+      "kind": "cargo",
+      "url": "https://crates.io/crates/base64"
+    },
+    {
       "name": "bytes",
       "version": "",
       "license": "MIT",
@@ -308,6 +315,14 @@
       "license": "OFL-1.1",
       "kind": "font",
       "url": "https://rsms.me/inter/"
+    },
+    {
+      "name": "Simple Icons",
+      "version": "16.31.0",
+      "license": "CC0-1.0",
+      "kind": "asset",
+      "url": "https://simpleicons.org",
+      "note": "Source of the platform logos on the source badges. The icon data is public domain; the logos themselves are trademarks of their owners and are shown only to name the site a link is from."
     },
     {
       "name": "yt-dlp",

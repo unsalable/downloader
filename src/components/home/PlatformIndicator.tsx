@@ -48,7 +48,7 @@ export function PlatformIndicator({ platform }: { platform: PlatformId }) {
                 key={id}
                 platform={id}
                 size="sm"
-                className="opacity-40 transition-opacity duration-200 hover:opacity-90"
+                className="opacity-70 transition-opacity duration-200 hover:opacity-100"
               />
             ))}
           </motion.div>

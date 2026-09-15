@@ -16,6 +16,11 @@ export function MediaPreviewCard({ metadata }: { metadata: MediaMetadata }) {
 
   const uploaded = formatUploadDate(metadata.uploadDate, language);
   const isAudio = metadata.mediaKind === 'audio';
+  // A photo is shown whole: cropping a portrait picture to fill a 16:9 frame
+  // would preview something other than what gets downloaded.
+  const isPhoto =
+    metadata.formats.some((format) => format.kind === 'image') &&
+    !metadata.formats.some((format) => format.hasVideo);
 
   return (
     <motion.article
@@ -35,7 +40,7 @@ export function MediaPreviewCard({ metadata }: { metadata: MediaMetadata }) {
             src={src}
             alt=""
             draggable={false}
-            className="no-drag size-full object-cover"
+            className={cn('no-drag size-full', isPhoto ? 'object-contain' : 'object-cover')}
             // Decorative: the title beneath carries the meaning.
             aria-hidden="true"
           />

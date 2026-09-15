@@ -192,7 +192,18 @@ pub fn build(
         ));
     }
 
-    match mode {
+    // The options were chosen for one piece of media and may be applied to
+    // another: every item of a gallery is queued with the choices made for the
+    // first. A video among photos is still downloaded as a video, and a
+    // container or stream picked for one kind means nothing for the other.
+    let effective = effective_mode(mode, &allowed);
+    let (requested_container, video_format_id, audio_format_id) = if effective == mode {
+        (requested_container, video_format_id, audio_format_id)
+    } else {
+        (None, None, None)
+    };
+
+    match effective {
         DownloadMode::Image => build_image(&allowed, requested_container),
         DownloadMode::Audio => build_audio(&allowed, quality, audio_format_id, requested_container),
         DownloadMode::Video => build_video(
@@ -205,12 +216,36 @@ pub fn build(
     }
 }
 
+/// The requested mode when the media offers it, otherwise what the media is:
+/// a video first, then a picture, then sound.
+fn effective_mode(requested: DownloadMode, allowed: &[&MediaFormat]) -> DownloadMode {
+    let has_video = allowed.iter().any(|format| format.has_video);
+    let has_audio = allowed.iter().any(|format| format.has_audio);
+    let has_image = allowed.iter().any(|format| format.kind == FormatKind::Image);
+
+    let offered = match requested {
+        DownloadMode::Video => has_video,
+        DownloadMode::Audio => has_audio,
+        DownloadMode::Image => has_image,
+    };
+    if offered {
+        requested
+    } else if has_video {
+        DownloadMode::Video
+    } else if has_image {
+        DownloadMode::Image
+    } else if has_audio {
+        DownloadMode::Audio
+    } else {
+        requested
+    }
+}
+
 fn build_image(allowed: &[&MediaFormat], requested_container: Option<&str>) -> AppResult<DownloadPlan> {
     let image = allowed
         .iter()
         .filter(|format| format.kind == FormatKind::Image)
         .max_by_key(|format| format.pixels())
-        .or_else(|| allowed.first())
         .copied()
         .ok_or_else(|| AppError::Unsupported("no image stream was offered".into()))?;
 
@@ -617,6 +652,7 @@ mod tests {
             entry_count: None,
             watermark_support: WatermarkSupport::NotApplicable,
             warnings: Vec::new(),
+            entries: Vec::new(),
         }
     }
 
@@ -1019,6 +1055,86 @@ mod tests {
         let result = plan(&meta, QualityPreference::Best);
         assert!(result.video.is_none());
         assert_eq!(result.audio.as_ref().unwrap().id, "140");
+    }
+
+    fn image(id: &str, width: u32, height: u32, container: &str) -> MediaFormat {
+        let mut picture = format(id, FormatKind::Image, None, None, container);
+        picture.width = Some(width);
+        picture.height = Some(height);
+        picture.quality_label = format!("{width}x{height}");
+        picture
+    }
+
+    fn build_with(
+        meta: &MediaMetadata,
+        mode: DownloadMode,
+        container: Option<&str>,
+    ) -> DownloadPlan {
+        build(
+            meta,
+            mode,
+            QualityPreference::Best,
+            None,
+            None,
+            container,
+            WatermarkPreference::Any,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn image_mode_takes_the_largest_picture() {
+        let meta = metadata(vec![image("small", 320, 400, "jpg"), image("full", 1440, 1800, "jpg")]);
+        let result = build_with(&meta, DownloadMode::Image, None);
+        assert_eq!(result.image.as_ref().unwrap().id, "full");
+        assert_eq!(result.container, "jpg");
+        assert!(result.convert_to.is_none());
+    }
+
+    #[test]
+    fn a_video_among_photos_is_still_downloaded_as_a_video() {
+        // Every item of a gallery is queued with the options chosen for the
+        // first, which here was a photo.
+        let meta = metadata(vec![
+            format("137", FormatKind::Video, Some(1080), None, "mp4"),
+            format("140", FormatKind::Audio, None, Some(128.0), "m4a"),
+        ]);
+        let result = build_with(&meta, DownloadMode::Image, Some("png"));
+        assert_eq!(result.video.as_ref().unwrap().id, "137");
+        assert_eq!(result.container, "mp4", "a picture format must not reach a video");
+        assert!(result.image.is_none());
+    }
+
+    #[test]
+    fn a_photo_is_downloaded_as_a_photo_whatever_mode_was_chosen() {
+        let meta = metadata(vec![image("full", 1080, 1350, "jpg")]);
+        for mode in [DownloadMode::Video, DownloadMode::Audio] {
+            let result = build_with(&meta, mode, Some("mp3"));
+            assert_eq!(result.image.as_ref().unwrap().id, "full");
+            assert_eq!(result.container, "jpg");
+            assert!(result.convert_to.is_none());
+        }
+    }
+
+    #[test]
+    fn audio_mode_on_a_photo_post_with_a_soundtrack_takes_the_sound() {
+        let meta = metadata(vec![
+            image("full", 1080, 1350, "jpg"),
+            format("audio", FormatKind::Audio, None, Some(128.0), "m4a"),
+        ]);
+        let result = build_with(&meta, DownloadMode::Audio, None);
+        assert_eq!(result.audio.as_ref().unwrap().id, "audio");
+
+        let result = build_with(&meta, DownloadMode::Video, None);
+        assert_eq!(result.image.as_ref().unwrap().id, "full");
+    }
+
+    #[test]
+    fn a_requested_picture_format_converts_the_image() {
+        let meta = metadata(vec![image("full", 1080, 1350, "jpg")]);
+        let result = build_with(&meta, DownloadMode::Image, Some("png"));
+        assert_eq!(result.container, "png");
+        assert_eq!(result.convert_to.as_deref(), Some("png"));
     }
 
     #[test]

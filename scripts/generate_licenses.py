@@ -67,6 +67,17 @@ FONTS = [
     }
 ]
 
+ASSETS = [
+    {
+        "name": "Simple Icons",
+        "version": "16.31.0",
+        "license": "CC0-1.0",
+        "kind": "asset",
+        "url": "https://simpleicons.org",
+        "note": "Source of the platform logos on the source badges. The icon data is public domain; the logos themselves are trademarks of their owners and are shown only to name the site a link is from.",
+    }
+]
+
 
 def npm_packages() -> list[dict]:
     lock_path = os.path.join(ROOT, "package-lock.json")
@@ -120,6 +131,7 @@ CRATE_LICENSES = {
     "zip": "MIT",
     "sha2": "MIT OR Apache-2.0",
     "hex": "MIT OR Apache-2.0",
+    "base64": "MIT OR Apache-2.0",
     "urlencoding": "MIT",
     "once_cell": "MIT OR Apache-2.0",
     "regex": "MIT OR Apache-2.0",
@@ -164,7 +176,7 @@ def cargo_packages() -> list[dict]:
 def main():
     data = {
         "generatedBy": "scripts/generate_licenses.py",
-        "packages": npm_packages() + cargo_packages() + FONTS + EXTERNAL_TOOLS,
+        "packages": npm_packages() + cargo_packages() + FONTS + ASSETS + EXTERNAL_TOOLS,
     }
     out_dir = os.path.join(ROOT, "src-tauri", "resources")
     os.makedirs(out_dir, exist_ok=True)

@@ -8,16 +8,23 @@
 //! Stream URLs are deliberately *not* cached and never sent to the webview:
 //! they are signed and short-lived, so they are re-resolved immediately before
 //! a download starts.
+//!
+//! The engine is a video tool. A photo post is, to it, a post with no video --
+//! an error by default. It is asked to report such posts instead, and on the
+//! platforms that publish photos the pictures it lists as thumbnails are then
+//! offered as what they are.
 
 use std::path::Path;
 
+use once_cell::sync::Lazy;
+use regex::Regex;
 use serde_json::Value;
 
 use crate::error::{AppError, AppResult};
 use crate::model::{
     FormatKind, MediaFormat, MediaKind, MediaMetadata, PlatformId, WatermarkSupport,
 };
-use crate::providers::detect;
+use crate::providers::{self, detect};
 use crate::settings::Settings;
 use crate::{log_debug, paths, process, tools};
 
@@ -39,6 +46,12 @@ impl EngineProvider {
     pub async fn analyze(&self, url: &str, settings: &Settings) -> AppResult<MediaMetadata> {
         let engine = tools::require_engine()?;
         let mut args = base_args(settings);
+        // A post without a stream is reported rather than refused, so its
+        // photos can be offered. Why it has no stream -- a premiere that has
+        // not started, DRM -- then arrives as a warning, and warnings are
+        // what explain a link that turns out to have nothing to download.
+        args.retain(|arg| arg != "--no-warnings");
+        args.push("--ignore-no-formats-error".into());
         args.push("--no-playlist".into());
         args.push("-J".into());
         args.push(url.to_string());
@@ -51,65 +64,7 @@ impl EngineProvider {
         let root: Value = serde_json::from_str(output.stdout.trim())
             .map_err(|err| AppError::Parse(format!("the engine returned unreadable JSON: {err}")))?;
 
-        // A playlist here means a carousel, gallery or album: the first entry
-        // drives the preview, and the count tells the UI there is more.
-        let (node, entry_count) = match root.get("_type").and_then(Value::as_str) {
-            Some("playlist") => {
-                let entries = root
-                    .get("entries")
-                    .and_then(Value::as_array)
-                    .cloned()
-                    .unwrap_or_default();
-                let count = entries.len() as u32;
-                let first = entries
-                    .into_iter()
-                    .next()
-                    .ok_or_else(|| AppError::Unsupported("the source returned no media".into()))?;
-                (first, Some(count.max(1)))
-            }
-            _ => (root, None),
-        };
-
-        let mut metadata = parse_metadata(&node, url)?;
-        metadata.entry_count = entry_count;
-        if entry_count.is_some_and(|count| count > 1) {
-            metadata.media_kind = MediaKind::Gallery;
-        }
-        Ok(metadata)
-    }
-
-    /// Resolve the individual item URLs behind a gallery or carousel, so each
-    /// one can become its own queue entry.
-    pub async fn expand_entries(&self, url: &str, settings: &Settings) -> AppResult<Vec<String>> {
-        let engine = tools::require_engine()?;
-        let mut args = base_args(settings);
-        args.push("--yes-playlist".into());
-        args.push("--flat-playlist".into());
-        args.push("-J".into());
-        args.push(url.to_string());
-
-        let output = process::run(&engine, &args).await?;
-        if !output.success() {
-            return Err(classify_engine_error(&output.stderr));
-        }
-
-        let root: Value = serde_json::from_str(output.stdout.trim())?;
-        let Some(entries) = root.get("entries").and_then(Value::as_array) else {
-            return Ok(vec![url.to_string()]);
-        };
-
-        let urls: Vec<String> = entries
-            .iter()
-            .filter_map(|entry| {
-                entry
-                    .get("webpage_url")
-                    .or_else(|| entry.get("url"))
-                    .and_then(Value::as_str)
-                    .map(str::to_string)
-            })
-            .collect();
-
-        Ok(if urls.is_empty() { vec![url.to_string()] } else { urls })
+        parse_result(&root, url).map_err(|err| explain_missing_streams(err, &output.stderr))
     }
 }
 
@@ -239,6 +194,48 @@ pub fn classify_engine_error(stderr: &str) -> AppError {
     AppError::Engine(first_error_line(stderr))
 }
 
+/// Warnings the engine prints about any post without a stream. They say that
+/// there is nothing, not why.
+const NO_STREAM_NOTES: &[&str] = &[
+    "no video formats found",
+    "requested format is not available",
+    "falling back on generic information extractor",
+];
+
+/// A platform's own way of saying a post has no video, which on a post whose
+/// photos could not be read either is simply "nothing to download here".
+const NO_VIDEO_NOTES: &[&str] = &["there is no video in this post", "no video could be found"];
+
+/// Put the engine's own reason on a link that turned out to have no stream.
+///
+/// Asked to report such links rather than fail on them, the engine gives its
+/// reason as a warning instead of an error. The last specific one is it; with
+/// none, the plain "nothing to download" stands.
+fn explain_missing_streams(err: AppError, stderr: &str) -> AppError {
+    if !matches!(err, AppError::Unsupported(_)) {
+        return err;
+    }
+    let Some(reason) = stderr
+        .lines()
+        .rev()
+        .filter_map(|line| line.trim().strip_prefix("WARNING:"))
+        .map(str::trim)
+        .find(|note| {
+            let lower = note.to_ascii_lowercase();
+            !note.is_empty() && !NO_STREAM_NOTES.iter().any(|generic| lower.contains(generic))
+        })
+    else {
+        return err;
+    };
+
+    let lower = reason.to_ascii_lowercase();
+    if NO_VIDEO_NOTES.iter().any(|note| lower.contains(note)) {
+        AppError::Unsupported(reason.chars().take(600).collect())
+    } else {
+        classify_engine_error(&format!("ERROR: {reason}"))
+    }
+}
+
 fn first_error_line(stderr: &str) -> String {
     stderr
         .lines()
@@ -253,6 +250,36 @@ fn first_error_line(stderr: &str) -> String {
 
 // -- JSON -> model ---------------------------------------------------------
 
+/// What the engine printed for a link: one piece of media, or -- for a
+/// carousel, gallery or album -- a playlist of them.
+///
+/// An item nothing can be downloaded from is left out of a gallery rather
+/// than failing the whole post. Positions therefore count the items that can
+/// be downloaded, which is also the number the interface shows.
+pub fn parse_result(root: &Value, requested_url: &str) -> AppResult<MediaMetadata> {
+    if root.get("_type").and_then(Value::as_str) != Some("playlist") {
+        return parse_metadata(root, requested_url);
+    }
+
+    let mut items = Vec::new();
+    let mut first_error = None;
+    for entry in root.get("entries").and_then(Value::as_array).into_iter().flatten() {
+        match parse_metadata(entry, requested_url) {
+            Ok(item) => items.push(item),
+            Err(err) => {
+                log_debug!("engine", "skipping an item with nothing to download: {err}");
+                first_error.get_or_insert(err);
+            }
+        }
+    }
+
+    let title = root.get("title").and_then(Value::as_str).map(str::to_string);
+    let canonical_url = root.get("webpage_url").and_then(Value::as_str).map(str::to_string);
+    providers::gallery(title, canonical_url, items).ok_or_else(|| {
+        first_error.unwrap_or_else(|| AppError::Unsupported("the source returned no media".into()))
+    })
+}
+
 pub fn parse_metadata(node: &Value, requested_url: &str) -> AppResult<MediaMetadata> {
     let platform = detect::detect_platform(requested_url);
 
@@ -261,11 +288,7 @@ pub fn parse_metadata(node: &Value, requested_url: &str) -> AppResult<MediaMetad
         .and_then(Value::as_str)
         .filter(|value| !value.trim().is_empty())
         .map(str::to_string)
-        .or_else(|| {
-            node.get("description")
-                .and_then(Value::as_str)
-                .map(|d| d.lines().next().unwrap_or(d).to_string())
-        })
+        .or_else(|| caption_line(node))
         .unwrap_or_else(|| "Untitled".to_string());
 
     let creator = ["uploader", "channel", "creator", "artist", "uploader_id"]
@@ -285,6 +308,14 @@ pub fn parse_metadata(node: &Value, requested_url: &str) -> AppResult<MediaMetad
     if formats.is_empty() {
         if let Some(single) = parse_format(node) {
             formats.push(single);
+        }
+    }
+
+    // A photo post: pictures and no stream. What the engine lists as its
+    // thumbnails are the photo itself, in several sizes.
+    if formats.is_empty() && is_photo_post(node, platform) {
+        if let Some(photo) = best_image(node) {
+            formats.push(photo);
         }
     }
 
@@ -308,6 +339,11 @@ pub fn parse_metadata(node: &Value, requested_url: &str) -> AppResult<MediaMetad
         .unwrap_or(false);
 
     let media_kind = infer_media_kind(&formats, node);
+    let title = if media_kind == MediaKind::Image {
+        photo_title(title, node, creator.as_deref())
+    } else {
+        title
+    };
 
     // Only notes the UI cannot infer for itself belong here. A live stream, for
     // instance, is already obvious from `is_live` and gets its own badge.
@@ -344,7 +380,170 @@ pub fn parse_metadata(node: &Value, requested_url: &str) -> AppResult<MediaMetad
         entry_count: None,
         watermark_support,
         warnings,
+        entries: Vec::new(),
     })
+}
+
+/// The first line of a post's caption, for when it has no title of its own.
+fn caption_line(node: &Value) -> Option<String> {
+    node.get("description")
+        .and_then(Value::as_str)
+        .and_then(|text| text.lines().map(str::trim).find(|line| !line.is_empty()))
+        .map(|line| {
+            if line.chars().count() > 100 {
+                format!("{}...", line.chars().take(97).collect::<String>().trim_end())
+            } else {
+                line.to_string()
+            }
+        })
+}
+
+/// Whether a result with no stream is a photo post.
+///
+/// Only the platforms that publish photo posts qualify. Anywhere else, a
+/// thumbnail without a stream is the poster of a video that is protected, not
+/// live yet or still processing, and offering that frame as "the photo" would
+/// be a false answer. Even on these platforms a result that has a running
+/// time, or is live, is a video that could not be read.
+fn is_photo_post(node: &Value, platform: PlatformId) -> bool {
+    let publishes_photos = matches!(platform, PlatformId::Instagram | PlatformId::Pinterest);
+    let protected = node.get("_has_drm").and_then(Value::as_bool).unwrap_or(false);
+    let live = node
+        .get("live_status")
+        .and_then(Value::as_str)
+        .is_some_and(|status| status != "not_live");
+    let timed = node
+        .get("duration")
+        .and_then(Value::as_f64)
+        .is_some_and(|seconds| seconds > 0.0);
+    publishes_photos && !protected && !live && !timed
+}
+
+/// A photo's engine-given name, corrected.
+///
+/// Where a source gives no title the engine names what it read a video: "Video
+/// by someone" on Instagram, "Pinterest video #123" in general. For a photo
+/// that is simply wrong.
+fn photo_title(title: String, node: &Value, creator: Option<&str>) -> String {
+    if let Some(account) = title.strip_prefix("Video by ") {
+        return format!("Photo by {account}");
+    }
+
+    let id = node.get("id").and_then(Value::as_str).unwrap_or_default();
+    if !id.is_empty() && title.ends_with(&format!(" video #{id}")) {
+        return caption_line(node)
+            .or_else(|| creator.map(|name| format!("Photo by {name}")))
+            .unwrap_or_else(|| format!("Photo {id}"));
+    }
+    title
+}
+
+/// A size in an image address: `s1080x1080` or `p640x640` between separators.
+/// CDNs serving several renditions of one picture name them this way.
+static SIZE_IN_URL: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"[_/=.,-][sp](\d{2,5})x(\d{2,5})(?:[_/&.,?-]|$)").expect("size pattern is valid")
+});
+
+/// A crop box in an image address, e.g. `c0.0.1439.1439a`: a square cut of
+/// the picture made for a grid, not the picture.
+static CROP_IN_URL: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"[_/=,-]c\d+\.\d+\.\d+\.\d+a?[_/&.,-]").expect("crop pattern is valid")
+});
+
+struct ImageCandidate {
+    url: String,
+    width: Option<u32>,
+    height: Option<u32>,
+    headers: Vec<(String, String)>,
+}
+
+impl ImageCandidate {
+    fn from_json(node: &Value) -> Option<Self> {
+        let url = node
+            .get("url")
+            .and_then(Value::as_str)
+            .filter(|url| url.starts_with("http"))?
+            .to_string();
+        let dimension = |key: &str| {
+            node.get(key)
+                .and_then(Value::as_u64)
+                .and_then(|value| u32::try_from(value).ok())
+                .filter(|value| *value > 0)
+        };
+        Some(Self {
+            width: dimension("width"),
+            height: dimension("height"),
+            headers: string_pairs(node.get("http_headers")),
+            url,
+        })
+    }
+
+    /// Larger first, uncropped ahead of cropped. A rendition whose size is
+    /// neither stated nor written into its address is the undecorated
+    /// original, which is larger than any bounded rendition of it.
+    fn rank(&self) -> (u64, bool) {
+        let pixels = match (self.width, self.height) {
+            (Some(width), Some(height)) => u64::from(width) * u64::from(height),
+            _ => SIZE_IN_URL
+                .captures(&self.url)
+                .and_then(|size| {
+                    let width: u64 = size.get(1)?.as_str().parse().ok()?;
+                    let height: u64 = size.get(2)?.as_str().parse().ok()?;
+                    Some(width * height)
+                })
+                .unwrap_or(u64::MAX),
+        };
+        (pixels, !CROP_IN_URL.is_match(&self.url))
+    }
+}
+
+/// The full-size photo out of the renditions the engine lists for a post.
+fn best_image(node: &Value) -> Option<MediaFormat> {
+    let mut candidates: Vec<ImageCandidate> = node
+        .get("thumbnails")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(ImageCandidate::from_json)
+        .collect();
+
+    if let Some(url) = node
+        .get("thumbnail")
+        .and_then(Value::as_str)
+        .filter(|url| url.starts_with("http"))
+    {
+        if !candidates.iter().any(|candidate| candidate.url == url) {
+            candidates.push(ImageCandidate {
+                url: url.to_string(),
+                width: None,
+                height: None,
+                headers: Vec::new(),
+            });
+        }
+    }
+
+    let best = candidates.into_iter().max_by_key(ImageCandidate::rank)?;
+
+    // Headers the post was read with (a Referer, usually), then any the
+    // rendition itself asks for.
+    let mut headers = string_pairs(node.get("http_headers"));
+    for (name, value) in best.headers {
+        headers.retain(|(existing, _)| !existing.eq_ignore_ascii_case(&name));
+        headers.push((name, value));
+    }
+
+    Some(providers::image_format("image", best.url, best.width, best.height, headers))
+}
+
+fn string_pairs(value: Option<&Value>) -> Vec<(String, String)> {
+    value
+        .and_then(Value::as_object)
+        .map(|map| {
+            map.iter()
+                .filter_map(|(key, value)| value.as_str().map(|v| (key.clone(), v.to_string())))
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 fn parse_format(node: &Value) -> Option<MediaFormat> {
@@ -404,17 +603,7 @@ fn parse_format(node: &Value) -> Option<MediaFormat> {
     let abr = node.get("abr").and_then(Value::as_f64);
     let tbr = node.get("tbr").and_then(Value::as_f64);
 
-    let http_headers = node
-        .get("http_headers")
-        .and_then(Value::as_object)
-        .map(|map| {
-            map.iter()
-                .filter_map(|(key, value)| {
-                    value.as_str().map(|v| (key.clone(), v.to_string()))
-                })
-                .collect()
-        })
-        .unwrap_or_default();
+    let http_headers = string_pairs(node.get("http_headers"));
 
     let note = node
         .get("format_note")
@@ -488,11 +677,16 @@ fn quality_label(
 }
 
 fn pick_thumbnail(node: &Value) -> Option<String> {
-    if let Some(url) = node
-        .get("thumbnail")
-        .and_then(Value::as_str)
-        .filter(|value| value.starts_with("http"))
-    {
+    // The webview cannot show HEIC, which is what some sources keep a photo's
+    // original in; a smaller JPEG of it previews where the original would not.
+    let viewable = |url: &&str| {
+        url.starts_with("http")
+            && !detect::classify(url)
+                .and_then(|info| info.direct_extension)
+                .is_some_and(|extension| extension == "heic" || extension == "heif")
+    };
+
+    if let Some(url) = node.get("thumbnail").and_then(Value::as_str).filter(viewable) {
         return Some(url.to_string());
     }
 
@@ -501,12 +695,7 @@ fn pick_thumbnail(node: &Value) -> Option<String> {
     node.get("thumbnails")
         .and_then(Value::as_array)?
         .iter()
-        .filter(|entry| {
-            entry
-                .get("url")
-                .and_then(Value::as_str)
-                .is_some_and(|url| url.starts_with("http"))
-        })
+        .filter(|entry| entry.get("url").and_then(Value::as_str).is_some_and(|url| viewable(&url)))
         .max_by_key(|entry| entry.get("width").and_then(Value::as_u64).unwrap_or(0))
         .and_then(|entry| entry.get("url").and_then(Value::as_str))
         .map(str::to_string)
@@ -791,6 +980,210 @@ mod tests {
         let node = serde_json::json!({ "title": "Example", "formats": [] });
         let err = parse_metadata(&node, "https://example.test/x").unwrap_err();
         assert_eq!(err.code(), "unsupported");
+    }
+
+    /// Renditions of one Instagram photo as the engine lists them: square
+    /// crops and bounded sizes, and the undecorated original.
+    fn instagram_renditions(file: &str) -> Value {
+        let base = format!("https://scontent.cdninstagram.test/v/t51.82787-15/{file}_n.jpg");
+        serde_json::json!([
+            { "url": format!("{base}?stp=c0.0.1439.1439a_dst-jpg_e35_s1080x1080_tt6&oh=1") },
+            { "url": format!("{base}?stp=c0.0.1439.1439a_dst-jpg_e35_s150x150_tt6&oh=1") },
+            { "url": format!("{base}?stp=dst-jpg_e35_s1080x1080_tt6&oh=1") },
+            { "url": format!("{base}?stp=dst-jpg_e35_s640x640_sh2.08_tt6&oh=1") },
+            { "url": format!("{base}?stp=dst-jpg_e35_tt6&oh=1") },
+            { "url": format!("{base}?stp=c0.0.1439.1439a_dst-jpg_e35_tt6&oh=1") },
+        ])
+    }
+
+    fn instagram_photo(id: &str, file: &str) -> Value {
+        serde_json::json!({
+            "id": id,
+            "title": "Video by someone",
+            "description": "A caption\n#tags",
+            "channel": "someone",
+            "uploader": "Some One",
+            "formats": [],
+            "thumbnails": instagram_renditions(file),
+            "thumbnail": format!("https://scontent.cdninstagram.test/v/t51.82787-15/{file}_n.jpg?stp=dst-jpg_e35_tt6&oh=1"),
+            "http_headers": { "Referer": "https://www.instagram.com/" },
+            "webpage_url": "https://www.instagram.com/p/POST/",
+        })
+    }
+
+    #[test]
+    fn an_instagram_photo_is_offered_at_full_size() {
+        let meta = parse_result(
+            &instagram_photo("BsOGulcndj-", "625727639"),
+            "https://www.instagram.com/p/BsOGulcndj-/",
+        )
+        .unwrap();
+
+        assert_eq!(meta.media_kind, MediaKind::Image);
+        assert_eq!(meta.title, "Photo by someone");
+        assert_eq!(meta.formats.len(), 1);
+
+        let photo = &meta.formats[0];
+        assert_eq!(photo.kind, FormatKind::Image);
+        assert_eq!(photo.container, "jpg");
+        assert!(
+            photo.url.as_deref().unwrap().contains("stp=dst-jpg_e35_tt6"),
+            "picked {:?} instead of the uncropped original",
+            photo.url
+        );
+        assert!(photo
+            .http_headers
+            .iter()
+            .any(|(name, value)| name == "Referer" && value == "https://www.instagram.com/"));
+    }
+
+    #[test]
+    fn a_carousel_becomes_a_gallery_of_its_photos_and_videos() {
+        let video = serde_json::json!({
+            "id": "DQ3yk18DLbd",
+            "title": "Video by someone",
+            "formats": [
+                { "format_id": "dash-1v", "url": "https://cdn.test/v.mp4", "ext": "mp4",
+                  "vcodec": "vp09.00.21.08", "acodec": "none", "width": 480, "height": 480 },
+                { "format_id": "dash-1a", "url": "https://cdn.test/a.m4a", "ext": "m4a",
+                  "vcodec": "none", "acodec": "mp4a.40.5", "abr": 62.8 },
+            ],
+            "thumbnails": instagram_renditions("579688490"),
+        });
+        let root = serde_json::json!({
+            "_type": "playlist",
+            "title": "Post by someone",
+            "webpage_url": "https://www.instagram.com/p/DQ3zR6-DPGm/",
+            "entries": [
+                instagram_photo("DQ3zRtyjGi6", "576509622"),
+                video,
+                instagram_photo("DQ3zRt3DClt", "576111569"),
+            ],
+        });
+
+        let post = parse_result(&root, "https://www.instagram.com/p/DQ3zR6-DPGm/").unwrap();
+        assert_eq!(post.media_kind, MediaKind::Gallery);
+        assert_eq!(post.entry_count, Some(3));
+        assert_eq!(post.title, "Post by someone");
+        assert_eq!(post.canonical_url, "https://www.instagram.com/p/DQ3zR6-DPGm/");
+
+        let kinds: Vec<_> = post.entries.iter().map(|item| item.media_kind).collect();
+        assert_eq!(kinds, [MediaKind::Image, MediaKind::Video, MediaKind::Image]);
+        assert_eq!(post.entries[1].title, "Post by someone (2)");
+        assert!(post.entries[1].formats.iter().all(|format| format.kind != FormatKind::Image));
+    }
+
+    #[test]
+    fn an_item_with_nothing_to_download_is_left_out_of_a_gallery() {
+        let empty = serde_json::json!({ "id": "gone", "title": "Video by someone", "formats": [] });
+        let root = serde_json::json!({
+            "_type": "playlist",
+            "title": "Post by someone",
+            "entries": [instagram_photo("a", "1"), empty, instagram_photo("b", "2")],
+        });
+        let post = parse_result(&root, "https://www.instagram.com/p/x/").unwrap();
+        assert_eq!(post.entry_count, Some(2));
+
+        let nothing = serde_json::json!({ "_type": "playlist", "entries": [{ "id": "gone", "formats": [] }] });
+        assert_eq!(
+            parse_result(&nothing, "https://www.instagram.com/p/x/").unwrap_err().code(),
+            "unsupported"
+        );
+    }
+
+    #[test]
+    fn a_thumbnail_is_not_a_photo_where_photo_posts_do_not_exist() {
+        // A premiere that has not started has a poster and no stream.
+        let node = serde_json::json!({
+            "id": "abc",
+            "title": "Premiere",
+            "formats": [],
+            "live_status": "is_upcoming",
+            "thumbnails": [{ "url": "https://i.ytimg.test/vi/abc/maxresdefault.jpg", "width": 1280, "height": 720 }],
+        });
+        assert_eq!(
+            parse_metadata(&node, "https://www.youtube.com/watch?v=abc").unwrap_err().code(),
+            "unsupported"
+        );
+    }
+
+    #[test]
+    fn a_video_that_could_not_be_read_is_not_offered_as_its_poster() {
+        let mut node = instagram_photo("reel", "1");
+        node["duration"] = serde_json::json!(12.5);
+        assert!(parse_metadata(&node, "https://www.instagram.com/reel/x/").is_err());
+
+        let mut node = instagram_photo("drm", "1");
+        node["_has_drm"] = serde_json::json!(true);
+        assert!(parse_metadata(&node, "https://www.instagram.com/p/x/").is_err());
+    }
+
+    #[test]
+    fn a_pinterest_image_pin_takes_the_original_and_previews_a_viewable_copy() {
+        let node = serde_json::json!({
+            "id": "873276184017534617",
+            "title": "Pinterest video #873276184017534617",
+            "description": "Mont Blanc at dawn\nmore text",
+            "formats": [],
+            "thumbnails": [
+                { "url": "https://i.pinimg.test/236x/c3/d6/b4/c3.jpg", "width": 236, "height": 177 },
+                { "url": "https://i.pinimg.test/736x/c3/d6/b4/c3.jpg", "width": 736, "height": 552 },
+                { "url": "https://i.pinimg.test/originals/c3/d6/b4/c3.heic", "width": 4032, "height": 3024 },
+            ],
+            "thumbnail": "https://i.pinimg.test/originals/c3/d6/b4/c3.heic",
+        });
+        let meta = parse_metadata(&node, "https://www.pinterest.com/pin/873276184017534617/").unwrap();
+
+        assert_eq!(meta.title, "Mont Blanc at dawn");
+        let photo = &meta.formats[0];
+        assert_eq!(photo.container, "heic");
+        assert_eq!((photo.width, photo.height), (Some(4032), Some(3024)));
+        assert_eq!(photo.quality_label, "4032x3024");
+        assert_eq!(
+            meta.thumbnail_url.as_deref(),
+            Some("https://i.pinimg.test/736x/c3/d6/b4/c3.jpg")
+        );
+    }
+
+    #[test]
+    fn a_stated_size_outranks_a_guess_and_a_crop_loses_a_tie() {
+        let candidate = |url: &str, width: Option<u32>, height: Option<u32>| ImageCandidate {
+            url: url.to_string(),
+            width,
+            height,
+            headers: Vec::new(),
+        };
+        let bounded = candidate("https://cdn.test/a.jpg?stp=dst-jpg_s1080x1080_tt6", None, None);
+        let original = candidate("https://cdn.test/a.jpg?stp=dst-jpg_tt6", None, None);
+        let cropped = candidate("https://cdn.test/a.jpg?stp=c0.0.1439.1439a_dst-jpg_tt6", None, None);
+        let stated = candidate("https://cdn.test/a.jpg", Some(640), Some(640));
+
+        assert!(original.rank() > bounded.rank());
+        assert!(original.rank() > cropped.rank());
+        assert!(bounded.rank() > stated.rank());
+        assert_eq!(bounded.rank().0, 1080 * 1080);
+    }
+
+    #[test]
+    fn the_reason_a_link_has_no_stream_comes_from_the_engines_warning() {
+        let unsupported = || AppError::Unsupported("the source offered no downloadable stream".into());
+
+        let stderr = "WARNING: [youtube] abc: This live event will begin in 5 hours.\n\
+                      WARNING: No video formats found!\n\
+                      WARNING: Requested format is not available\n";
+        let err = explain_missing_streams(unsupported(), stderr);
+        assert!(err.technical().is_some_and(|detail| detail.contains("live event")));
+
+        let stderr = "WARNING: [youtube] abc: Sign in to confirm your age\nWARNING: No video formats found!\n";
+        assert_eq!(explain_missing_streams(unsupported(), stderr).code(), "forbidden");
+
+        // Nothing specific: the plain answer stands.
+        let stderr = "WARNING: No video formats found!\nWARNING: Requested format is not available\n";
+        assert_eq!(explain_missing_streams(unsupported(), stderr).code(), "unsupported");
+
+        // Other failures are already explained.
+        let err = AppError::Network("offline".into());
+        assert_eq!(explain_missing_streams(err, stderr).code(), "network");
     }
 
     #[test]

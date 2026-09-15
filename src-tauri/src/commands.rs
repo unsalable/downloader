@@ -257,26 +257,43 @@ pub fn enqueue_download(state: State<'_, AppState>, request: DownloadRequest) ->
 }
 
 /// Queue every item of a carousel, gallery or album as its own task.
+///
+/// Items are addressed by position within the link: a carousel's items have
+/// no addresses of their own. The analysis the user is looking at already
+/// lists them, so it is what the tasks are made from, and what they download.
 #[tauri::command]
 pub async fn enqueue_gallery(
     state: State<'_, AppState>,
     request: DownloadRequest,
 ) -> AppResult<Vec<DownloadTask>> {
     let settings = state.settings();
-    let urls = providers::expand_entries(&request.url, &settings).await?;
+    let metadata = match providers::recent_analysis(&request.url, &settings) {
+        Some(metadata) => metadata,
+        None => {
+            let metadata = providers::analyze(&request.url, &settings).await?;
+            providers::remember_analysis(&request.url, &settings, &metadata);
+            metadata
+        }
+    };
 
-    Ok(urls
-        .into_iter()
+    if metadata.entries.len() < 2 {
+        return Ok(vec![state.queue.enqueue(request)]);
+    }
+
+    Ok(metadata
+        .entries
+        .iter()
         .enumerate()
-        .map(|(index, url)| {
+        .map(|(index, entry)| {
             let mut item = request.clone();
-            item.url = url;
-            // Each entry resolves its own real title; the numbered fallback is
-            // only what shows on the card until then.
-            item.title = request
-                .title
-                .as_ref()
-                .map(|title| format!("{title} ({})", index + 1));
+            item.entry = Some(index as u32 + 1);
+            item.title = Some(entry.title.clone());
+            item.thumbnail_url = entry.thumbnail_url.clone().or_else(|| request.thumbnail_url.clone());
+            // Streams picked by hand belong to the item they were picked on.
+            if index > 0 {
+                item.video_format_id = None;
+                item.audio_format_id = None;
+            }
             state.queue.enqueue(item)
         })
         .collect())

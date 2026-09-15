@@ -168,6 +168,7 @@ impl GenericProvider {
             entry_count: None,
             watermark_support: WatermarkSupport::NotApplicable,
             warnings: vec!["generic".to_string()],
+            entries: Vec::new(),
         })
     }
 }

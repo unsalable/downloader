@@ -19,6 +19,7 @@ const KIND_LABEL: Record<LicenseEntry['kind'], string> = {
   npm: 'npm',
   cargo: 'crate',
   font: 'font',
+  asset: 'icons',
   'external-tool': 'tool',
 };
 
