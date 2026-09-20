@@ -12,6 +12,7 @@ import type { UrlInputHandle } from '@/components/home/UrlInput';
 import { useClipboardMonitor } from '@/hooks/useClipboardMonitor';
 import { useHotkeys } from '@/hooks/useHotkeys';
 import { useTranslation } from '@/i18n';
+import { SCREEN } from '@/lib/motion';
 import { IS_MOBILE } from '@/lib/platform';
 import { extractFirstUrl } from '@/lib/url';
 import { AboutPage } from '@/pages/AboutPage';
@@ -77,6 +78,15 @@ export function App() {
     () => localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === '1',
   );
   const urlInputRef = useRef<UrlInputHandle | null>(null);
+  const mainRef = useRef<HTMLElement | null>(null);
+
+  // A screen always opens at its top. The scroller outlives the screen inside
+  // it, so without this, arriving at Downloads from halfway down History put
+  // the user halfway down Downloads -- past the header, with no indication that
+  // anything was above.
+  useEffect(() => {
+    mainRef.current?.scrollTo({ top: 0 });
+  }, [route, nav.section]);
 
   // On a phone the system Back gesture has to step back through the app, not
   // leave it: the webview goes back in its history when it can, so each level
@@ -415,14 +425,14 @@ export function App() {
           onOpenDownloads={() => setRoute('downloads')}
         />
 
-        <main className="relative z-10 min-h-0 flex-1 overflow-y-auto">
+        <main ref={mainRef} className="relative z-10 min-h-0 flex-1 overflow-y-auto">
           <AnimatePresence mode="wait">
             <motion.div
               key={route}
-              initial={{ opacity: 0, y: 8 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -6 }}
-              transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
+              variants={SCREEN}
+              initial="initial"
+              animate="animate"
+              exit="exit"
               className="flex min-h-full flex-col"
             >
               {route === 'home' && (

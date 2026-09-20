@@ -30,6 +30,7 @@ import type { TranslationKey } from '@/i18n';
 import { cn } from '@/lib/cn';
 import { decodeQuality, encodeQuality } from '@/lib/downloadOptions';
 import { formatBytes, truncateMiddle } from '@/lib/format';
+import { SPRING, T } from '@/lib/motion';
 import { IS_MOBILE } from '@/lib/platform';
 import * as ipc from '@/services/ipc';
 import { useSettingsStore } from '@/stores/useSettingsStore';
@@ -138,7 +139,7 @@ export function SettingsPage({ settings, section: openSection, onSectionChange }
       key={section}
       initial={{ opacity: 0, y: 6 }}
       animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
+      transition={T.component}
       className="min-w-0 flex-1 space-y-6"
     >
       {section === 'general' && <GeneralSection settings={settings} update={update} />}
@@ -196,7 +197,7 @@ export function SettingsPage({ settings, section: openSection, onSectionChange }
                 type="button"
                 onClick={() => onSectionChange?.(null)}
                 aria-label={t('common.back')}
-                className="flex size-11 shrink-0 items-center justify-center rounded-full text-fg transition-colors active:bg-surface-active"
+                className="pressable-sm flex size-11 shrink-0 items-center justify-center rounded-full text-fg active:bg-surface-active"
               >
                 <ChevronLeft size={24} />
               </button>
@@ -208,7 +209,7 @@ export function SettingsPage({ settings, section: openSection, onSectionChange }
           <motion.nav
             initial={{ opacity: 0, y: 6 }}
             animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
+            transition={T.component}
             aria-label={t('settings.title')}
             className="mt-4 overflow-hidden rounded-[var(--radius-panel)] border border-[var(--border)] bg-surface divide-y divide-[var(--border)]"
           >
@@ -219,7 +220,7 @@ export function SettingsPage({ settings, section: openSection, onSectionChange }
                   key={candidate.id}
                   type="button"
                   onClick={() => onSectionChange?.(candidate.id)}
-                  className="flex min-h-[72px] w-full items-center gap-3.5 px-4 py-3 text-left transition-colors duration-150 active:bg-surface-active"
+                  className="flex min-h-[72px] w-full items-center gap-3.5 px-4 py-3 text-left transition-colors duration-150 ease-out-quint active:bg-surface-active"
                 >
                   <span className="flex size-10 shrink-0 items-center justify-center rounded-[10px] bg-accent-soft text-accent">
                     <Icon size={19} />
@@ -256,14 +257,14 @@ export function SettingsPage({ settings, section: openSection, onSectionChange }
               onClick={() => setDesktopSection(candidate.id)}
               className={cn(
                 'relative flex h-8.5 w-full items-center gap-2.5 rounded-lg px-2.5 text-[13px] font-medium',
-                'transition-colors duration-150',
+                'transition-colors duration-150 ease-out-quint',
                 active ? 'text-fg' : 'text-fg-muted hover:bg-surface-hover hover:text-fg',
               )}
             >
               {active && (
                 <motion.span
                   layoutId="settings-active"
-                  transition={{ type: 'spring', stiffness: 480, damping: 40 }}
+                  transition={SPRING.glide}
                   className="absolute inset-0 rounded-lg bg-surface-active"
                 />
               )}

@@ -20,6 +20,7 @@ import { useTranslation } from '@/i18n';
 import type { TranslationKey } from '@/i18n';
 import { cn } from '@/lib/cn';
 import { basename, clampPercent, formatBytes } from '@/lib/format';
+import { COLLAPSE, LIST_ITEM, SPRING } from '@/lib/motion';
 import { IS_MOBILE, openFile, revealFile } from '@/lib/platform';
 import type { ConvertJob } from '@/types';
 
@@ -82,16 +83,22 @@ export const ConvertCard = memo(function ConvertCard({
   return (
     <motion.article
       layout={IS_MOBILE ? false : 'position'}
-      initial={{ opacity: 0, y: 8 }}
-      animate={{ opacity: 1, y: 0 }}
-      exit={{ opacity: 0, scale: 0.98, transition: { duration: 0.16 } }}
-      transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
+      variants={LIST_ITEM}
+      initial="initial"
+      animate="animate"
+      exit="exit"
       className={cn(
         'group relative overflow-hidden rounded-[var(--radius-card)] border border-[var(--border)]',
-        'bg-surface transition-colors duration-200 hover:border-[var(--border-strong)]',
+        'bg-surface transition-colors duration-150 ease-out-quint hover:border-[var(--border-strong)]',
       )}
     >
-      <span aria-hidden="true" className={cn('absolute inset-y-0 left-0 w-[3px]', EDGE[job.status])} />
+      <span
+        aria-hidden="true"
+        className={cn(
+          'absolute inset-y-0 left-0 w-[3px] transition-colors duration-250 ease-out-quint',
+          EDGE[job.status],
+        )}
+      />
 
       <div className="flex gap-3 p-3 pl-4">
         <div
@@ -102,7 +109,13 @@ export const ConvertCard = memo(function ConvertCard({
           )}
         >
           {isDone ? (
-            <Check size={18} strokeWidth={2.5} className="text-success" />
+            <motion.span
+              initial={{ scale: 0.55, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              transition={SPRING.snap}
+            >
+              <Check size={18} strokeWidth={2.5} className="text-success" />
+            </motion.span>
           ) : (
             <Icon size={18} />
           )}
@@ -110,7 +123,7 @@ export const ConvertCard = memo(function ConvertCard({
 
         <div className="flex min-w-0 flex-1 flex-col gap-1.5">
           <div className="flex items-start gap-2">
-            <h3 className="line-clamp-1 flex-1 text-[13.5px] font-medium leading-snug text-fg">
+            <h3 className="line-clamp-1 min-w-0 flex-1 text-[13.5px] font-medium leading-snug text-fg">
               {job.inputName}
             </h3>
             {isTerminal && (
@@ -119,7 +132,7 @@ export const ConvertCard = memo(function ConvertCard({
                 label={t('convert.remove')}
                 size="sm"
                 tone="danger"
-                className="reveal-on-hover transition-opacity duration-150"
+                className="reveal-on-hover transition-opacity duration-150 ease-out-quint"
                 onClick={() => onRemove(job.id)}
               />
             )}
@@ -184,7 +197,7 @@ export const ConvertCard = memo(function ConvertCard({
                 <button
                   type="button"
                   onClick={() => void openFile(job.outputPath!)}
-                  className="flex shrink-0 items-center gap-1 rounded-[5px] px-1.5 py-1 text-[12px] font-medium text-accent transition-colors hover:bg-accent-soft"
+                  className="pressable flex shrink-0 items-center gap-1 rounded-[5px] px-1.5 py-1 text-[12px] font-medium text-accent hover:bg-accent-soft"
                 >
                   <SquareArrowOutUpRight size={12} />
                   {t('downloads.openFile')}
@@ -192,7 +205,7 @@ export const ConvertCard = memo(function ConvertCard({
                 <button
                   type="button"
                   onClick={() => void revealFile(job.outputPath!)}
-                  className="flex shrink-0 items-center gap-1 rounded-[5px] px-1.5 py-1 text-[12px] font-medium text-fg-muted transition-colors hover:bg-surface-hover hover:text-fg"
+                  className="pressable flex shrink-0 items-center gap-1 rounded-[5px] px-1.5 py-1 text-[12px] font-medium text-fg-muted hover:bg-surface-hover hover:text-fg"
                 >
                   <FolderOpen size={12} />
                   {t('downloads.openFolder')}
@@ -209,7 +222,8 @@ export const ConvertCard = memo(function ConvertCard({
                   <button
                     type="button"
                     onClick={() => setShowError((value) => !value)}
-                    className="eyebrow shrink-0 font-mono text-fg-faint transition-colors hover:text-fg-muted"
+                    aria-expanded={showError}
+                    className="eyebrow pressable shrink-0 rounded font-mono text-fg-faint hover:text-fg-muted"
                   >
                     {showError ? t('analyze.hideDetails') : t('analyze.details')}
                   </button>
@@ -242,10 +256,10 @@ export const ConvertCard = memo(function ConvertCard({
       <AnimatePresence>
         {showError && job.error?.technical && (
           <motion.div
-            initial={{ opacity: 0, height: 0 }}
-            animate={{ opacity: 1, height: 'auto' }}
-            exit={{ opacity: 0, height: 0 }}
-            transition={{ duration: 0.2 }}
+            variants={COLLAPSE}
+            initial="initial"
+            animate="animate"
+            exit="exit"
             className="overflow-hidden"
           >
             <pre className="selectable max-h-32 overflow-auto whitespace-pre-wrap break-words border-t border-[var(--border)] bg-surface-sunken px-4 py-2.5 font-mono text-[11px] leading-relaxed text-fg-muted">

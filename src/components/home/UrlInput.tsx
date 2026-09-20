@@ -5,6 +5,7 @@ import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 're
 import { Spinner } from '@/components/ui/Spinner';
 import { useTranslation } from '@/i18n';
 import { cn } from '@/lib/cn';
+import { T } from '@/lib/motion';
 import { isProbablyUrl, normalizeUrl } from '@/lib/url';
 
 interface UrlInputProps {
@@ -58,7 +59,7 @@ export const UrlInput = forwardRef<UrlInputHandle, UrlInputProps>(function UrlIn
     <div className="w-full">
       <div
         className={cn(
-          'relative rounded-[10px] border transition-[border-color,box-shadow] duration-200',
+          'relative rounded-[10px] border transition-[border-color,box-shadow] duration-150 ease-out-quint',
           focused && !disabled
             ? 'border-[var(--accent)] shadow-[0_0_0_3px_var(--accent-ring)]'
             : 'border-[var(--border-strong)]',
@@ -114,11 +115,16 @@ export const UrlInput = forwardRef<UrlInputHandle, UrlInputProps>(function UrlIn
                 type="button"
                 initial={{ opacity: 0, scale: 0.7 }}
                 animate={{ opacity: 1, scale: 1 }}
-                exit={{ opacity: 0, scale: 0.7 }}
-                transition={{ duration: 0.14 }}
+                exit={{ opacity: 0, scale: 0.7, transition: T.microOut }}
+                transition={T.micro}
+                // The press is animated by Motion rather than by the
+                // `pressable` class, because Motion already owns this element's
+                // transform for its entrance -- a CSS transition on the same
+                // property would lag every frame of it.
+                whileTap={{ scale: 0.9 }}
                 onClick={onClear}
                 aria-label={t('input.clear')}
-                className="shrink-0 rounded-md p-1 text-fg-faint transition-colors hover:bg-surface-hover hover:text-fg"
+                className="shrink-0 rounded-md p-1 text-fg-faint transition-colors duration-150 ease-out-quint hover:bg-surface-hover hover:text-fg"
               >
                 <X size={15} />
               </motion.button>
@@ -131,8 +137,8 @@ export const UrlInput = forwardRef<UrlInputHandle, UrlInputProps>(function UrlIn
               onClick={onPaste}
               disabled={disabled}
               className={cn(
-                'flex h-9 shrink-0 items-center gap-1.5 rounded-md px-2.5',
-                'text-[12.5px] font-medium text-fg-muted transition-colors duration-150',
+                'pressable flex h-9 shrink-0 items-center gap-1.5 rounded-md px-2.5',
+                'text-[12.5px] font-medium text-fg-muted',
                 'hover:bg-surface-hover hover:text-fg disabled:pointer-events-none',
               )}
             >
@@ -145,9 +151,9 @@ export const UrlInput = forwardRef<UrlInputHandle, UrlInputProps>(function UrlIn
               onClick={submit}
               disabled={disabled || analyzing}
               className={cn(
-                'flex h-9 shrink-0 items-center gap-1.5 rounded-md px-3',
+                'pressable flex h-9 shrink-0 items-center gap-1.5 rounded-md px-3',
                 'bg-accent text-[12.5px] font-semibold text-accent-fg',
-                'transition-colors duration-150 hover:bg-accent-hover active:brightness-95',
+                'hover:bg-accent-hover',
                 'disabled:pointer-events-none disabled:opacity-60',
               )}
             >
@@ -163,8 +169,8 @@ export const UrlInput = forwardRef<UrlInputHandle, UrlInputProps>(function UrlIn
           <motion.p
             initial={{ opacity: 0, y: -4 }}
             animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -4 }}
-            transition={{ duration: 0.16 }}
+            exit={{ opacity: 0, y: -4, transition: T.microOut }}
+            transition={T.micro}
             className={cn(
               'mt-2 px-1 text-[12.5px]',
               invalid ? 'text-error' : 'text-warning',

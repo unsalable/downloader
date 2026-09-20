@@ -4,6 +4,7 @@ import { ListChecks, ShieldCheck, Sparkles } from 'lucide-react';
 import { Logo } from '@/components/layout/Logo';
 import { Button } from '@/components/ui/Button';
 import { useTranslation } from '@/i18n';
+import { SPRING, T, stagger } from '@/lib/motion';
 import type { TranslationKey } from '@/i18n';
 
 const POINTS: { icon: typeof ShieldCheck; title: TranslationKey; body: TranslationKey }[] = [
@@ -28,13 +29,13 @@ export function WelcomeScreen({ onStart }: { onStart: () => void }) {
       <motion.div
         initial={{ opacity: 0, y: 16, scale: 0.98 }}
         animate={{ opacity: 1, y: 0, scale: 1 }}
-        transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
+        transition={T.entrance}
         className="relative w-full max-w-[420px] text-center"
       >
         <motion.div
           initial={{ scale: 0.7, opacity: 0 }}
           animate={{ scale: 1, opacity: 1 }}
-          transition={{ delay: 0.1, type: 'spring', stiffness: 320, damping: 22 }}
+          transition={{ ...SPRING.settle, delay: 0.1 }}
           className="mx-auto w-fit"
         >
           <Logo size={58} />
@@ -53,7 +54,7 @@ export function WelcomeScreen({ onStart }: { onStart: () => void }) {
                 key={point.title}
                 initial={{ opacity: 0, x: -10 }}
                 animate={{ opacity: 1, x: 0 }}
-                transition={{ delay: 0.22 + index * 0.08, duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
+                transition={{ ...T.spatial, delay: 0.22 + stagger(index, 0.08) }}
                 className="flex gap-3 rounded-[var(--radius-card)] border border-[var(--border)] bg-surface p-3.5"
               >
                 <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-accent-soft text-accent">
@@ -73,7 +74,7 @@ export function WelcomeScreen({ onStart }: { onStart: () => void }) {
         <motion.div
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
-          transition={{ delay: 0.5, duration: 0.4 }}
+          transition={{ ...T.spatial, delay: 0.5 }}
           className="mt-8"
         >
           <Button variant="cta" size="lg" fullWidth onClick={onStart} data-autofocus>

@@ -13,6 +13,7 @@ import {
 import { Tooltip } from '@/components/ui/Tooltip';
 import { useTranslation } from '@/i18n';
 import { cn } from '@/lib/cn';
+import { SPRING } from '@/lib/motion';
 import type { TranslationKey } from '@/i18n';
 import { Logo } from './Logo';
 
@@ -60,7 +61,7 @@ export function Sidebar({
       aria-label={t('app.name')}
       className={cn(
         'relative z-20 flex shrink-0 flex-col border-r border-[var(--border)] bg-surface-sunken',
-        'transition-[width] duration-300 ease-[var(--ease-out-quint)]',
+        'transition-[width] duration-350 ease-out-quint',
         collapsed ? 'w-[62px]' : 'w-[212px]',
       )}
     >
@@ -106,14 +107,18 @@ export function Sidebar({
             type="button"
             onClick={onToggleCollapsed}
             aria-label={collapsed ? t('nav.expand') : t('nav.collapse')}
+            aria-expanded={!collapsed}
             className={cn(
-              'flex h-8 w-full items-center justify-center rounded-lg text-fg-faint',
-              'transition-colors duration-150 hover:bg-surface-hover hover:text-fg-muted',
+              'pressable flex h-8 w-full items-center justify-center rounded-lg text-fg-faint',
+              'hover:bg-surface-hover hover:text-fg-muted',
             )}
           >
             <ChevronsLeft
               size={15}
-              className={cn('transition-transform duration-300', collapsed && 'rotate-180')}
+              className={cn(
+                'transition-transform duration-350 ease-out-quint',
+                collapsed && 'rotate-180',
+              )}
             />
           </button>
         </Tooltip>
@@ -153,7 +158,7 @@ function NavButton({
       aria-current={active ? 'page' : undefined}
       className={cn(
         'group relative flex h-9 items-center gap-2.5 rounded-[6px] px-2.5 text-[13px] font-medium',
-        'transition-colors duration-150',
+        'transition-colors duration-150 ease-out-quint',
         collapsed && 'justify-center px-0',
         active ? 'text-fg' : 'text-fg-muted hover:bg-surface-hover hover:text-fg',
       )}
@@ -163,7 +168,7 @@ function NavButton({
           // One shared element slides between items, so switching pages reads
           // as the indicator moving rather than two highlights crossfading.
           layoutId="sidebar-active"
-          transition={{ type: 'spring', stiffness: 480, damping: 40, mass: 0.7 }}
+          transition={SPRING.glide}
           className="absolute inset-0 rounded-[6px] bg-surface-active before:absolute before:inset-y-1.5 before:-left-2.5 before:w-[2px] before:rounded-full before:bg-[var(--accent)] before:content-['']"
         />
       )}

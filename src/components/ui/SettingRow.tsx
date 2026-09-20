@@ -94,7 +94,7 @@ export function ToggleRow({ title, description, checked, onChange, disabled = fa
       disabled={disabled}
       onClick={() => onChange(!checked)}
       className={cn(
-        'flex w-full items-center gap-4 px-4 py-4 text-left transition-colors duration-150',
+        'flex w-full items-center gap-4 px-4 py-4 text-left transition-colors duration-150 ease-out-quint',
         'active:bg-surface-hover disabled:pointer-events-none disabled:opacity-40',
       )}
     >

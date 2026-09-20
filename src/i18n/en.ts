@@ -341,6 +341,7 @@ export const en = {
   'toast.dismiss': 'Dismiss',
   'toast.downloadComplete': 'Download complete',
   'toast.downloadFailed': 'Download failed',
+  'toast.region': 'Notifications',
 
   'common.cancel': 'Cancel',
   'common.close': 'Close',

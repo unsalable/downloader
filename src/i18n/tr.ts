@@ -340,6 +340,7 @@ export const tr: Record<TranslationKey, string> = {
   'toast.dismiss': 'Kapat',
   'toast.downloadComplete': 'İndirme tamamlandı',
   'toast.downloadFailed': 'İndirme başarısız',
+  'toast.region': 'Bildirimler',
 
   'common.cancel': 'İptal',
   'common.close': 'Kapat',

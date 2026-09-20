@@ -76,7 +76,7 @@ export function HotkeyRecorder({
         }}
         onBlur={() => setRecording(false)}
         className={cn(
-          'h-8 min-w-[132px] rounded-lg border px-3 font-mono text-[12px] transition-all duration-150',
+          'pressable h-8 min-w-[132px] rounded-lg border px-3 font-mono text-[12px]',
           recording
             ? 'border-[var(--accent)] bg-accent-soft text-accent ring-2 ring-[var(--accent-ring)]/30'
             : 'border-[var(--border)] bg-surface text-fg-muted hover:border-[var(--border-strong)] hover:text-fg',

@@ -22,7 +22,7 @@
         "center": true,
         "focus": true,
         "theme": "Dark",
-        "backgroundColor": "#0A0A0F",
+        "backgroundColor": "#0C0B09",
         "visible": false,
         "dragDropEnabled": true
       }

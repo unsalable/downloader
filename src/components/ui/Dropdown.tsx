@@ -13,6 +13,7 @@ import {
 import { createPortal } from 'react-dom';
 
 import { cn } from '@/lib/cn';
+import { T } from '@/lib/motion';
 import { IS_MOBILE } from '@/lib/platform';
 
 export interface DropdownOption<T extends string> {
@@ -220,9 +221,9 @@ export function Dropdown<T extends string>({
         onClick={() => (open ? closeMenu() : openMenu())}
         onKeyDown={onTriggerKeyDown}
         className={cn(
-          'group flex w-full items-center gap-2 rounded-[10px] px-3 text-left',
+          'pressable group flex w-full items-center gap-2 rounded-[10px] px-3 text-left',
           IS_MOBILE ? 'h-12' : 'h-10',
-          'border border-[var(--border)] bg-surface transition-all duration-150',
+          'border border-[var(--border)] bg-surface',
           'hover:border-[var(--border-strong)] hover:bg-surface-hover',
           'disabled:pointer-events-none disabled:opacity-45',
           open && 'border-[var(--accent)] ring-2 ring-[var(--accent-ring)]/30',
@@ -244,7 +245,7 @@ export function Dropdown<T extends string>({
         <ChevronDown
           size={15}
           className={cn(
-            'shrink-0 text-fg-faint transition-transform duration-200',
+            'shrink-0 text-fg-faint transition-transform duration-150 ease-out-quint',
             open && 'rotate-180',
           )}
         />
@@ -261,8 +262,8 @@ export function Dropdown<T extends string>({
               onKeyDown={onMenuKeyDown}
               initial={{ opacity: 0, scale: 0.97, y: dropUp ? 6 : -6 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.97, y: dropUp ? 4 : -4, transition: { duration: 0.11 } }}
-              transition={{ duration: 0.19, ease: [0.22, 1, 0.36, 1] }}
+              exit={{ opacity: 0, scale: 0.97, y: dropUp ? 4 : -4, transition: T.microOut }}
+              transition={T.component}
               style={{
                 left: align === 'end' ? rect.right - width : rect.left,
                 top: dropUp ? undefined : rect.bottom + 6,
@@ -295,7 +296,7 @@ export function Dropdown<T extends string>({
                     }}
                     onClick={() => commit(option)}
                     className={cn(
-                      'flex cursor-pointer items-center gap-2.5 rounded-lg px-2.5 transition-colors duration-100',
+                      'flex cursor-pointer items-center gap-2.5 rounded-lg px-2.5 transition-colors duration-150 ease-out-quint',
                       IS_MOBILE ? 'min-h-12 py-2.5' : 'py-2',
                       option.disabled && 'cursor-not-allowed opacity-40',
                       !option.disabled && activeIndex === index && 'bg-surface-hover',

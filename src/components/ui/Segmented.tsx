@@ -2,6 +2,7 @@ import { motion } from 'motion/react';
 import { useId, type ReactNode } from 'react';
 
 import { cn } from '@/lib/cn';
+import { SPRING } from '@/lib/motion';
 import { IS_MOBILE } from '@/lib/platform';
 
 export interface SegmentedOption<T extends string> {
@@ -62,7 +63,8 @@ export function Segmented<T extends string>({
               onClick={() => onChange(option.value)}
               className={cn(
                 'relative flex flex-1 items-center justify-center gap-1.5 rounded-[7px] font-medium',
-                'transition-colors duration-150 disabled:pointer-events-none disabled:opacity-40',
+                'transition-colors duration-150 ease-out-quint',
+                'disabled:pointer-events-none disabled:opacity-40',
                 IS_MOBILE
                   ? 'h-10 px-2 text-[14px]'
                   : size === 'sm'
@@ -74,7 +76,7 @@ export function Segmented<T extends string>({
               {selected && (
                 <motion.span
                   layoutId={layoutId}
-                  transition={{ type: 'spring', stiffness: 520, damping: 40, mass: 0.7 }}
+                  transition={SPRING.glide}
                   className="absolute inset-0 rounded-[7px] bg-surface shadow-soft"
                 />
               )}

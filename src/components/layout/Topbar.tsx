@@ -121,8 +121,8 @@ function ActivityIndicator({ onOpenDownloads }: { onOpenDownloads: () => void })
         type="button"
         onClick={onOpenDownloads}
         className={cn(
-          'mr-1 flex h-8 items-center gap-2.5 rounded-md border border-[var(--border)]',
-          'bg-surface px-2.5 transition-colors duration-150 hover:bg-surface-hover',
+          'pressable mr-1 flex h-8 items-center gap-2.5 rounded-md border border-[var(--border)]',
+          'bg-surface px-2.5 hover:bg-surface-hover',
         )}
       >
         <span className="size-1.5 shrink-0 bg-accent" />

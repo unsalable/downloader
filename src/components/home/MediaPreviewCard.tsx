@@ -8,6 +8,7 @@ import { useThumbnail } from '@/hooks/useThumbnail';
 import { useTranslation } from '@/i18n';
 import { cn } from '@/lib/cn';
 import { formatCount, formatDuration, formatUploadDate } from '@/lib/format';
+import { T } from '@/lib/motion';
 import type { MediaMetadata } from '@/types';
 
 export function MediaPreviewCard({ metadata }: { metadata: MediaMetadata }) {
@@ -26,7 +27,7 @@ export function MediaPreviewCard({ metadata }: { metadata: MediaMetadata }) {
     <motion.article
       initial={{ opacity: 0, y: 12, scale: 0.985 }}
       animate={{ opacity: 1, y: 0, scale: 1 }}
-      transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
+      transition={T.spatial}
       className={cn(
         'overflow-hidden rounded-[var(--radius-panel)] border border-[var(--border)]',
         'bg-surface shadow-raised edge-light',

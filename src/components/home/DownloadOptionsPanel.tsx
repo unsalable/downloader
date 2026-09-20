@@ -20,6 +20,7 @@ import { Segmented, type SegmentedOption } from '@/components/ui/Segmented';
 import { Tooltip } from '@/components/ui/Tooltip';
 import { useTranslation } from '@/i18n';
 import { cn } from '@/lib/cn';
+import { COLLAPSE, T } from '@/lib/motion';
 import {
   audioStreamOptions,
   availableModes,
@@ -144,7 +145,7 @@ export function DownloadOptionsPanel({
     <motion.section
       initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.35, delay: 0.06, ease: [0.22, 1, 0.36, 1] }}
+      transition={{ ...T.spatial, delay: 0.06 }}
       className="rounded-[var(--radius-panel)] border border-[var(--border)] bg-surface p-4 shadow-raised edge-light"
     >
       {modeOptions.length > 1 && (
@@ -212,7 +213,7 @@ export function DownloadOptionsPanel({
             <button
               type="button"
               onClick={pickFolder}
-              className="shrink-0 rounded-md px-2 py-1 text-[12.5px] font-medium text-accent transition-colors hover:bg-accent-soft"
+              className="pressable shrink-0 rounded-md px-2 py-1 text-[12.5px] font-medium text-accent hover:bg-accent-soft"
             >
               {t('options.change')}
             </button>
@@ -223,23 +224,27 @@ export function DownloadOptionsPanel({
       <button
         type="button"
         onClick={() => onChange({ advanced: !options.advanced })}
-        className="mt-3.5 flex items-center gap-1.5 text-[12.5px] font-medium text-fg-faint transition-colors hover:text-fg-muted"
+        aria-expanded={options.advanced}
+        className="pressable -ml-1.5 mt-3 flex items-center gap-1.5 rounded-md px-1.5 py-1 text-[12.5px] font-medium text-fg-faint hover:text-fg-muted"
       >
         <Sliders size={13} />
         {options.advanced ? t('options.advancedHide') : t('options.advanced')}
         <ChevronDown
           size={13}
-          className={cn('transition-transform duration-200', options.advanced && 'rotate-180')}
+          className={cn(
+            'transition-transform duration-150 ease-out-quint',
+            options.advanced && 'rotate-180',
+          )}
         />
       </button>
 
       <AnimatePresence initial={false}>
         {options.advanced && (
           <motion.div
-            initial={{ opacity: 0, height: 0 }}
-            animate={{ opacity: 1, height: 'auto' }}
-            exit={{ opacity: 0, height: 0 }}
-            transition={{ duration: 0.24, ease: [0.22, 1, 0.36, 1] }}
+            variants={COLLAPSE}
+            initial="initial"
+            animate="animate"
+            exit="exit"
             className="overflow-hidden"
           >
             <div className="mt-3 grid gap-3 rounded-[var(--radius-card)] border border-[var(--border)] bg-surface-sunken p-3">
@@ -274,7 +279,7 @@ export function DownloadOptionsPanel({
               <button
                 type="button"
                 onClick={onInstallFfmpeg}
-                className="mt-1.5 text-[12.5px] font-semibold text-warning underline underline-offset-2"
+                className="pressable mt-1.5 rounded-md text-[12.5px] font-semibold text-warning underline underline-offset-2"
               >
                 {t('setup.installNow')}
               </button>

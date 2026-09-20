@@ -21,6 +21,7 @@ import { useThumbnail } from '@/hooks/useThumbnail';
 import { useTranslation } from '@/i18n';
 import { cn } from '@/lib/cn';
 import { basename, formatBytes, formatDate } from '@/lib/format';
+import { LIST_ITEM } from '@/lib/motion';
 import { IS_MOBILE, openFile, revealFile } from '@/lib/platform';
 import * as ipc from '@/services/ipc';
 import { useToastStore } from '@/stores/useToastStore';
@@ -201,13 +202,13 @@ const HistoryRow = memo(function HistoryRow({
   return (
     <motion.article
       layout="position"
-      initial={{ opacity: 0, y: 6 }}
-      animate={{ opacity: 1, y: 0 }}
-      exit={{ opacity: 0, scale: 0.98, transition: { duration: 0.15 } }}
-      transition={{ duration: 0.24, ease: [0.22, 1, 0.36, 1] }}
+      variants={LIST_ITEM}
+      initial="initial"
+      animate="animate"
+      exit="exit"
       className={cn(
         'group flex items-center gap-3 rounded-[var(--radius-card)] border border-[var(--border)]',
-        'bg-surface p-2.5 transition-colors duration-200 hover:border-[var(--border-strong)]',
+        'bg-surface p-2.5 transition-colors duration-150 ease-out-quint hover:border-[var(--border-strong)]',
         // Four buttons beside the title leave a phone no room to read it.
         IS_MOBILE && 'flex-wrap',
       )}

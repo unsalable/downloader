@@ -3,6 +3,7 @@ import { motion } from 'motion/react';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { useTranslation } from '@/i18n';
 import { cn } from '@/lib/cn';
+import { rise } from '@/lib/motion';
 
 /**
  * Skeleton shown while the engine resolves a link. It mirrors the real preview
@@ -14,10 +15,10 @@ export function AnalyzingCard() {
 
   return (
     <motion.div
-      initial={{ opacity: 0, y: 10 }}
-      animate={{ opacity: 1, y: 0 }}
-      exit={{ opacity: 0, y: -8 }}
-      transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
+      variants={rise(10)}
+      initial="initial"
+      animate="animate"
+      exit="exit"
       className={cn(
         'overflow-hidden rounded-[var(--radius-panel)] border border-[var(--border)]',
         'bg-surface shadow-raised edge-light',

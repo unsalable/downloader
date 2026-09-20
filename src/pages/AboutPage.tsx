@@ -9,6 +9,7 @@ import { Logo } from '@/components/layout/Logo';
 import { SettingGroup, SettingRow } from '@/components/ui/SettingRow';
 import { useTranslation } from '@/i18n';
 import { cn } from '@/lib/cn';
+import { T } from '@/lib/motion';
 import { IS_MOBILE } from '@/lib/platform';
 import * as ipc from '@/services/ipc';
 import { useToastStore } from '@/stores/useToastStore';
@@ -46,7 +47,7 @@ export function AboutPage() {
       <motion.header
         initial={{ opacity: 0, y: 10 }}
         animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
+        transition={T.entrance}
         className="flex flex-col items-center py-8 text-center"
       >
         <Logo size={52} />
@@ -164,7 +165,7 @@ function LicenseRow({ entry }: { entry: LicenseEntry }) {
         // page has no business running inside the app's origin.
         onClick={() => void openUrl(entry.url)}
         aria-label={entry.url}
-        className="shrink-0 rounded-md p-1 text-fg-faint transition-colors hover:bg-surface-hover hover:text-fg"
+        className="pressable-sm shrink-0 rounded-md p-1 text-fg-faint hover:bg-surface-hover hover:text-fg"
       >
         <ExternalLink size={13} />
       </button>

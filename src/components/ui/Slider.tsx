@@ -74,6 +74,7 @@ export function Slider({
           '[&::-webkit-slider-thumb]:shadow-[0_1px_4px_rgb(0_0_0/0.4)]',
           '[&::-webkit-slider-thumb]:border [&::-webkit-slider-thumb]:border-black/10',
           '[&::-webkit-slider-thumb]:transition-transform [&::-webkit-slider-thumb]:duration-150',
+          '[&::-webkit-slider-thumb]:ease-out-quint',
           'hover:[&::-webkit-slider-thumb]:scale-110 active:[&::-webkit-slider-thumb]:scale-95',
         )}
       />

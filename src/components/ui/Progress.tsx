@@ -51,7 +51,12 @@ export function Progress({ value, tone = 'accent', size = 'md', className, label
         // compositor. With several downloads ticking that difference is felt.
         <div
           className={cn(
-            'h-full w-full origin-left rounded-[2px] transition-transform duration-300 ease-linear',
+            // Exempt from the reduce-motion rule for the same reason the
+            // indeterminate bar is: the interpolation is not decoration, it is
+            // how a sample taken three times a second is drawn as a rate. Frozen,
+            // the bar steps, and a stepping bar is harder to read, not calmer.
+            'motion-essential h-full w-full origin-left rounded-[2px]',
+            'transition-transform duration-300 ease-linear',
             TONES[tone],
           )}
           style={{ transform: `scaleX(${Math.min(100, Math.max(0, value)) / 100})` }}

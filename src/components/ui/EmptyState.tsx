@@ -2,6 +2,7 @@ import { motion } from 'motion/react';
 import type { ReactNode } from 'react';
 
 import { cn } from '@/lib/cn';
+import { T, stagger } from '@/lib/motion';
 
 interface EmptyStateProps {
   illustration: ReactNode;
@@ -16,7 +17,7 @@ export function EmptyState({ illustration, title, body, action, className }: Emp
     <motion.div
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
+      transition={T.entrance}
       className={cn('flex flex-col items-center justify-center px-6 py-16 text-center', className)}
     >
       <div className="mb-5">{illustration}</div>
@@ -99,7 +100,7 @@ export function HistoryIllustration() {
           strokeWidth="1"
           initial={{ opacity: 0, y: -6 }}
           animate={{ opacity: 1 - index * 0.22, y: 0 }}
-          transition={{ delay: 0.1 + index * 0.09, duration: 0.45, ease: [0.22, 1, 0.36, 1] }}
+          transition={{ ...T.entrance, delay: 0.1 + stagger(index, 0.09) }}
         />
       ))}
 
@@ -113,7 +114,7 @@ export function HistoryIllustration() {
         initial={{ opacity: 0, scaleX: 0.4 }}
         animate={{ opacity: 0.85, scaleX: 1 }}
         style={{ transformOrigin: '22px 35px' }}
-        transition={{ delay: 0.35, duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
+        transition={{ ...T.entrance, delay: 0.35 }}
       />
     </svg>
   );

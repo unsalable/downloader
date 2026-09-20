@@ -30,7 +30,7 @@ export const TextInput = forwardRef<HTMLInputElement, TextInputProps>(function T
         className={cn(
           'flex items-center gap-2 rounded-[10px] border bg-surface px-3',
           IS_MOBILE ? 'h-12' : 'h-10',
-          'transition-all duration-150',
+          'transition-[border-color,box-shadow] duration-150 ease-out-quint',
           'focus-within:border-[var(--accent)] focus-within:ring-2 focus-within:ring-[var(--accent-ring)]/30',
           error ? 'border-[var(--error)]' : 'border-[var(--border)] hover:border-[var(--border-strong)]',
           className,

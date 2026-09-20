@@ -15,6 +15,7 @@ import { Button } from '@/components/ui/Button';
 import { useDebouncedValue } from '@/hooks/useDebouncedValue';
 import { useTranslation } from '@/i18n';
 import { cn } from '@/lib/cn';
+import { RISE, T } from '@/lib/motion';
 import { IS_MOBILE } from '@/lib/platform';
 import { normalizeUrl } from '@/lib/url';
 import * as ipc from '@/services/ipc';
@@ -253,7 +254,7 @@ export function HomePage({
           opacity: isCollapsed ? 0 : 1,
           marginBottom: isCollapsed ? 0 : 32,
         }}
-        transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
+        transition={T.spatial}
         className="shrink-0 overflow-hidden"
       >
         <Hero />
@@ -287,8 +288,9 @@ export function HomePage({
 
       {engineMissing && (
         <motion.div
-          initial={{ opacity: 0, y: 8 }}
-          animate={{ opacity: 1, y: 0 }}
+          variants={RISE}
+          initial="initial"
+          animate="animate"
           className="mt-4 rounded-[var(--radius-card)] border border-[var(--border)] bg-surface p-4 shadow-soft"
         >
           <h3 className="text-[14px] font-semibold text-fg">{t('setup.title')}</h3>
@@ -363,7 +365,7 @@ export function HomePage({
               <button
                 type="button"
                 onClick={reset}
-                className="mx-auto flex items-center gap-1.5 text-[12.5px] font-medium text-fg-faint transition-colors hover:text-fg-muted"
+                className="pressable mx-auto flex items-center gap-1.5 rounded-md px-2 py-1 text-[12.5px] font-medium text-fg-faint hover:text-fg-muted"
               >
                 <RotateCcw size={13} />
                 {t('preview.startOver')}
@@ -378,12 +380,14 @@ export function HomePage({
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
+            exit={{ opacity: 0, transition: T.microOut }}
+            transition={T.micro}
             className="fixed inset-0 z-[700] flex items-center justify-center bg-scrim backdrop-blur-sm"
           >
             <motion.div
-              initial={{ scale: 0.94 }}
-              animate={{ scale: 1 }}
+              initial={{ scale: 0.94, y: 8 }}
+              animate={{ scale: 1, y: 0 }}
+              transition={T.spatial}
               className="rounded-[var(--radius-panel)] border border-dashed border-[var(--accent)] bg-surface px-8 py-6 text-[13.5px] font-medium text-fg shadow-floating"
             >
               {t('input.dropHint')}

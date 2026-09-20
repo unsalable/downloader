@@ -4,6 +4,7 @@ import { Clock, Download, House, Repeat, Settings as SettingsIcon, type LucideIc
 import { useTranslation } from '@/i18n';
 import type { TranslationKey } from '@/i18n';
 import { cn } from '@/lib/cn';
+import { SPRING } from '@/lib/motion';
 import { badgeFor, type Route } from './Sidebar';
 
 const ENTRIES: { route: Route; label: TranslationKey; icon: LucideIcon }[] = [
@@ -46,14 +47,16 @@ export function BottomNav({ route, onNavigate, activeCount, convertingCount }: B
             aria-current={active ? 'page' : undefined}
             className={cn(
               'relative flex min-w-0 flex-1 flex-col items-center justify-center gap-1',
-              'text-[10.5px] font-medium transition-colors duration-150',
+              'text-[10.5px] font-medium transition-colors duration-150 ease-out-quint',
+              // A finger gets no hover, so the tab answers the touch itself.
+              'active:bg-surface-hover',
               active ? 'text-fg' : 'text-fg-muted',
             )}
           >
             {active && (
               <motion.span
                 layoutId="bottom-nav-active"
-                transition={{ type: 'spring', stiffness: 480, damping: 40, mass: 0.7 }}
+                transition={SPRING.glide}
                 className="absolute inset-x-4 top-0 h-[2px] rounded-full bg-[var(--accent)]"
               />
             )}

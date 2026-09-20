@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/Button';
 import { useTranslation } from '@/i18n';
 import type { TranslationKey } from '@/i18n';
 import { cn } from '@/lib/cn';
+import { T, rise } from '@/lib/motion';
 import type { AppErrorInfo } from '@/types';
 
 interface ErrorCardProps {
@@ -42,10 +43,10 @@ export function ErrorCard({ error, onRetry, extraAction }: ErrorCardProps) {
 
   return (
     <motion.div
-      initial={{ opacity: 0, y: 10 }}
-      animate={{ opacity: 1, y: 0 }}
-      exit={{ opacity: 0, y: -8 }}
-      transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] }}
+      variants={rise(10)}
+      initial="initial"
+      animate="animate"
+      exit="exit"
       role="alert"
       className={cn(
         'overflow-hidden rounded-[var(--radius-panel)] border border-[var(--border)]',
@@ -76,12 +77,16 @@ export function ErrorCard({ error, onRetry, extraAction }: ErrorCardProps) {
               <button
                 type="button"
                 onClick={() => setShowDetails((value) => !value)}
-                className="flex items-center gap-1 text-[12.5px] font-medium text-fg-faint transition-colors hover:text-fg-muted"
+                aria-expanded={showDetails}
+                className="pressable flex items-center gap-1 rounded-md px-1.5 py-1 text-[12.5px] font-medium text-fg-faint hover:text-fg-muted"
               >
                 {showDetails ? t('analyze.hideDetails') : t('analyze.details')}
                 <ChevronDown
                   size={13}
-                  className={cn('transition-transform duration-200', showDetails && 'rotate-180')}
+                  className={cn(
+                    'transition-transform duration-150 ease-out-quint',
+                    showDetails && 'rotate-180',
+                  )}
                 />
               </button>
             )}
@@ -91,7 +96,7 @@ export function ErrorCard({ error, onRetry, extraAction }: ErrorCardProps) {
             <motion.div
               initial={{ opacity: 0, height: 0 }}
               animate={{ opacity: 1, height: 'auto' }}
-              transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
+              transition={T.component}
               className="overflow-hidden"
             >
               <div className="relative mt-3 rounded-lg border border-[var(--border)] bg-surface-sunken p-3">
@@ -101,7 +106,7 @@ export function ErrorCard({ error, onRetry, extraAction }: ErrorCardProps) {
                 <button
                   type="button"
                   onClick={copyDetails}
-                  className="absolute right-2 top-2 flex items-center gap-1 rounded-md bg-surface px-1.5 py-1 text-[11px] text-fg-faint transition-colors hover:text-fg"
+                  className="pressable-sm absolute right-2 top-2 flex items-center gap-1 rounded-md bg-surface px-1.5 py-1 text-[11px] text-fg-faint hover:text-fg"
                 >
                   <Copy size={11} />
                   {copied ? t('analyze.copied') : t('common.copy')}

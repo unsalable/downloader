@@ -1,6 +1,7 @@
 import { motion } from 'motion/react';
 
 import { cn } from '@/lib/cn';
+import { SPRING } from '@/lib/motion';
 import { IS_MOBILE } from '@/lib/platform';
 
 interface ToggleProps {
@@ -21,6 +22,10 @@ export function Toggle({ checked, onChange, disabled = false, label, id }: Toggl
       aria-label={label}
       disabled={disabled}
       onClick={() => onChange(!checked)}
+      // No `pressable` here, unlike every other control: the knob inside is a
+      // layout animation, and Motion measures it against an ancestor it does
+      // not know is being scaled. The knob crossing the track is the feedback,
+      // and it is the most physical thing in the app already.
       className="shrink-0 rounded-full disabled:pointer-events-none disabled:opacity-40"
     >
       <ToggleTrack checked={checked} />
@@ -37,7 +42,7 @@ export function ToggleTrack({ checked }: { checked: boolean }) {
     <span
       aria-hidden="true"
       className={cn(
-        'relative flex shrink-0 items-center rounded-full px-[3px] transition-colors duration-200',
+        'relative flex shrink-0 items-center rounded-full px-[3px] transition-colors duration-250 ease-out-quint',
         IS_MOBILE ? 'h-[28px] w-[48px]' : 'h-[22px] w-[38px]',
         checked ? 'bg-accent' : 'bg-[var(--surface-active)]',
       )}
@@ -46,7 +51,7 @@ export function ToggleTrack({ checked }: { checked: boolean }) {
         layout
         // A spring here gives the knob a touch of overshoot, which is what makes
         // the control feel physical rather than merely animated.
-        transition={{ type: 'spring', stiffness: 620, damping: 34, mass: 0.6 }}
+        transition={SPRING.snap}
         className={cn(
           'block rounded-full bg-white shadow-sm',
           IS_MOBILE ? 'size-[22px]' : 'size-4',

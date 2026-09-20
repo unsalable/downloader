@@ -25,6 +25,7 @@ import { Tooltip } from '@/components/ui/Tooltip';
 import { useTranslation } from '@/i18n';
 import type { TranslationKey } from '@/i18n';
 import { cn } from '@/lib/cn';
+import { LIST_ITEM, T } from '@/lib/motion';
 import {
   AUDIO_BITRATES,
   INPUT_EXTENSIONS,
@@ -202,7 +203,8 @@ export function ConvertPage({ settings }: { settings: Settings }) {
           <motion.div
             initial={{ opacity: 0, y: -6 }}
             animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, height: 0 }}
+            exit={{ opacity: 0, height: 0, transition: T.componentOut }}
+            transition={T.component}
             className={cn(
               'mb-4 flex items-center gap-3 rounded-[var(--radius-card)] border px-4 py-3',
               'border-[var(--warning)]/35 bg-warning-soft',
@@ -239,7 +241,7 @@ export function ConvertPage({ settings }: { settings: Settings }) {
 
       <section
         className={cn(
-          'rounded-[var(--radius-panel)] border border-dashed p-5 transition-colors duration-200',
+          'rounded-[var(--radius-panel)] border border-dashed p-5 transition-colors duration-250 ease-out-quint',
           dragging
             ? 'border-[var(--accent)] bg-accent-soft/40'
             : 'border-[var(--border-strong)] bg-surface-sunken/60',
@@ -464,9 +466,10 @@ function StagedRow({ file, onRemove }: { file: StagedFile; onRemove: () => void 
   return (
     <motion.div
       layout="position"
-      initial={{ opacity: 0, y: 4 }}
-      animate={{ opacity: 1, y: 0 }}
-      exit={{ opacity: 0, scale: 0.98, transition: { duration: 0.14 } }}
+      variants={LIST_ITEM}
+      initial="initial"
+      animate="animate"
+      exit="exit"
       className={cn(
         'group flex items-center gap-2.5 rounded-[8px] border border-[var(--border)] bg-surface px-3 py-2',
         file.error != null && 'opacity-60',
@@ -491,7 +494,7 @@ function StagedRow({ file, onRemove }: { file: StagedFile; onRemove: () => void 
         type="button"
         onClick={onRemove}
         aria-label={t('convert.removeFile')}
-        className="reveal-on-hover shrink-0 rounded-md p-1 text-fg-faint transition-opacity hover:bg-surface-hover hover:text-fg"
+        className="reveal-on-hover pressable-sm shrink-0 rounded-md p-1 text-fg-faint hover:bg-surface-hover hover:text-fg"
       >
         <X size={13} />
       </button>
