@@ -26,7 +26,7 @@ use crate::model::{
 };
 use crate::providers::{self, detect};
 use crate::settings::Settings;
-use crate::{log_debug, net, paths, process, tools};
+use crate::{bridge, log_debug, logging, net, paths, process, tools};
 
 pub const PROVIDER_ID: &str = "engine";
 
@@ -54,18 +54,108 @@ impl EngineProvider {
         args.push("--ignore-no-formats-error".into());
         args.push("--no-playlist".into());
         args.push("-J".into());
-        args.push(url.to_string());
 
-        let output = process::run(&engine, &args).await?;
-        if !output.success() {
-            return Err(classify_engine_error(&output.stderr));
+        // The first look at any link is taken with no session behind it, which
+        // is why the overwhelming majority of downloads -- public video -- never
+        // cause the stored cookies to be written to disk at all.
+        let output = run_engine(&engine, &args, url, None).await?;
+        let mut result = interpret(&output, url);
+
+        if let Err(refusal) = &result {
+            if let Some(session) = session_for(refusal, url, settings) {
+                let jar = session.path().to_string_lossy().into_owned();
+                let retried = run_engine(&engine, &args, url, Some(jar.as_str())).await?;
+                result = interpret(&retried, url);
+
+                // Only after the run that worked: folding back a jar the engine
+                // rewrote while still being refused would store a signed-out
+                // session over a good one.
+                if result.is_ok() {
+                    session.fold_back();
+                }
+            }
         }
 
-        let root: Value = serde_json::from_str(output.stdout.trim())
-            .map_err(|err| AppError::Parse(format!("the engine returned unreadable JSON: {err}")))?;
-
-        parse_result(&root, url).map_err(|err| explain_missing_streams(err, &output.stderr))
+        result
     }
+}
+
+/// What a finished engine run means: the media it described, or the reason
+/// there is none.
+///
+/// The reason has to be worked out here rather than from the exit status,
+/// because a refusal reaches this code in two shapes. yt-dlp exits non-zero
+/// when it refuses outright, but `--ignore-no-formats-error` -- which is what
+/// lets a photo post be reported instead of refused -- downgrades the
+/// members-only wall to a warning on a run that exits 0 and prints JSON with an
+/// empty format list. That second shape is the one the browser link exists for,
+/// so deciding on the exit code alone would leave the session unreachable for
+/// exactly the videos it was stored to reach.
+fn interpret(output: &process::CapturedOutput, url: &str) -> AppResult<MediaMetadata> {
+    if !output.success() {
+        return Err(classify_engine_error(&output.stderr));
+    }
+
+    let root: Value = serde_json::from_str(output.stdout.trim())
+        .map_err(|err| AppError::Parse(format!("the engine returned unreadable JSON: {err}")))?;
+
+    parse_result(&root, url).map_err(|err| explain_missing_streams(err, &output.stderr))
+}
+
+/// One engine run: the shared arguments, a cookie jar when the caller has one
+/// to lend, and the URL last.
+async fn run_engine(
+    engine: &Path,
+    args: &[String],
+    url: &str,
+    cookies: Option<&str>,
+) -> AppResult<process::CapturedOutput> {
+    let mut args = args.to_vec();
+    if let Some(jar) = cookies {
+        args.push("--cookies".to_string());
+        args.push(jar.to_string());
+    }
+    args.push(url.to_string());
+    process::run(engine, &args).await
+}
+
+/// The browser session to repeat a failed run with, if repeating it is worth
+/// anything.
+///
+/// Three conditions, all of them cheap and all of them necessary. The failure
+/// has to be a wall a signed-in viewer could be past -- a membership, or the
+/// broader refusal the engine gives when it cannot tell who is asking. The
+/// host has to be one the link was built for, so a session is never sent
+/// anywhere it does not belong. And a fresh session has to actually exist,
+/// which it does not for the user who never connected a browser.
+///
+/// The caller runs this once and only once. A second refusal with the session
+/// attached is a wall the browser cannot pass either, and grinding at it would
+/// spend a real Google login on a video that is not going to be served.
+/// Whether a refusal is the kind a stored browser session could answer.
+///
+/// Kept apart from `session_for` so the decision can be tested on its own: the
+/// function around it ends in a lease, and a test run has no session to lease.
+fn worth_a_session(err: &AppError) -> bool {
+    match err {
+        AppError::MembershipRequired { .. } | AppError::Forbidden { .. } => true,
+        // A video whose real formats the engine could not reach is reported as
+        // having only images, because the storyboards are all that survive the
+        // attempt. On YouTube that is another face of the same wall; anywhere
+        // else it is a genuine picture post, which is why this is only ever
+        // consulted for the hosts `wants_cookies` allows.
+        AppError::Engine(detail) => detail
+            .to_ascii_lowercase()
+            .contains("only images are available"),
+        _ => false,
+    }
+}
+
+pub fn session_for(err: &AppError, url: &str, settings: &Settings) -> Option<bridge::CookieLease> {
+    if !worth_a_session(err) || !bridge::wants_cookies(url) {
+        return None;
+    }
+    bridge::lease(settings)
 }
 
 /// Arguments shared by every engine invocation.
@@ -112,7 +202,64 @@ pub fn base_args(settings: &Settings) -> Vec<String> {
         ));
     }
 
+    #[cfg(not(target_os = "android"))]
+    if let Some(runtime) = js_runtime() {
+        args.push("--js-runtimes".to_string());
+        args.push(runtime);
+    }
+
     args
+}
+
+/// A JavaScript engine for the desktop, if the machine has one.
+///
+/// This matters far more for a signed-in request than for an anonymous one.
+/// Without cookies YouTube is read through a player client whose formats need
+/// no deciphering; an authenticated request is answered with formats that do,
+/// and with no runtime to decipher them yt-dlp discards every one and leaves
+/// only the storyboard images behind. What reaches the user then is "only
+/// images are available" -- on precisely the members-only video the browser
+/// link was connected for.
+///
+/// yt-dlp finds Deno by itself and nothing else, so anything else has to be
+/// named.
+///
+/// What discovery settled on wins, and discovery prefers the copy this app
+/// installed over anything on PATH. A machine that already had Deno or Node
+/// downloads nothing -- its own copy is found, reported as present, and no
+/// install is ever offered -- while a machine that had none uses the one the
+/// user installed here. The PATH search below only answers before the first
+/// discovery pass has published, the one moment the managed copy is invisible.
+#[cfg(not(target_os = "android"))]
+fn js_runtime() -> Option<String> {
+    tools::js_runtime_path()
+        .as_deref()
+        .and_then(runtime_spec)
+        .or_else(path_runtime)
+}
+
+/// Which runtime a path holds, in the `kind:path` pair yt-dlp is given. The
+/// program names itself: `deno.exe` is a Deno.
+#[cfg(not(target_os = "android"))]
+fn runtime_spec(path: &Path) -> Option<String> {
+    let name = path.file_stem()?.to_str()?;
+    Some(format!("{name}:{}", path.display()))
+}
+
+/// Whatever the machine already had. Looked up once: this runs for every
+/// invocation, and PATH does not change underneath a running app.
+#[cfg(not(target_os = "android"))]
+fn path_runtime() -> Option<String> {
+    static FOUND: once_cell::sync::OnceCell<Option<String>> = once_cell::sync::OnceCell::new();
+
+    FOUND
+        .get_or_init(|| {
+            ["deno", "node", "bun"].iter().find_map(|name| {
+                let path = process::which(name)?;
+                Some(format!("{name}:{}", path.display()))
+            })
+        })
+        .clone()
 }
 
 pub fn engine_binary() -> AppResult<std::path::PathBuf> {
@@ -153,9 +300,45 @@ pub fn classify_engine_error(stderr: &str) -> AppError {
         };
     }
 
-    // Everything that means "you are not allowed to see this", including the
-    // engine's own suggestion to supply cookies or credentials. The app does
-    // not do that -- it reports the wall rather than trying to get around it.
+    // A bot check and a membership wall are different walls, and one run can
+    // mention both -- a warning about a missing proof-of-origin token above the
+    // real refusal. Only the reported error decides, and a bot check decides
+    // first: a request YouTube would not answer at all never got as far as
+    // asking who the viewer is, and telling someone the browser they have just
+    // connected is at fault is the worst answer this feature could give.
+    let reported = first_error_line(stderr).to_ascii_lowercase();
+    if ["not a bot", "po token", "po_token", "proof of origin"]
+        .iter()
+        .any(|needle| reported.contains(needle))
+    {
+        return AppError::Forbidden {
+            status: 403,
+            detail: first_error_line(stderr),
+        };
+    }
+
+    // The membership wall, in the words YouTube itself uses and yt-dlp passes
+    // through: "Join this channel to get access to members-only content like
+    // this video", and for a tiered channel "This video is available to this
+    // channel's members on level: <tier>". Recognised ahead of the broad
+    // refusal below because it is the one case the app can do something about.
+    if has(&[
+        "members-only",
+        "members only",
+        "join this channel",
+        "channel's members",
+        "members on level",
+    ]) {
+        return AppError::MembershipRequired {
+            detail: first_error_line(stderr),
+        };
+    }
+
+    // Everything else that means "you are not allowed to see this", including
+    // the engine's own suggestion to supply cookies or credentials. The caller
+    // may repeat one of these with a linked browser's session behind it, but
+    // only where one is stored and only once; a refusal that survives that is
+    // reported as it stands.
     if has(&[
         "http error 401",
         "http error 402",
@@ -237,22 +420,27 @@ fn explain_missing_streams(err: AppError, stderr: &str) -> AppError {
 
     let lower = reason.to_ascii_lowercase();
     if NO_VIDEO_NOTES.iter().any(|note| lower.contains(note)) {
-        AppError::Unsupported(reason.chars().take(600).collect())
+        AppError::Unsupported(logging::redact(reason).chars().take(600).collect())
     } else {
         classify_engine_error(&format!("ERROR: {reason}"))
     }
 }
 
+/// The one line of the engine's output that explains the failure, cut down to
+/// something safe to hand out.
+///
+/// Every error the user sees carries this text, and the error card has a Copy
+/// button that ends up in public issue trackers -- so a run that was given the
+/// browser's session must not be able to put any of it there.
 fn first_error_line(stderr: &str) -> String {
-    stderr
+    let line = stderr
         .lines()
         .map(str::trim)
         .find(|line| line.starts_with("ERROR:") || line.starts_with("error:"))
         .or_else(|| stderr.lines().map(str::trim).find(|line| !line.is_empty()))
-        .unwrap_or("the engine reported no detail")
-        .chars()
-        .take(600)
-        .collect()
+        .unwrap_or("the engine reported no detail");
+
+    logging::redact(line).chars().take(600).collect()
 }
 
 // -- JSON -> model ---------------------------------------------------------
@@ -327,6 +515,16 @@ pub fn parse_metadata(node: &Value, requested_url: &str) -> AppResult<MediaMetad
     }
 
     if formats.is_empty() {
+        // The engine says outright when a video sits behind a channel
+        // membership, and reading that field beats recognising an English
+        // warning line that changes between releases and is not written in the
+        // user's language either.
+        if node.get("availability").and_then(Value::as_str) == Some("subscriber_only") {
+            return Err(AppError::MembershipRequired {
+                detail: "this video is for members of the channel".into(),
+            });
+        }
+
         return Err(AppError::Unsupported(
             "the source offered no downloadable stream".into(),
         ));
@@ -798,7 +996,12 @@ pub fn output_template(target: &Path) -> String {
 }
 
 pub fn log_engine_invocation(args: &[String]) {
-    log_debug!("engine", "invoking with {} args: {:?}", args.len(), args);
+    log_debug!(
+        "engine",
+        "invoking with {} args: {:?}",
+        args.len(),
+        logging::redact_args(args)
+    );
 }
 
 #[cfg(test)]
@@ -864,6 +1067,72 @@ mod tests {
     }
 
     #[test]
+    fn a_membership_wall_is_told_apart_from_every_other_refusal() {
+        // As YouTube words it, passed through by the engine: the plain case,
+        // the tiered case, and a members-only live stream.
+        let walls = [
+            "ERROR: [youtube] AbCdEf12345: Join this channel to get access to members-only content like this video, and other exclusive perks.",
+            "ERROR: [youtube] AbCdEf12345: This video is available to this channel's members on level: Supporters (or any higher level). Join this channel to get access to members-only content and other exclusive perks.",
+            "ERROR: [youtube] AbCdEf12345: This live stream is members-only content",
+        ];
+        for wall in walls {
+            let err = classify_engine_error(wall);
+            assert_eq!(err.code(), "membershipRequired", "misclassified: {wall}");
+        }
+    }
+
+    #[test]
+    fn a_bot_check_is_never_blamed_on_the_membership() {
+        // The worst message this feature could produce: the user connects a
+        // browser, the download still fails, and the app says the membership
+        // is the problem. A bot check is its own wall and stays one.
+        let checks = [
+            "ERROR: [youtube] AbCdEf12345: Sign in to confirm you're not a bot. Use --cookies-from-browser or --cookies for the authentication.",
+            "ERROR: [youtube] AbCdEf12345: Sign in to confirm you\u{2019}re not a bot",
+            "ERROR: [youtube] AbCdEf12345: Some formats are missing a GVS PO Token",
+        ];
+        for check in checks {
+            assert_eq!(classify_engine_error(check).code(), "forbidden", "{check}");
+        }
+
+        // Even when a stale members-only warning is still on the buffer above
+        // the refusal that actually stopped the run.
+        let both = "WARNING: [youtube] AbCdEf12345: members-only content\n\
+                    ERROR: [youtube] AbCdEf12345: Sign in to confirm you're not a bot";
+        assert_eq!(classify_engine_error(both).code(), "forbidden");
+    }
+
+    #[test]
+    fn a_paid_tier_that_is_not_a_channel_membership_stays_a_plain_refusal() {
+        // Music Premium is not something a linked browser is asked to answer
+        // differently, so it must not borrow the membership message.
+        assert_eq!(
+            classify_engine_error("ERROR: This video is available to Music Premium members").code(),
+            "forbidden"
+        );
+    }
+
+    #[test]
+    fn a_session_is_only_offered_for_a_wall_on_a_host_the_link_serves() {
+        let settings = Settings::default();
+
+        let membership = AppError::MembershipRequired { detail: "x".into() };
+        let missing = AppError::NotFound { status: 404, detail: "x".into() };
+
+        // Nothing but a refusal, and nothing off the hosts the link serves,
+        // ever reaches the point of asking for a lease at all.
+        assert!(session_for(&missing, "https://www.youtube.com/watch?v=abc", &settings).is_none());
+        assert!(session_for(&membership, "https://vimeo.com/76979871", &settings).is_none());
+    }
+
+    #[test]
+    fn a_cookie_value_never_reaches_the_error_card() {
+        let stderr = "ERROR: [youtube] abc: Unable to load cookies: SID=g.a000SESSIONVALUE9f";
+        let detail = classify_engine_error(stderr).technical().unwrap();
+        assert!(!detail.contains("g.a000SESSIONVALUE9f"), "{detail}");
+    }
+
+    #[test]
     fn a_login_wall_is_not_reported_as_retryable_nonsense() {
         let err = classify_engine_error("ERROR: The web client only works when logged-in.");
         // Retrying an auth wall is pointless but harmless; what matters is that
@@ -892,6 +1161,21 @@ mod tests {
             assert!(err.retryable());
             assert!(err.technical().is_some_and(|detail| detail.contains("No address associated with hostname")));
         }
+    }
+
+    /// The engine has to be told what a runtime is, not only where it is, and
+    /// a pair it does not recognise is one it silently ignores.
+    #[test]
+    #[cfg(not(target_os = "android"))]
+    fn a_runtime_is_named_after_the_program_it_points_at() {
+        assert_eq!(
+            runtime_spec(Path::new(r"C:\Users\x\AppData\Roaming\UniversalDownloader\tools\js\deno.exe")),
+            Some(r"deno:C:\Users\x\AppData\Roaming\UniversalDownloader\tools\js\deno.exe".to_string())
+        );
+        assert_eq!(
+            runtime_spec(Path::new(r"C:\Program Files\nodejs\node.exe")),
+            Some(r"node:C:\Program Files\nodejs\node.exe".to_string())
+        );
     }
 
     #[test]
@@ -1127,6 +1411,61 @@ mod tests {
             parse_metadata(&node, "https://www.youtube.com/watch?v=abc").unwrap_err().code(),
             "unsupported"
         );
+    }
+
+    /// The engine states a membership wall in a field of its own, which is
+    /// what the browser link has to key on: the warning line that says the
+    /// same thing is English prose and changes between releases.
+    #[test]
+    fn a_members_only_video_says_so_rather_than_reading_as_unsupported() {
+        let node = serde_json::json!({
+            "id": "abc",
+            "title": "Members only",
+            "formats": [],
+            "availability": "subscriber_only",
+            "thumbnails": [{ "url": "https://i.ytimg.test/vi/abc/maxresdefault.jpg", "width": 1280, "height": 720 }],
+        });
+        assert_eq!(
+            parse_metadata(&node, "https://www.youtube.com/watch?v=abc")
+                .unwrap_err()
+                .code(),
+            "membershipRequired"
+        );
+    }
+
+    /// Which refusals are worth spending the stored session on. The
+    /// only-images case is here because that is the shape a signed-in request
+    /// takes when the engine could not decipher the formats it was served.
+    #[test]
+    fn a_wall_is_worth_the_session_and_an_empty_post_is_not() {
+        assert!(worth_a_session(&AppError::MembershipRequired {
+            detail: "members".into()
+        }));
+        assert!(worth_a_session(&AppError::Forbidden {
+            status: 403,
+            detail: "sign in".into()
+        }));
+        assert!(worth_a_session(&AppError::Engine(
+            "ERROR: Only images are available for download".into()
+        )));
+
+        assert!(!worth_a_session(&AppError::Unsupported(
+            "nothing to download".into()
+        )));
+        assert!(!worth_a_session(&AppError::Network("timed out".into())));
+        assert!(!worth_a_session(&AppError::Engine(
+            "ERROR: unable to extract player version".into()
+        )));
+    }
+
+    /// And a picture post on a platform that really publishes pictures must
+    /// never reach for it, whatever the engine called the failure.
+    #[test]
+    fn only_youtube_addresses_are_worth_a_session() {
+        assert!(bridge::wants_cookies("https://www.youtube.com/watch?v=a"));
+        assert!(bridge::wants_cookies("https://youtu.be/a"));
+        assert!(!bridge::wants_cookies("https://www.instagram.com/p/x/"));
+        assert!(!bridge::wants_cookies("https://youtube.com.example.test/watch?v=a"));
     }
 
     #[test]

@@ -1,20 +1,18 @@
 import { create } from 'zustand';
 
 import * as ipc from '@/services/ipc';
-import type { ToolInstallProgress, ToolsState } from '@/types';
-
-type ToolName = 'engine' | 'ffmpeg';
+import type { ToolInstallProgress, ToolKind, ToolsState } from '@/types';
 
 interface ToolsStoreState {
   tools: ToolsState | null;
   /** Discovery runs a subprocess per tool, so there is a real "checking" state. */
   checking: boolean;
-  installing: Partial<Record<ToolName, ToolInstallProgress>>;
+  installing: Partial<Record<ToolKind, ToolInstallProgress>>;
   error: string | null;
   load: () => Promise<void>;
   refresh: () => Promise<void>;
   apply: (tools: ToolsState) => void;
-  install: (tool: ToolName) => Promise<boolean>;
+  install: (tool: ToolKind) => Promise<boolean>;
   setInstallProgress: (progress: ToolInstallProgress) => void;
 }
 

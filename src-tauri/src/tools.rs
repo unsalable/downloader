@@ -1,15 +1,18 @@
-//! Discovery and installation of the two external tools.
+//! Discovery and installation of the external tools.
 //!
-//! Neither tool is bundled in the installer: yt-dlp changes weekly (a bundled
-//! copy would be stale the month after release) and FFmpeg is GPL, which is
-//! cleanest to keep as a separate process the user opts into. Both are fetched
-//! once, on request, into the app's own data directory -- and a copy the user
-//! already has on PATH is preferred over downloading anything at all.
+//! None of them is bundled in the installer: yt-dlp changes weekly (a bundled
+//! copy would be stale the month after release), FFmpeg is GPL, which is
+//! cleanest to keep as a separate process the user opts into, and the
+//! JavaScript runtime is 40 MB that plenty of installs never need. All are
+//! fetched once, on request, into the app's own data directory -- and a copy
+//! the user already has on PATH is preferred over downloading anything at all.
 //!
-//! Android differs in one respect: nothing an app downloads may be executed
-//! there, so FFmpeg ships inside the APK and is always present. yt-dlp is still
-//! fetched on request -- it is a Python program, and the interpreter that runs
-//! it is the part the APK carries.
+//! Android differs in two respects: nothing an app downloads may be executed
+//! there, so FFmpeg ships inside the APK and is always present, and the
+//! JavaScript runtime is not a tool at all -- the APK carries QuickJS, which
+//! `android.rs` hands the engine directly. yt-dlp is still fetched on request
+//! -- it is a Python program, and the interpreter that runs it is the part the
+//! APK carries.
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -46,12 +49,31 @@ const ENGINE_EXE: &str = "yt-dlp";
 #[cfg(not(target_os = "android"))]
 const FFMPEG_EXE: &str = "ffmpeg.exe";
 
-static STATE: Lazy<RwLock<ToolsState>> = Lazy::new(|| {
-    RwLock::new(ToolsState {
+/// Deno rather than Node or Bun: it is the one runtime yt-dlp looks for by
+/// itself, so it is the best-supported path and keeps working even if this app
+/// stops naming it. The Windows release is a single executable in a zip.
+#[cfg(not(target_os = "android"))]
+const JS_RUNTIME_URL: &str =
+    "https://github.com/denoland/deno/releases/latest/download/deno-x86_64-pc-windows-msvc.zip";
+
+#[cfg(not(target_os = "android"))]
+const JS_RUNTIME_EXE: &str = "deno.exe";
+
+/// The managed runtime's own directory. Not `runtime`, which on Android is
+/// where the libraries unpacked from the APK go.
+#[cfg(not(target_os = "android"))]
+const JS_RUNTIME_DIR: &str = "js";
+
+static STATE: Lazy<RwLock<ToolsState>> = Lazy::new(|| RwLock::new(blank_state()));
+
+fn blank_state() -> ToolsState {
+    ToolsState {
         engine: ToolStatus::missing(ToolKind::Engine),
         ffmpeg: ToolStatus::missing(ToolKind::Ffmpeg),
-    })
-});
+        #[cfg(not(target_os = "android"))]
+        js_runtime: ToolStatus::missing(ToolKind::JsRuntime),
+    }
+}
 
 /// Serialises discovery. A pass runs a subprocess per tool and then publishes
 /// what it saw, so two overlapping passes let the slower one publish a view from
@@ -81,10 +103,7 @@ pub fn snapshot() -> ToolsState {
     STATE
         .read()
         .map(|state| state.clone())
-        .unwrap_or_else(|_| ToolsState {
-            engine: ToolStatus::missing(ToolKind::Engine),
-            ffmpeg: ToolStatus::missing(ToolKind::Ffmpeg),
-        })
+        .unwrap_or_else(|_| blank_state())
 }
 
 pub fn engine_path() -> Option<PathBuf> {
@@ -102,6 +121,22 @@ pub fn ffmpeg_path() -> Option<PathBuf> {
         .ffmpeg
         .available
         .then(|| state.ffmpeg.path.as_ref().map(PathBuf::from))
+        .flatten()
+}
+
+/// The JavaScript runtime discovery settled on, if there is one.
+///
+/// There is deliberately no `require_js_runtime`: every download that worked
+/// before this tool existed still works without it, so a missing runtime is
+/// never a reason to refuse a link -- it only costs the formats that have to be
+/// deciphered, which is the signed-in half of YouTube.
+#[cfg(not(target_os = "android"))]
+pub fn js_runtime_path() -> Option<PathBuf> {
+    let state = STATE.read().ok()?;
+    state
+        .js_runtime
+        .available
+        .then(|| state.js_runtime.path.as_ref().map(PathBuf::from))
         .flatten()
 }
 
@@ -138,7 +173,12 @@ fn managed_ffmpeg() -> AppResult<PathBuf> {
     Ok(paths::tools_dir()?.join("ffmpeg").join(FFMPEG_EXE))
 }
 
-/// Re-detect both tools and publish the result. Called after a custom path
+#[cfg(not(target_os = "android"))]
+fn managed_js_runtime() -> AppResult<PathBuf> {
+    Ok(paths::tools_dir()?.join(JS_RUNTIME_DIR).join(JS_RUNTIME_EXE))
+}
+
+/// Re-detect every tool and publish the result. Called after a custom path
 /// setting changes and whenever the user asks for a fresh check.
 pub async fn refresh(settings: &Settings) -> ToolsState {
     let _pass = DISCOVERY.lock().await;
@@ -170,10 +210,16 @@ async fn discover_all(settings: &Settings) -> ToolsState {
 
     let engine = detect_kind(ToolKind::Engine, settings).await;
     let ffmpeg = detect_kind(ToolKind::Ffmpeg, settings).await;
+    #[cfg(not(target_os = "android"))]
+    let js_runtime = detect_kind(ToolKind::JsRuntime, settings).await;
 
     let state = publish(|state| {
         state.engine = engine;
         state.ffmpeg = ffmpeg;
+        #[cfg(not(target_os = "android"))]
+        {
+            state.js_runtime = js_runtime;
+        }
     });
     DISCOVERED.store(true, Ordering::SeqCst);
     state
@@ -193,6 +239,8 @@ fn slot(state: &mut ToolsState, kind: ToolKind) -> &mut ToolStatus {
     match kind {
         ToolKind::Engine => &mut state.engine,
         ToolKind::Ffmpeg => &mut state.ffmpeg,
+        #[cfg(not(target_os = "android"))]
+        ToolKind::JsRuntime => &mut state.js_runtime,
     }
 }
 
@@ -203,6 +251,10 @@ async fn detect_kind(kind: ToolKind, settings: &Settings) -> ToolStatus {
         }
         ToolKind::Ffmpeg => {
             detect(kind, ffmpeg_candidates(settings), &["-version".to_string()]).await
+        }
+        #[cfg(not(target_os = "android"))]
+        ToolKind::JsRuntime => {
+            detect(kind, js_runtime_candidates(), &["--version".to_string()]).await
         }
     }
 }
@@ -217,6 +269,26 @@ fn engine_candidates(settings: &Settings) -> Vec<(PathBuf, ToolSource)> {
 #[cfg(not(target_os = "android"))]
 fn ffmpeg_candidates(settings: &Settings) -> Vec<(PathBuf, ToolSource)> {
     ordered_candidates(settings.ffmpeg_path.as_deref(), managed_ffmpeg().ok(), "ffmpeg")
+}
+
+/// The copy this app installed, then any runtime the machine already has.
+///
+/// There is no custom-path setting to honour here, so the order is only those
+/// two. Node and Bun are looked for beside Deno because the engine is happy
+/// with any of them once it is told where one is, and a machine that has one
+/// should not be asked to fetch 40 MB to learn nothing new.
+#[cfg(not(target_os = "android"))]
+fn js_runtime_candidates() -> Vec<(PathBuf, ToolSource)> {
+    managed_js_runtime()
+        .ok()
+        .map(|path| (path, ToolSource::Managed))
+        .into_iter()
+        .chain(
+            ["deno", "node", "bun"]
+                .iter()
+                .filter_map(|name| Some((process::which(name)?, ToolSource::System))),
+        )
+        .collect()
 }
 
 #[cfg(not(target_os = "android"))]
@@ -310,6 +382,16 @@ fn parse_version(kind: ToolKind, stdout: &str) -> String {
             .unwrap_or(first)
             .trim_start_matches('n')
             .to_string(),
+        // Three runtimes, three shapes: "deno 2.9.7 (stable, ...)", Node's
+        // bare "v22.11.0", Bun's bare "1.1.0". The first word that starts
+        // with a digit is the version in all of them.
+        #[cfg(not(target_os = "android"))]
+        ToolKind::JsRuntime => first
+            .split_whitespace()
+            .map(|word| word.trim_start_matches('v'))
+            .find(|word| word.starts_with(|c: char| c.is_ascii_digit()))
+            .unwrap_or(first)
+            .to_string(),
     }
 }
 
@@ -326,6 +408,8 @@ pub async fn install(
     match kind {
         ToolKind::Engine => install_engine(settings, on_progress).await?,
         ToolKind::Ffmpeg => install_ffmpeg(settings, on_progress).await?,
+        #[cfg(not(target_os = "android"))]
+        ToolKind::JsRuntime => install_js_runtime(settings, on_progress).await?,
     }
 
     on_progress(0, None, "verifying");
@@ -409,6 +493,32 @@ async fn install_ffmpeg(settings: &Settings, on_progress: InstallProgress<'_>) -
     let _ = std::fs::remove_dir_all(&staging);
     std::fs::create_dir_all(&staging)?;
     let extracted = extract_ffmpeg(&archive, &staging);
+    let _ = std::fs::remove_file(&archive);
+    if let Err(err) = extracted {
+        let _ = std::fs::remove_dir_all(&staging);
+        return Err(err);
+    }
+
+    replace_path(&staging, &dir)
+}
+
+/// The same shape as the FFmpeg install: fetch the zip, unpack it beside the
+/// live copy, swap the directory in whole. One executable rather than a
+/// directory's worth would fit in a plain file swap, but a release that one day
+/// ships a DLL beside it would then land half-installed.
+#[cfg(not(target_os = "android"))]
+async fn install_js_runtime(settings: &Settings, on_progress: InstallProgress<'_>) -> AppResult<()> {
+    let tools_dir = paths::tools_dir()?;
+    let dir = tools_dir.join(JS_RUNTIME_DIR);
+    let staging = tools_dir.join(format!("{JS_RUNTIME_DIR}.staging"));
+    let archive = tools_dir.join("js-runtime-download.zip");
+
+    download_to_file(JS_RUNTIME_URL, &archive, settings, on_progress).await?;
+
+    on_progress(0, None, "extracting");
+    let _ = std::fs::remove_dir_all(&staging);
+    std::fs::create_dir_all(&staging)?;
+    let extracted = extract_js_runtime(&archive, &staging);
     let _ = std::fs::remove_file(&archive);
     if let Err(err) = extracted {
         let _ = std::fs::remove_dir_all(&staging);
@@ -530,6 +640,62 @@ fn extract_ffmpeg(archive: &Path, dest: &Path) -> AppResult<()> {
     Ok(())
 }
 
+/// Pull the runtime out of its release archive.
+///
+/// That zip holds exactly one file today, `deno.exe`. Everything at the root is
+/// taken rather than that one name, so a release that grows a library beside
+/// the executable still installs whole; a subdirectory is ignored, since
+/// nothing the engine is handed would look for one. The install fails outright
+/// if the executable itself was not among them -- an empty `js` directory would
+/// otherwise read as a runtime that merely refuses to start.
+#[cfg(not(target_os = "android"))]
+fn extract_js_runtime(archive: &Path, dest: &Path) -> AppResult<()> {
+    let file = std::fs::File::open(archive)?;
+    let mut zip = zip::ZipArchive::new(file).map_err(|err| {
+        AppError::Other(format!(
+            "the JavaScript runtime archive could not be read: {err}"
+        ))
+    })?;
+
+    let mut found_runtime = false;
+    for index in 0..zip.len() {
+        let mut entry = zip.by_index(index).map_err(|err| {
+            AppError::Other(format!("the JavaScript runtime archive is damaged: {err}"))
+        })?;
+
+        if entry.is_dir() {
+            continue;
+        }
+        // Remote input again, so the same zip-slip guard as above.
+        let Some(entry_path) = entry.enclosed_name() else {
+            continue;
+        };
+        if !at_archive_root(&entry_path) {
+            continue;
+        }
+        let Some(name) = entry_path.file_name().and_then(|n| n.to_str()) else {
+            continue;
+        };
+
+        let mut out = std::fs::File::create(dest.join(name))?;
+        std::io::copy(&mut entry, &mut out)?;
+        out.flush()?;
+        found_runtime |= name.eq_ignore_ascii_case(JS_RUNTIME_EXE);
+    }
+
+    if !found_runtime {
+        return Err(AppError::Other(
+            "the JavaScript runtime archive did not contain the runtime".into(),
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(not(target_os = "android"))]
+fn at_archive_root(path: &Path) -> bool {
+    path.components().count() == 1
+}
+
 /// Stream `url` to `target`, removing the partial file if the transfer fails.
 pub(crate) async fn download_to_file(
     url: &str,
@@ -638,6 +804,40 @@ mod tests {
         let missing = dir.join("never-downloaded");
         assert!(replace_path(&missing, &target).is_err());
         assert_eq!(std::fs::read(&target).unwrap(), b"old");
+    }
+
+    /// The name the TypeScript side is written against. Renaming the variant
+    /// without renaming it there would leave the runtime installing into a
+    /// card that never updates.
+    #[test]
+    #[cfg(not(target_os = "android"))]
+    fn the_js_runtime_is_called_what_the_interface_calls_it() {
+        assert_eq!(ToolKind::JsRuntime.as_str(), "jsRuntime");
+    }
+
+    #[test]
+    #[cfg(not(target_os = "android"))]
+    fn a_js_runtime_reports_a_version_whichever_runtime_it_is() {
+        let version = |stdout: &str| parse_version(ToolKind::JsRuntime, stdout);
+
+        assert_eq!(
+            version("deno 2.9.7 (stable, release, x86_64-pc-windows-msvc)\nv8 14.2\n"),
+            "2.9.7"
+        );
+        assert_eq!(version("v22.11.0\n"), "22.11.0");
+        assert_eq!(version("1.1.0\n"), "1.1.0");
+
+        // Nothing recognisable rather than a panic or an empty card.
+        assert_eq!(version("some runtime\n"), "some runtime");
+    }
+
+    #[test]
+    #[cfg(not(target_os = "android"))]
+    fn only_the_top_of_the_runtime_archive_is_unpacked() {
+        assert!(at_archive_root(Path::new("deno.exe")));
+        assert!(at_archive_root(Path::new("LICENSE.md")));
+        assert!(!at_archive_root(Path::new("bin/deno.exe")));
+        assert!(!at_archive_root(Path::new("deno/bin/deno.exe")));
     }
 
     #[test]

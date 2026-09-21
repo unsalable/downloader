@@ -1,0 +1,155 @@
+{
+  "extName": {
+    "message": "Universal Downloader Connector"
+  },
+  "extDescription": {
+    "message": "Universal Downloader'ın bu bilgisayarda YouTube oturumunuzu kullanmasına izin verir."
+  },
+
+  "statusChecking": { "message": "Denetleniyor…" },
+
+  "sConnectedTitle": { "message": "Bağlandı" },
+  "sConnectedBody": {
+    "message": "Universal Downloader, bir indirme gerektirdiğinde YouTube oturumunuzu kullanabilir."
+  },
+
+  "sQuietTitle": { "message": "Bağlantı sessizleşti" },
+  "sQuietBody": {
+    "message": "Bir süredir uygulamaya bir şey ulaşmadı, o da elindekine artık güvenmiyor. Tekrar dene'ye basın."
+  },
+
+  "sNotInstalledTitle": { "message": "Universal Downloader henüz açılmadı" },
+  "sNotInstalledBody": {
+    "message": "Universal Downloader'ı bir kez açın, sonra Tekrar dene'ye basın. Uygulama kendi yerini Chrome'a bildirir."
+  },
+
+  "sForbiddenTitle": { "message": "Uygulama bu eklentiyi tanımıyor" },
+  "sForbiddenBody": {
+    "message": "Bu kopyanın kimliği, Universal Downloader'ın kabul ettiğinden farklı. Eklentiyi uygulamayı aldığınız yerden kurun, sonra Tekrar dene'ye basın."
+  },
+
+  "sUnreachableTitle": { "message": "Universal Downloader yanıt vermedi" },
+  "sUnreachableBody": {
+    "message": "Uygulamayı açıp Tekrar dene'ye basın. Zaten açıksa Chrome'u yeniden başlatın."
+  },
+
+  "sDisabledTitle": { "message": "Tarayıcı bağlantısı kapalı" },
+  "sDisabledBody": {
+    "message": "Universal Downloader'da Ayarlar bölümünden açın, sonra Tekrar dene'ye basın."
+  },
+
+  "sUnpairedTitle": { "message": "Başka bir tarayıcı profili bağlı" },
+  "sUnpairedBody": {
+    "message": "Bunun yerine bu profili kullanmak için Bağlan'a basın. Uygulama diğerini kullanmayı bırakır."
+  },
+
+  "sVersionTitle": { "message": "Universal Downloader güncel değil" },
+  "sVersionBody": {
+    "message": "Bu eklenti, uygulamanın anladığından daha yeni bir sürüm konuşuyor. Uygulamayı güncelleyin, sonra Tekrar dene'ye basın."
+  },
+
+  "sSignedOutTitle": { "message": "Burada YouTube'da oturum açık değil" },
+  "sSignedOutBody": {
+    "message": "Bu Chrome profilinde YouTube'da oturum açın, sonra Tekrar dene'ye basın."
+  },
+
+  "sInternalTitle": { "message": "Universal Downloader oturumu saklayamadı" },
+  "sInternalBody": {
+    "message": "Uygulamayı açıp Tekrar dene'ye basın. Günlük dosyaları daha fazlasını söyler."
+  },
+
+  "sMalformedTitle": { "message": "Uygulama gönderileni okuyamadı" },
+  "sMalformedBody": {
+    "message": "Tekrar dene'ye basın. Sürerse hem uygulamayı hem bu eklentiyi güncelleyin."
+  },
+
+  "detailsTitle": { "message": "Ayrıntılar" },
+  "labelAccount": { "message": "Hesap" },
+  "labelLastSent": { "message": "Son gönderim" },
+  "labelAppVersion": { "message": "Uygulama sürümü" },
+  "labelExtensionVersion": { "message": "Eklenti sürümü" },
+  "labelApp": { "message": "Bu bilgisayardaki uygulama" },
+  "labelAppHint": {
+    "message": "Chrome'un başlattığı program budur. Universal Downloader'ı kurduğunuz yer değilse bağlantıyı kapatıp uygulamayı yeniden kurun."
+  },
+
+  "btnConnect": { "message": "Bağlan" },
+  "btnOpenApp": { "message": "Universal Downloader'ı aç" },
+  "btnForget": { "message": "Kapat" },
+  "btnRetry": { "message": "Tekrar dene" },
+  "btnCancel": { "message": "Vazgeç" },
+
+  "forgetTitle": { "message": "Bağlantı kapatılsın mı?" },
+
+  "moreTitle": { "message": "YouTube hâlâ üye olmadığınızı söylüyorsa" },
+  "grantGoogleTitle": { "message": "google.com oturumunu da dahil et" },
+  "grantGoogleBody": {
+    "message": "Bazı hesaplarda işe yarayan kısım youtube.com'da değil google.com'da durur. Bu, o çerezleri de okumak için Chrome'dan izin ister."
+  },
+  "btnGrantGoogle": { "message": "google.com'a izin ver" },
+  "grantGoogleDone": { "message": "google.com dahil edildi." },
+
+  "grantAccountTitle": { "message": "Hangi hesap olduğunu göster" },
+  "grantAccountBody": {
+    "message": "Uygulama, iki profili ayırt edebilmeniz için m•••@gmail.com gibi maskelenmiş bir ipucu gösterir. Adresin tamamı Chrome'dan çıkmaz."
+  },
+  "btnGrantAccount": { "message": "Hesabı göster" },
+  "grantAccountDone": { "message": "Hesap ipucu açık." },
+
+  "pinTitle": { "message": "Elinizin altında dursun" },
+  "pinBody": {
+    "message": "Chrome yeni eklentileri adres çubuğunun yanındaki yapboz parçası düğmesinin arkasına gizler. Ona tıklayın, sonra Universal Downloader Connector'ın yanındaki raptiyeye basın."
+  },
+
+  "timeJustNow": { "message": "az önce" },
+  "timeMinutes": {
+    "message": "$COUNT$ dakika önce",
+    "placeholders": { "count": { "content": "$1", "example": "12" } }
+  },
+  "timeHours": {
+    "message": "$COUNT$ saat önce",
+    "placeholders": { "count": { "content": "$1", "example": "12" } }
+  },
+  "timeDays": {
+    "message": "$COUNT$ gün önce",
+    "placeholders": { "count": { "content": "$1", "example": "12" } }
+  },
+  "timeNever": { "message": "hiç" },
+
+  "welcomeTitle": { "message": "Universal Downloader Connector kuruldu" },
+  "welcomeLead": {
+    "message": "Dört adım, ve Universal Downloader bir indirme gerektirdiğinde YouTube oturumunuzu kullanabilir."
+  },
+
+  "step1Title": { "message": "Universal Downloader'ı bir kez açın" },
+  "step1Body": {
+    "message": "Uygulama kendi yerini Chrome'a bildirir. Hiçbir ağ portu dinlenmez: uygulamanın yardımcısını Chrome'un kendisi başlatır, yalnızca bu eklenti için."
+  },
+  "step2Title": { "message": "Bu Chrome profilinde YouTube'da oturum açın" },
+  "step2Body": {
+    "message": "Gerçekten izlediğiniz profili kullanın. Önce aşağıdaki iki notu okuyun; biri bunun çalışıp çalışmayacağını doğrudan belirler."
+  },
+  "step3Title": { "message": "Bu eklentiyi açıp Bağlan'a basın" },
+  "step3Body": {
+    "message": "Adres çubuğunun yanındaki eklenti simgesine tıklayın. Orada değilse yapboz parçası düğmesine tıklayıp raptiyeleyin."
+  },
+  "step4Title": { "message": "Her zamanki gibi indirin" },
+  "step4Body": {
+    "message": "Universal Downloader'a bir bağlantı yapıştırın. YouTube oturumunuzu yalnızca YouTube bağlantılarında ve yalnızca bunu isteyen tek indirme için kullanır."
+  },
+
+  "warningsTitle": { "message": "Bunun çalışıp çalışmayacağını belirleyen iki şey" },
+  "warnAccountsTitle": { "message": "Bu profile eklenmiş ikinci bir Google hesabı işe yaramaz" },
+  "warnAccountsBody": {
+    "message": "Üyelik, bu Chrome profiline sonradan eklediğiniz bir hesaba aitse, uygulama ilk oturum açtığınız hesap olarak kimlik doğrular. O zaman video yan sekmede sorunsuz oynarken YouTube size üye olmadığınızı söyler. Bunun yerine o hesapta ayrı bir Chrome profilinde oturum açıp oradan bağlanın."
+  },
+  "warnOwnerTitle": { "message": "Uygulama burada oturumu açık olan hesabı kullanır" },
+  "warnOwnerBody": {
+    "message": "O oturumla yapılan her şey o hesaba yazılır. Hesabı size ait olan bir profilden bağlanın."
+  },
+
+  "privacyTitle": { "message": "Oturum nereye gidiyor" },
+  "privacyBody": {
+    "message": "Çerezler doğrudan bu bilgisayardaki Universal Downloader'a gider ve orada Windows hesabınıza özel olarak şifrelenir. Okunabilir biçimde yalnızca tek bir indirmenin ihtiyaç duyduğu saniyeler boyunca yazılır, indirme bitince silinir. Başka hiçbir yere bir şey gönderilmez."
+  }
+}

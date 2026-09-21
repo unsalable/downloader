@@ -310,6 +310,10 @@ export interface Settings {
   customUserAgent: string | null;
   debugLogging: boolean;
 
+  // Connection. Desktop only: the phone has no browser to link to, and the
+  // Connection section is hidden there rather than showing a dead toggle.
+  browserLinkEnabled: boolean;
+
   // Hotkeys, stored as accelerator strings ("Ctrl+Shift+D").
   hotkeys: Record<HotkeyAction, string>;
 
@@ -324,9 +328,11 @@ export type HotkeyAction =
   | 'openHistory'
   | 'openSettings';
 
-/** State of the two external tools the app shells out to. */
+export type ToolKind = 'engine' | 'ffmpeg' | 'jsRuntime';
+
+/** State of the external tools the app shells out to. */
 export interface ToolStatus {
-  name: 'engine' | 'ffmpeg';
+  name: ToolKind;
   available: boolean;
   path: string | null;
   version: string | null;
@@ -336,10 +342,15 @@ export interface ToolStatus {
 export interface ToolsState {
   engine: ToolStatus;
   ffmpeg: ToolStatus;
+  /**
+   * Desktop only. Android carries its own JavaScript engine inside the APK, so
+   * there is nothing to install there and the field arrives unavailable.
+   */
+  jsRuntime: ToolStatus;
 }
 
 export interface ToolInstallProgress {
-  tool: 'engine' | 'ffmpeg';
+  tool: ToolKind;
   receivedBytes: number;
   totalBytes: number | null;
   stage: 'downloading' | 'extracting' | 'verifying' | 'done';
@@ -376,6 +387,38 @@ export interface DiagnosticsSnapshot {
   logPath: string;
   activeDownloads: number;
   queuedDownloads: number;
+}
+
+/**
+ * How old the session the browser lent us is. `stale` is not an error: the
+ * session is still stored, it is simply too old to be trusted, and saying so
+ * separately is what lets the interface explain a quiet connection instead of
+ * failing at the next members-only link with nothing to show for it.
+ */
+export type BridgeSessionState = 'none' | 'fresh' | 'stale';
+
+/**
+ * Everything the app knows about the browser link without decrypting anything.
+ * Nothing here describes a cookie -- see the header of `bridge/protocol.rs`.
+ */
+export interface BridgeStatus {
+  supported: boolean;
+  /** Whether there is a published extension to send the user to. */
+  storeListed: boolean;
+  enabled: boolean;
+  /** False when the browsers on this machine can no longer start our helper. */
+  registered: boolean;
+  connected: boolean;
+  browser: string | null;
+  profileLabel: string | null;
+  accountHint: string | null;
+  extensionVersion: string | null;
+  /** Seconds since the epoch, not milliseconds: it comes from the host. */
+  lastPushAt: number | null;
+  session: BridgeSessionState;
+  hostPath: string | null;
+  appVersion: string;
+  extensionId: string;
 }
 
 export interface LicenseEntry {

@@ -33,6 +33,13 @@ pub enum AppError {
     #[error("access denied ({status})")]
     Forbidden { status: u16, detail: String },
 
+    /// A video published to a channel's members. Kept apart from `Forbidden`
+    /// because it is the one refusal the app has something to offer about: a
+    /// browser the user has linked may already be signed in to an account that
+    /// holds the membership.
+    #[error("limited to channel members: {detail}")]
+    MembershipRequired { detail: String },
+
     #[error("not found ({status})")]
     NotFound { status: u16, detail: String },
 
@@ -76,6 +83,7 @@ impl AppError {
             Self::Offline(_) => "offline",
             Self::NetworkBlocked(_) => "networkBlocked",
             Self::Forbidden { .. } => "forbidden",
+            Self::MembershipRequired { .. } => "membershipRequired",
             Self::NotFound { .. } => "notFound",
             Self::EngineMissing => "engineMissing",
             Self::FfmpegMissing => "ffmpegMissing",
@@ -92,6 +100,10 @@ impl AppError {
 
     /// Whether offering "Try again" makes sense. A 404 or a missing tool will
     /// not fix itself by retrying, so the button is hidden for those.
+    ///
+    /// A membership wall counts, even though the same run repeated changes
+    /// nothing on its own: the message tells the user to connect their browser,
+    /// and "Try again" is the button they reach for once they have.
     pub fn retryable(&self) -> bool {
         matches!(
             self,
@@ -99,6 +111,7 @@ impl AppError {
                 | Self::Offline(_)
                 | Self::NetworkBlocked(_)
                 | Self::Forbidden { .. }
+                | Self::MembershipRequired { .. }
                 | Self::Engine(_)
                 | Self::Io(_)
                 | Self::DiskFull
@@ -125,6 +138,14 @@ impl AppError {
             "forbidden" => (
                 "We couldn't access this media",
                 "The source may require login or may not currently support public downloads.",
+            ),
+            // Deliberately a description of what the app will do, not a promise
+            // about what YouTube will allow. A linked browser signed in to the
+            // right account is what the app can offer; whether the video is
+            // then served is YouTube's decision and not always a yes.
+            "membershipRequired" => (
+                "This video is for channel members",
+                "YouTube only serves it to an account that holds the channel's membership. Connect your browser in Settings and Universal Downloader will offer that sign-in the next time you try this link.",
             ),
             "notFound" => (
                 "This media no longer exists",

@@ -197,6 +197,7 @@ export const en = {
   'settings.title': 'Settings',
   'settings.general': 'General',
   'settings.downloads': 'Downloads',
+  'settings.connection': 'Connection',
   'settings.appearance': 'Appearance',
   'settings.performance': 'Performance',
   'settings.advanced': 'Advanced',
@@ -204,6 +205,7 @@ export const en = {
   'settings.about': 'About',
   'settings.generalSummary': 'Clipboard, notifications',
   'settings.downloadsSummary': 'Folder, quality, simultaneous downloads',
+  'settings.connectionSummary': 'Browser link for your YouTube sign-in',
   'settings.appearanceSummary': 'Theme, language, motion',
   'settings.performanceSummary': 'Low resource mode, cache',
   'settings.advancedSummary': 'Download engine, network, reset',
@@ -237,6 +239,52 @@ export const en = {
     'Available: {title}, {creator}, {quality}, {platform}, {date}, {ext}',
   'settings.filenamePreview': 'Preview',
 
+  'settings.browserLink': 'Browser link',
+  'settings.browserLinkHint':
+    'Lets the app use your YouTube sign-in from a browser you are already signed in to, so anything your account can watch is something it can download. A small extension hands the session over; it is kept encrypted on this PC and written out only for the one download that needs it.',
+  'settings.linkBadgeBroken': 'Repair needed',
+  'settings.linkBroken': 'Browsers cannot start the helper',
+  'settings.linkBrokenHint':
+    'The entry that lets a browser hand the session over is missing, or it points somewhere else. A browser update, a cleanup tool or a second copy of the app can do that. Repair writes it back.',
+  'settings.linkBadgeWaiting': 'Not connected',
+  'settings.linkWaiting': 'No browser connected yet',
+  'settings.linkWaitingHint':
+    'Install the extension in the browser you are signed in to YouTube with. New extensions hide behind the puzzle-piece button next to the address bar: open it, press the pin beside Universal Downloader, then open the extension and press Connect.',
+  'settings.linkBadgeSignedOut': 'Signed out',
+  'settings.linkSignedOut': 'No sign-in stored',
+  'settings.linkSignedOutHint':
+    '{browser} is linked, but it is not signed in to YouTube -- or the sign-in was cleared. Sign in there and the extension hands the session over on its own.',
+  'settings.linkBadgeQuiet': 'Quiet',
+  'settings.linkQuiet': 'The connection has gone quiet',
+  'settings.linkQuietHint':
+    '{browser} has not handed over a fresh sign-in for a while, so the app has stopped using the one it holds. Opening that browser once brings it back by itself: nothing to reinstall, nothing to press.',
+  'settings.linkBadgeConnected': 'Connected',
+  'settings.linkConnected': 'Signed in through {browser}',
+  'settings.linkConnectedProfile': 'Signed in through {browser}, profile "{profile}"',
+  'settings.linkConnectedHint':
+    'Universal Downloader does not have to be open for this. The browser hands the session to a small helper, which keeps it whether the app is on screen, sitting in the tray, or closed altogether.',
+  'settings.linkNoProfileName': 'The browser did not give this profile a name.',
+  'settings.linkAccount': 'Looks like {account}',
+  'settings.linkRefreshed': 'Last refreshed {when}',
+  'settings.linkBrowserFallback': 'The browser',
+  'settings.linkRepair': 'Repair',
+  'settings.linkRepaired': 'Connection repaired',
+  'settings.linkRepairFailed': 'Could not repair the connection',
+  'settings.linkGetExtension': 'Get the extension',
+  'settings.linkStorePending':
+    'The extension is not published yet. Until it is, load it in your browser from the app’s extension folder.',
+  'settings.linkDisconnect': 'Disconnect',
+  'settings.linkDisconnected': 'Browser disconnected',
+  'settings.linkDisconnectFailed': 'Could not disconnect the browser',
+  'settings.linkCopyDiagnostics': 'Copy diagnostics',
+  'settings.linkDiagnosticsCopied': 'Diagnostics copied',
+  'settings.linkDiagnosticsFailed': 'Could not copy the diagnostics',
+  'settings.linkDiagnosticsHint':
+    'The diagnostics name the linked browser, say whether the helper is registered, and list the cookies held by name. Never their values.',
+  'settings.linkSecondAccount': 'More than one Google account in that browser?',
+  'settings.linkSecondAccountHint':
+    'The session always belongs to the account that was added to the browser profile first. If the membership is on a second account, YouTube turns the download down while the video plays perfectly in the browser, which reads like a broken connection and is not one. Give the account that has the membership a browser profile of its own.',
+
   'settings.theme': 'Theme',
   'settings.language': 'Language',
   'settings.reduceMotion': 'Reduce motion',
@@ -262,6 +310,11 @@ export const en = {
     'Reads public metadata and stream URLs. Runs locally as a separate process.',
   'settings.ffmpeg': 'FFmpeg',
   'settings.ffmpegHint': 'Merges separate audio and video streams and handles conversion.',
+  'settings.jsRuntime': 'Support for signed-in downloads',
+  'settings.jsRuntimeHint':
+    'A small JavaScript engine, about 40 MB, downloaded once. YouTube answers a signed-in request with scrambled video formats, and this is what unscrambles them before a download can start.',
+  'settings.jsRuntimeOptional':
+    'Ordinary downloads never need it. Install it if you use the browser connection: without it a video your account can watch may fail with a message about only images being available.',
   'settings.toolInstall': 'Install',
   'settings.toolUpdate': 'Check for update',
   'settings.toolLocate': 'Choose file',

@@ -7,14 +7,16 @@ import {
   FolderOpen,
   Gauge,
   Keyboard,
+  Link2,
   Palette,
   ScrollText,
   SlidersHorizontal,
   Sparkles,
   Trash2,
 } from 'lucide-react';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 
+import { BrowserLinkCard, useBridgeStatus } from '@/components/settings/BrowserLinkCard';
 import { HotkeyRecorder } from '@/components/settings/HotkeyRecorder';
 import { ToolCard } from '@/components/settings/ToolCard';
 import { Button } from '@/components/ui/Button';
@@ -43,11 +45,13 @@ import type {
   LanguageCode,
   Settings,
   ThemePreference,
+  ToolKind,
 } from '@/types';
 
 export type SettingsSection =
   | 'general'
   | 'downloads'
+  | 'connection'
   | 'appearance'
   | 'performance'
   | 'shortcuts'
@@ -65,6 +69,12 @@ const ALL_SECTIONS: {
     label: 'settings.downloads',
     summary: 'settings.downloadsSummary',
     icon: FolderOpen,
+  },
+  {
+    id: 'connection',
+    label: 'settings.connection',
+    summary: 'settings.connectionSummary',
+    icon: Link2,
   },
   {
     id: 'appearance',
@@ -86,11 +96,6 @@ const ALL_SECTIONS: {
     icon: SlidersHorizontal,
   },
 ];
-
-/** Keyboard shortcuts mean nothing without a keyboard. */
-const SECTIONS = IS_MOBILE
-  ? ALL_SECTIONS.filter((entry) => entry.id !== 'shortcuts')
-  : ALL_SECTIONS;
 
 /** Mirrors the defaults in `settings.rs`, for the per-hotkey reset button. */
 const DEFAULT_HOTKEYS: Record<HotkeyAction, string> = {
@@ -130,9 +135,33 @@ export function SettingsPage({ settings, section: openSection, onSectionChange }
   const reset = useSettingsStore((state) => state.reset);
   const [desktopSection, setDesktopSection] = useState<SettingsSection>('general');
   const [confirmReset, setConfirmReset] = useState(false);
+  const link = useBridgeStatus();
+
+  /**
+   * Which sections exist on this machine. This used to be settled once at
+   * module scope; Connection cannot be, because whether it is offered depends
+   * on what the backend answers.
+   */
+  const sections = useMemo(
+    () =>
+      ALL_SECTIONS.filter((candidate) => {
+        // Keyboard shortcuts mean nothing without a keyboard.
+        if (candidate.id === 'shortcuts') return !IS_MOBILE;
+        // The browser link is a desktop feature. Whether the extension has a
+        // published listing decides what the section OFFERS, not whether it
+        // exists: hiding it outright would also hide a link that is already
+        // working, which is the state every install is in before the listing
+        // is approved.
+        if (candidate.id === 'connection') {
+          return !IS_MOBILE && link != null && link.supported;
+        }
+        return true;
+      }),
+    [link],
+  );
 
   const section = IS_MOBILE ? (openSection ?? null) : desktopSection;
-  const entry = SECTIONS.find((candidate) => candidate.id === section);
+  const entry = sections.find((candidate) => candidate.id === section);
 
   const content = section && (
     <motion.div
@@ -144,6 +173,7 @@ export function SettingsPage({ settings, section: openSection, onSectionChange }
     >
       {section === 'general' && <GeneralSection settings={settings} update={update} />}
       {section === 'downloads' && <DownloadsSection settings={settings} update={update} />}
+      {section === 'connection' && <BrowserLinkCard settings={settings} update={update} />}
       {section === 'appearance' && <AppearanceSection settings={settings} update={update} />}
       {section === 'performance' && <PerformanceSection settings={settings} update={update} />}
       {section === 'shortcuts' && <ShortcutsSection settings={settings} update={update} />}
@@ -213,7 +243,7 @@ export function SettingsPage({ settings, section: openSection, onSectionChange }
             aria-label={t('settings.title')}
             className="mt-4 overflow-hidden rounded-[var(--radius-panel)] border border-[var(--border)] bg-surface divide-y divide-[var(--border)]"
           >
-            {SECTIONS.map((candidate) => {
+            {sections.map((candidate) => {
               const Icon = candidate.icon;
               return (
                 <button
@@ -247,7 +277,7 @@ export function SettingsPage({ settings, section: openSection, onSectionChange }
   return (
     <div className="mx-auto flex w-full max-w-[880px] gap-6 px-6 pb-12">
       <nav className="sticky top-3 h-fit w-[168px] shrink-0 space-y-0.5" aria-label={t('settings.title')}>
-        {SECTIONS.map((candidate) => {
+        {sections.map((candidate) => {
           const Icon = candidate.icon;
           const active = section === candidate.id;
           return (
@@ -706,7 +736,7 @@ function AdvancedSection({
   useEffect(() => setProxy(settings.proxyUrl ?? ''), [settings.proxyUrl]);
   useEffect(() => setUserAgent(settings.customUserAgent ?? ''), [settings.customUserAgent]);
 
-  const runInstall = async (tool: 'engine' | 'ffmpeg') => {
+  const runInstall = async (tool: ToolKind) => {
     const ok = await install(tool);
     pushToast(
       ok
@@ -729,6 +759,13 @@ function AdvancedSection({
   };
   const ffmpeg = tools?.ffmpeg ?? {
     name: 'ffmpeg' as const,
+    available: false,
+    path: null,
+    version: null,
+    source: 'missing' as const,
+  };
+  const jsRuntime = tools?.jsRuntime ?? {
+    name: 'jsRuntime' as const,
     available: false,
     path: null,
     version: null,
@@ -759,6 +796,19 @@ function AdvancedSection({
           onLocate={(path) => void update({ ffmpegPath: path })}
           onResetPath={() => void update({ ffmpegPath: null })}
         />
+        {/* The phone already carries a JavaScript engine inside the APK, so
+            there is nothing here for it to offer. */}
+        {!IS_MOBILE && (
+          <ToolCard
+            status={jsRuntime}
+            titleKey="settings.jsRuntime"
+            hintKey="settings.jsRuntimeHint"
+            installing={installing.jsRuntime}
+            optionalNoteKey="settings.jsRuntimeOptional"
+            optional
+            onInstall={() => void runInstall('jsRuntime')}
+          />
+        )}
       </SettingGroup>
 
       <SettingGroup title={t('settings.advanced')}>

@@ -89,6 +89,20 @@ pub struct Settings {
     pub custom_user_agent: Option<String>,
     pub debug_logging: bool,
 
+    /// Whether a signed-in browser may lend the app its YouTube session, for
+    /// content the user pays for. Desktop only; see `bridge`.
+    ///
+    /// On by default, because nothing happens until the user deliberately
+    /// installs the extension and presses Connect -- making them find a toggle
+    /// first would only add a step to the flow they are most likely to abandon.
+    ///
+    /// `serde(default)` is not decoration here. This blob has no migration:
+    /// `load_settings` parses it with `unwrap_or_default()`, so a field missing
+    /// from an older install makes the whole object fail to parse and silently
+    /// resets every preference the user ever changed.
+    #[serde(default = "default_browser_link")]
+    pub browser_link_enabled: bool,
+
     pub hotkeys: BTreeMap<HotkeyAction, String>,
 
     pub onboarding_complete: bool,
@@ -134,6 +148,8 @@ impl Default for Settings {
             custom_user_agent: None,
             debug_logging: false,
 
+            browser_link_enabled: default_browser_link(),
+
             hotkeys: HotkeyAction::ALL
                 .iter()
                 .map(|action| (*action, action.default_accelerator().to_string()))
@@ -175,6 +191,13 @@ impl Settings {
                 .or_insert_with(|| action.default_accelerator().to_string());
         }
     }
+}
+
+/// Armed wherever the browser link can exist at all, which is the desktop
+/// build. A phone has no desktop browser to link to, so it stores `false`
+/// rather than a preference that could never take effect.
+fn default_browser_link() -> bool {
+    cfg!(windows)
 }
 
 fn normalize_optional(value: &mut Option<String>) {

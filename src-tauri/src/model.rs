@@ -346,6 +346,14 @@ pub struct HistoryEntry {
 pub enum ToolKind {
     Engine,
     Ffmpeg,
+    /// A JavaScript engine, which the download engine needs to read the formats
+    /// a signed-in YouTube request is answered with.
+    ///
+    /// It does not exist on Android: the APK carries QuickJS, and nothing an
+    /// app downloads there would be allowed to run. The variant is compiled out
+    /// rather than merely ignored so that build cannot name it at all.
+    #[cfg(not(target_os = "android"))]
+    JsRuntime,
 }
 
 impl ToolKind {
@@ -353,6 +361,8 @@ impl ToolKind {
         match self {
             Self::Engine => "engine",
             Self::Ffmpeg => "ffmpeg",
+            #[cfg(not(target_os = "android"))]
+            Self::JsRuntime => "jsRuntime",
         }
     }
 }
@@ -394,6 +404,8 @@ impl ToolStatus {
 pub struct ToolsState {
     pub engine: ToolStatus,
     pub ffmpeg: ToolStatus,
+    #[cfg(not(target_os = "android"))]
+    pub js_runtime: ToolStatus,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -421,11 +433,42 @@ pub struct DiagnosticsSnapshot {
     pub os: String,
     pub engine: ToolStatus,
     pub ffmpeg: ToolStatus,
+    #[cfg(not(target_os = "android"))]
+    pub js_runtime: ToolStatus,
     pub download_dir: String,
     pub db_path: String,
     pub log_path: String,
     pub active_downloads: u32,
     pub queued_downloads: u32,
+}
+
+/// What the Connection section shows, and everything the app knows about the
+/// browser link without decrypting anything.
+///
+/// `supported` and `storeListed` are separate on purpose: the first says this
+/// build can host a link at all, the second that there is a published extension
+/// to point the user at. The section hides itself unless both hold, so it never
+/// offers a button that leads to a listing that does not exist yet.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BridgeStatus {
+    pub supported: bool,
+    pub store_listed: bool,
+    pub enabled: bool,
+    /// Whether the browsers on this machine can still start our helper. False
+    /// means the registry values are gone or name something else, which calls
+    /// for Repair rather than for installing the extension again.
+    pub registered: bool,
+    pub connected: bool,
+    pub browser: Option<String>,
+    pub profile_label: Option<String>,
+    pub account_hint: Option<String>,
+    pub extension_version: Option<String>,
+    pub last_push_at: Option<i64>,
+    pub session: crate::bridge::SessionState,
+    pub host_path: Option<String>,
+    pub app_version: String,
+    pub extension_id: String,
 }
 
 /// Payload for the `download://progress` event.

@@ -1,5 +1,12 @@
 import { open } from '@tauri-apps/plugin-dialog';
-import { CheckCircle2, CircleAlert, Download, FolderSearch, RotateCw } from 'lucide-react';
+import {
+  CheckCircle2,
+  CircleAlert,
+  CircleDashed,
+  Download,
+  FolderSearch,
+  RotateCw,
+} from 'lucide-react';
 
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
@@ -17,11 +24,22 @@ interface ToolCardProps {
   titleKey: TranslationKey;
   hintKey: TranslationKey;
   installing: ToolInstallProgress | undefined;
-  customPath: string | null;
   onInstall: () => void;
-  onLocate: (path: string) => void;
-  onResetPath: () => void;
   optionalNoteKey?: TranslationKey;
+  /**
+   * A tool the app can point at a copy of its own. Left out for one the app
+   * only ever manages itself, which has no setting to hold the chosen path and
+   * so no honest way to offer the choice.
+   */
+  customPath?: string | null;
+  onLocate?: (path: string) => void;
+  onResetPath?: () => void;
+  /**
+   * Whether an ordinary download works without this tool. When it does, the
+   * missing state drops the warning colours: the card is an offer, and dressing
+   * it as a fault makes a perfectly working app look broken.
+   */
+  optional?: boolean;
 }
 
 const STAGE_LABEL = {
@@ -84,10 +102,18 @@ export function ToolCard({
   onLocate,
   onResetPath,
   optionalNoteKey,
+  optional,
 }: ToolCardProps) {
   const { t } = useTranslation();
+  const quietlyMissing = !status.available && optional === true;
+  const chipClass = status.available
+    ? 'bg-success-soft text-success'
+    : quietlyMissing
+      ? 'bg-[var(--surface-active)] text-fg-muted'
+      : 'bg-warning-soft text-warning';
 
   const pickFile = async () => {
+    if (!onLocate) return;
     const selected = await open({
       multiple: false,
       directory: false,
@@ -102,10 +128,16 @@ export function ToolCard({
         <span
           className={cn(
             'mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-lg',
-            status.available ? 'bg-success-soft text-success' : 'bg-warning-soft text-warning',
+            chipClass,
           )}
         >
-          {status.available ? <CheckCircle2 size={17} /> : <CircleAlert size={17} />}
+          {status.available ? (
+            <CheckCircle2 size={17} />
+          ) : quietlyMissing ? (
+            <CircleDashed size={17} />
+          ) : (
+            <CircleAlert size={17} />
+          )}
         </span>
 
         <div className="min-w-0 flex-1">
@@ -117,14 +149,21 @@ export function ToolCard({
                 <Badge tone="outline">{t(SOURCE_LABEL[status.source])}</Badge>
               </>
             ) : (
-              <Badge tone="warning">{t('settings.toolMissing')}</Badge>
+              <Badge tone={quietlyMissing ? 'neutral' : 'warning'}>
+                {t('settings.toolMissing')}
+              </Badge>
             )}
           </div>
 
           <p className="mt-1 text-[12.5px] leading-relaxed text-fg-muted">{t(hintKey)}</p>
 
           {!status.available && optionalNoteKey && (
-            <p className="mt-1.5 text-[12.5px] leading-relaxed text-warning">
+            <p
+              className={cn(
+                'mt-1.5 text-[12.5px] leading-relaxed',
+                quietlyMissing ? 'text-fg-muted' : 'text-warning',
+              )}
+            >
               {t(optionalNoteKey)}
             </p>
           )}
@@ -145,13 +184,13 @@ export function ToolCard({
             <div className="mt-3 flex flex-wrap items-center gap-2">
               <Button
                 size="sm"
-                variant={status.available ? 'secondary' : 'primary'}
+                variant={status.available || quietlyMissing ? 'secondary' : 'primary'}
                 icon={status.available ? <RotateCw size={13} /> : <Download size={13} />}
                 onClick={onInstall}
               >
                 {status.available ? t('settings.toolUpdate') : t('settings.toolInstall')}
               </Button>
-              {!IS_MOBILE && (
+              {onLocate && !IS_MOBILE && (
                 <Button
                   size="sm"
                   variant="ghost"
@@ -161,7 +200,7 @@ export function ToolCard({
                   {t('settings.toolLocate')}
                 </Button>
               )}
-              {customPath && !IS_MOBILE && (
+              {customPath && onResetPath && !IS_MOBILE && (
                 <Button size="sm" variant="ghost" onClick={onResetPath}>
                   {t('settings.toolReset')}
                 </Button>

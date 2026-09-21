@@ -194,6 +194,7 @@ export const tr: Record<TranslationKey, string> = {
   'settings.title': 'Ayarlar',
   'settings.general': 'Genel',
   'settings.downloads': 'İndirmeler',
+  'settings.connection': 'Bağlantı',
   'settings.appearance': 'Görünüm',
   'settings.performance': 'Performans',
   'settings.advanced': 'Gelişmiş',
@@ -201,6 +202,7 @@ export const tr: Record<TranslationKey, string> = {
   'settings.about': 'Hakkında',
   'settings.generalSummary': 'Pano izleme, bildirimler',
   'settings.downloadsSummary': 'Klasör, kalite, eşzamanlı indirme',
+  'settings.connectionSummary': 'YouTube oturumun için tarayıcı bağlantısı',
   'settings.appearanceSummary': 'Tema, dil, hareket',
   'settings.performanceSummary': 'Düşük kaynak modu, önbellek',
   'settings.advancedSummary': 'İndirme motoru, ağ, sıfırlama',
@@ -237,6 +239,52 @@ export const tr: Record<TranslationKey, string> = {
     'Kullanılabilir: {title}, {creator}, {quality}, {platform}, {date}, {ext}',
   'settings.filenamePreview': 'Önizleme',
 
+  'settings.browserLink': 'Tarayıcı bağlantısı',
+  'settings.browserLinkHint':
+    "Zaten oturum açtığın bir tarayıcıdaki YouTube oturumunu uygulamanın kullanmasını sağlar; böylece hesabının izleyebildiği her şeyi indirebilirsin. Oturumu küçük bir uzantı aktarır; oturum bu bilgisayarda şifrelenmiş durur ve yalnızca ihtiyacı olan tek indirme için dışarı yazılır.",
+  'settings.linkBadgeBroken': 'Onarım gerek',
+  'settings.linkBroken': 'Tarayıcılar yardımcıyı başlatamıyor',
+  'settings.linkBrokenHint':
+    'Tarayıcının oturumu aktarmasını sağlayan kayıt eksik ya da başka bir yeri gösteriyor. Bunu bir tarayıcı güncellemesi, bir temizlik aracı veya uygulamanın ikinci bir kopyası yapmış olabilir. Onar, kaydı geri yazar.',
+  'settings.linkBadgeWaiting': 'Bağlı değil',
+  'settings.linkWaiting': 'Henüz bağlı tarayıcı yok',
+  'settings.linkWaitingHint':
+    "Uzantıyı, YouTube'da oturum açtığın tarayıcıya kur. Yeni uzantılar adres çubuğunun yanındaki yapboz parçası düğmesinin arkasında durur: düğmeye bas, Universal Downloader'ın yanındaki raptiyeyle sabitle, sonra uzantıyı açıp Bağlan'a bas.",
+  'settings.linkBadgeSignedOut': 'Oturum kapalı',
+  'settings.linkSignedOut': 'Saklanan oturum yok',
+  'settings.linkSignedOutHint':
+    "{browser} bağlı ama YouTube'da oturum açık değil ya da oturum temizlenmiş. Orada oturum aç; uzantı gerisini kendiliğinden halleder.",
+  'settings.linkBadgeQuiet': 'Sessiz',
+  'settings.linkQuiet': 'Bağlantıdan bir süredir ses çıkmıyor',
+  'settings.linkQuietHint':
+    '{browser} bir süredir yeni bir oturum aktarmadı, bu yüzden uygulama elindekini kullanmayı bıraktı. O tarayıcıyı bir kez açman yeter, gerisi kendiliğinden düzelir: yeniden kurulacak ya da basılacak bir şey yok.',
+  'settings.linkBadgeConnected': 'Bağlı',
+  'settings.linkConnected': '{browser} üzerinden oturum açık',
+  'settings.linkConnectedProfile': '{browser} üzerinden oturum açık, "{profile}" profili',
+  'settings.linkConnectedHint':
+    "Bunun için Universal Downloader'ın açık olması gerekmez. Tarayıcı oturumu küçük bir yardımcıya verir; uygulama ekranda olsa da, tepside bekliyor olsa da, büsbütün kapalı olsa da yardımcı oturumu saklar.",
+  'settings.linkNoProfileName': 'Tarayıcı bu profile bir ad vermemiş.',
+  'settings.linkAccount': '{account} gibi görünüyor',
+  'settings.linkRefreshed': 'Son yenileme {when}',
+  'settings.linkBrowserFallback': 'Tarayıcı',
+  'settings.linkRepair': 'Onar',
+  'settings.linkRepaired': 'Bağlantı onarıldı',
+  'settings.linkRepairFailed': 'Bağlantı onarılamadı',
+  'settings.linkGetExtension': 'Uzantıyı edin',
+  'settings.linkStorePending':
+    'Uzantı henüz yayımlanmadı. O zamana kadar tarayıcına uygulamanın extension klasöründen yükleyebilirsin.',
+  'settings.linkDisconnect': 'Bağlantıyı kes',
+  'settings.linkDisconnected': 'Tarayıcı bağlantısı kesildi',
+  'settings.linkDisconnectFailed': 'Tarayıcı bağlantısı kesilemedi',
+  'settings.linkCopyDiagnostics': 'Tanılamayı kopyala',
+  'settings.linkDiagnosticsCopied': 'Tanılama kopyalandı',
+  'settings.linkDiagnosticsFailed': 'Tanılama kopyalanamadı',
+  'settings.linkDiagnosticsHint':
+    'Tanılama metni hangi tarayıcının bağlı olduğunu, yardımcının kayıtlı olup olmadığını ve tutulan çerezlerin adlarını söyler. Değerlerini asla.',
+  'settings.linkSecondAccount': 'O tarayıcıda birden fazla Google hesabı mı var?',
+  'settings.linkSecondAccountHint':
+    'Oturum her zaman tarayıcı profiline ilk eklenen hesaba aittir. Üyelik ikinci bir hesaptaysa video tarayıcıda sorunsuz oynarken YouTube indirmeyi geri çevirir; bu bozuk bir bağlantı gibi görünür ama değildir. Üyeliğin olduğu hesap için ayrı bir tarayıcı profili aç.',
+
   'settings.theme': 'Tema',
   'settings.language': 'Dil',
   'settings.reduceMotion': 'Hareketi azalt',
@@ -263,6 +311,11 @@ export const tr: Record<TranslationKey, string> = {
     'Herkese açık metadata ve akış adreslerini okur. Ayrı bir işlem olarak yerelde çalışır.',
   'settings.ffmpeg': 'FFmpeg',
   'settings.ffmpegHint': 'Ayrı ses ve video akışlarını birleştirir, dönüştürmeyi yapar.',
+  'settings.jsRuntime': 'Oturum açıkken indirme desteği',
+  'settings.jsRuntimeHint':
+    "Yaklaşık 40 MB'lık küçük bir JavaScript motoru, bir kez indirilir. YouTube, oturum açılmış bir isteğe video biçimlerini karıştırılmış veriyor; indirme başlayabilsin diye onları çözen şey bu.",
+  'settings.jsRuntimeOptional':
+    'Sıradan indirmelerde hiç gerekmez. Tarayıcı bağlantısını kullanıyorsan kur: onsuz, hesabının izleyebildiği bir video yalnızca görsel bulunduğunu söyleyen bir hatayla indirilemeyebilir.',
   'settings.toolInstall': 'Kur',
   'settings.toolUpdate': 'Güncelleme denetle',
   'settings.toolLocate': 'Dosya seç',

@@ -4,6 +4,7 @@ import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import type {
   AppErrorInfo,
   AppUpdate,
+  BridgeStatus,
   CacheStats,
   ConvertFormatInfo,
   ConvertJob,
@@ -19,6 +20,7 @@ import type {
   PlatformId,
   Settings,
   ToolInstallProgress,
+  ToolKind,
   ToolsState,
   UpdateProgress,
 } from '@/types';
@@ -64,8 +66,19 @@ export const resetSettings = () => invoke<Settings>('reset_settings');
 
 export const getTools = () => invoke<ToolsState>('get_tools');
 export const refreshTools = () => invoke<ToolsState>('refresh_tools');
-export const installTool = (tool: 'engine' | 'ffmpeg') =>
-  invoke<ToolsState>('install_tool', { tool });
+export const installTool = (tool: ToolKind) => invoke<ToolsState>('install_tool', { tool });
+
+// -- browser link ----------------------------------------------------------
+//
+// Windows only, like the bridge itself. Reading the status is cheap enough to
+// poll -- Rust reads one small JSON file and stats another -- which is what the
+// Connection section does while it is on screen.
+
+export const bridgeStatus = () => invoke<BridgeStatus>('bridge_status');
+export const bridgeRepair = () => invoke<BridgeStatus>('bridge_repair');
+export const bridgeDisconnect = () => invoke<BridgeStatus>('bridge_disconnect');
+/** A support paste. Carries cookie names, never their values. */
+export const bridgeDiagnostics = () => invoke<string>('bridge_diagnostics');
 
 // -- analysis --------------------------------------------------------------
 
@@ -178,6 +191,7 @@ export const EVENTS = {
   toolProgress: 'tools://progress',
   toolsChanged: 'tools://changed',
   settingsChanged: 'settings://changed',
+  bridgeChanged: 'bridge://changed',
   convertChanged: 'convert://changed',
   convertProgress: 'convert://progress',
   updateProgress: 'update://progress',
@@ -212,6 +226,15 @@ export function onToolsChanged(handler: (tools: ToolsState) => void): Promise<Un
 
 export function onSettingsChanged(handler: (settings: Settings) => void): Promise<UnlistenFn> {
   return listen<Settings>(EVENTS.settingsChanged, (event) => handler(event.payload));
+}
+
+/**
+ * The browser link changed. The event carries nothing on purpose: the state it
+ * announces is written by two processes, so the only trustworthy version is the
+ * one a fresh `bridgeStatus()` reads back.
+ */
+export function onBridgeChanged(handler: () => void): Promise<UnlistenFn> {
+  return listen(EVENTS.bridgeChanged, () => handler());
 }
 
 export interface ConvertProgressEvent {

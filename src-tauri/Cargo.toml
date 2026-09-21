@@ -11,6 +11,15 @@ default-run = "universal-downloader"
 name = "universal_downloader_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
+# The browser link's native messaging host. A separate program rather than the
+# app re-entered with an argument: Chrome starts it, speaks to it over stdin and
+# stdout and kills it, none of which a windowed Tauri process is shaped for, and
+# keeping it separate means argument parsing for a browser-controlled command
+# line never happens inside the process that owns the database.
+[[bin]]
+name = "ud-bridge"
+path = "src/bin/ud-bridge.rs"
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
@@ -45,6 +54,14 @@ chrono = { version = "0.4", default-features = false, features = ["clock", "std"
 [target.'cfg(windows)'.dependencies]
 tauri-plugin-autostart = "2"
 tauri-plugin-single-instance = "2"
+# The browser link: registry values under the user's own hive tell each browser
+# where the native messaging host is, and DPAPI keeps the stored session inert
+# in any copy of the file that leaves this Windows account.
+winreg = "0.10"
+windows-sys = { version = "0.59", features = [
+    "Win32_Foundation",
+    "Win32_Security_Cryptography",
+] }
 
 [profile.release]
 panic = "abort"

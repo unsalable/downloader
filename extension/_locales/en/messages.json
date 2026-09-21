@@ -1,0 +1,157 @@
+{
+  "extName": {
+    "message": "Universal Downloader Connector",
+    "description": "Extension name, shown in Chrome and in the store listing."
+  },
+  "extDescription": {
+    "message": "Lets Universal Downloader use your YouTube sign-in on this computer.",
+    "description": "Extension description. Must not promise what YouTube will allow."
+  },
+
+  "statusChecking": { "message": "Checking…" },
+
+  "sConnectedTitle": { "message": "Connected" },
+  "sConnectedBody": {
+    "message": "Universal Downloader can use your YouTube sign-in when a download needs it."
+  },
+
+  "sQuietTitle": { "message": "The connection has gone quiet" },
+  "sQuietBody": {
+    "message": "Nothing has reached the app for a while, so it has stopped trusting what it has. Press Retry."
+  },
+
+  "sNotInstalledTitle": { "message": "Universal Downloader has not been opened yet" },
+  "sNotInstalledBody": {
+    "message": "Open Universal Downloader once, then press Retry. The app tells Chrome where to find it."
+  },
+
+  "sForbiddenTitle": { "message": "The app does not recognise this extension" },
+  "sForbiddenBody": {
+    "message": "This copy has a different id from the one Universal Downloader accepts. Install the extension from the same place you got the app, then press Retry."
+  },
+
+  "sUnreachableTitle": { "message": "Universal Downloader did not answer" },
+  "sUnreachableBody": {
+    "message": "Open the app and press Retry. If it is already open, restart Chrome."
+  },
+
+  "sDisabledTitle": { "message": "The browser connection is turned off" },
+  "sDisabledBody": {
+    "message": "Turn it on in Universal Downloader, under Settings, then press Retry."
+  },
+
+  "sUnpairedTitle": { "message": "Another browser profile is connected" },
+  "sUnpairedBody": {
+    "message": "Press Connect to use this profile instead. The app stops using the other one."
+  },
+
+  "sVersionTitle": { "message": "Universal Downloader is out of date" },
+  "sVersionBody": {
+    "message": "This extension speaks a newer version than the app understands. Update the app, then press Retry."
+  },
+
+  "sSignedOutTitle": { "message": "You are not signed in to YouTube here" },
+  "sSignedOutBody": {
+    "message": "Sign in to YouTube in this Chrome profile, then press Retry."
+  },
+
+  "sInternalTitle": { "message": "Universal Downloader could not store the sign-in" },
+  "sInternalBody": {
+    "message": "Open the app and press Retry. Its log files say more."
+  },
+
+  "sMalformedTitle": { "message": "The app could not read what was sent" },
+  "sMalformedBody": {
+    "message": "Press Retry. If it keeps happening, update both the app and this extension."
+  },
+
+  "detailsTitle": { "message": "Details" },
+  "labelAccount": { "message": "Account" },
+  "labelLastSent": { "message": "Last sent" },
+  "labelAppVersion": { "message": "App version" },
+  "labelExtensionVersion": { "message": "Extension version" },
+  "labelApp": { "message": "App on this computer" },
+  "labelAppHint": {
+    "message": "This is the program Chrome starts. If it is not where you installed Universal Downloader, turn the connection off and install the app again."
+  },
+
+  "btnConnect": { "message": "Connect" },
+  "btnOpenApp": { "message": "Open Universal Downloader" },
+  "btnForget": { "message": "Turn off" },
+  "btnRetry": { "message": "Retry" },
+  "btnCancel": { "message": "Cancel" },
+
+  "forgetTitle": { "message": "Turn the connection off?" },
+
+  "moreTitle": { "message": "If YouTube still says you are not a member" },
+  "grantGoogleTitle": { "message": "Include your google.com sign-in" },
+  "grantGoogleBody": {
+    "message": "Some accounts keep the part that matters on google.com rather than on youtube.com. This asks Chrome for permission to read those cookies too."
+  },
+  "btnGrantGoogle": { "message": "Allow google.com" },
+  "grantGoogleDone": { "message": "google.com is included." },
+
+  "grantAccountTitle": { "message": "Show which account this is" },
+  "grantAccountBody": {
+    "message": "The app shows a masked hint, such as m•••@gmail.com, so you can tell two profiles apart. The full address never leaves Chrome."
+  },
+  "btnGrantAccount": { "message": "Show the account" },
+  "grantAccountDone": { "message": "The account hint is on." },
+
+  "pinTitle": { "message": "Keep this within reach" },
+  "pinBody": {
+    "message": "Chrome hides new extensions behind the puzzle-piece button next to the address bar. Click it, then the pin beside Universal Downloader Connector."
+  },
+
+  "timeJustNow": { "message": "just now" },
+  "timeMinutes": {
+    "message": "$COUNT$ minutes ago",
+    "placeholders": { "count": { "content": "$1", "example": "12" } }
+  },
+  "timeHours": {
+    "message": "$COUNT$ hours ago",
+    "placeholders": { "count": { "content": "$1", "example": "12" } }
+  },
+  "timeDays": {
+    "message": "$COUNT$ days ago",
+    "placeholders": { "count": { "content": "$1", "example": "12" } }
+  },
+  "timeNever": { "message": "never" },
+
+  "welcomeTitle": { "message": "Universal Downloader Connector is installed" },
+  "welcomeLead": {
+    "message": "Four steps, and Universal Downloader can use your YouTube sign-in when a download needs it."
+  },
+
+  "step1Title": { "message": "Open Universal Downloader once" },
+  "step1Body": {
+    "message": "The app tells Chrome where to find it. Nothing listens on a network port: Chrome starts the app's helper itself, and only for this extension."
+  },
+  "step2Title": { "message": "Sign in to YouTube in this Chrome profile" },
+  "step2Body": {
+    "message": "Use the profile you actually watch in. Read the two notes below first, because one of them decides whether this works at all."
+  },
+  "step3Title": { "message": "Open this extension and press Connect" },
+  "step3Body": {
+    "message": "Click the extension's icon next to the address bar. If it is not there, click the puzzle-piece button and pin it."
+  },
+  "step4Title": { "message": "Download as usual" },
+  "step4Body": {
+    "message": "Paste a link into Universal Downloader. It uses your YouTube sign-in only for YouTube links, and only for the one download that asks for it."
+  },
+
+  "warningsTitle": { "message": "Two things that decide whether this works" },
+  "warnAccountsTitle": { "message": "A second Google account in this profile will not work" },
+  "warnAccountsBody": {
+    "message": "If the membership belongs to an account you added to this Chrome profile rather than the one you signed in with first, the app authenticates as that first account. YouTube then says you are not a member while the video plays fine in the next tab. Sign in to that account in a separate Chrome profile and connect from there instead."
+  },
+  "warnOwnerTitle": { "message": "The app uses whichever account is signed in here" },
+  "warnOwnerBody": {
+    "message": "Anything done with that sign-in lands on that account. Connect from a profile whose account is yours."
+  },
+
+  "privacyTitle": { "message": "Where the sign-in goes" },
+  "privacyBody": {
+    "message": "The cookies go straight to Universal Downloader on this computer, where they are encrypted for your Windows account. They are written out in readable form only for the seconds one download needs them, and deleted when it ends. Nothing is sent anywhere else."
+  }
+}

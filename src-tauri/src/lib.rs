@@ -6,6 +6,7 @@
 
 #[cfg(target_os = "android")]
 pub mod android;
+pub mod bridge;
 pub mod cache;
 pub mod commands;
 pub mod converter;
@@ -146,6 +147,20 @@ pub fn run() {
                 });
             }
 
+            // The browser link, which is registered on every launch rather than
+            // at install time: a browser update, a cleaner or a second copy of
+            // the app can all quietly take the registry value, and rewriting it
+            // here is what heals that without the user knowing it broke.
+            #[cfg(windows)]
+            if loaded.browser_link_enabled {
+                if let Err(err) = bridge::register() {
+                    log_warn!("app", "browser link unavailable: {err}");
+                }
+            }
+            // A lease that outlived its engine process is never resumable
+            // state, unlike a partial download, so it goes unconditionally.
+            bridge::sweep_leases();
+
             match paths::sweep_temp(TEMP_SWEEP_AGE_SECS) {
                 Ok(count) if count > 0 => log_info!("app", "swept {count} stale temp files"),
                 Err(err) => log_warn!("app", "temp sweep failed: {err}"),
@@ -178,6 +193,10 @@ pub fn run() {
             commands::get_settings,
             commands::save_settings,
             commands::reset_settings,
+            commands::bridge_status,
+            commands::bridge_repair,
+            commands::bridge_disconnect,
+            commands::bridge_diagnostics,
             commands::get_tools,
             commands::refresh_tools,
             commands::install_tool,

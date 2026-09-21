@@ -1,0 +1,293 @@
+/* 360px is as wide as Chrome will let a popup be without it feeling like a
+   window, and everything here has to stay readable at that width without the
+   user scrolling to find the button. That budget is also why the diagnostics
+   sit in a fold: the host path alone was taller than the sentence it was
+   printed under, and it is read once a year. */
+
+body {
+  width: 360px;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.head .mark {
+  width: 16px;
+  height: 16px;
+  color: var(--accent);
+  flex: none;
+}
+
+.head .name {
+  font-weight: 600;
+  font-size: 13px;
+  letter-spacing: -0.005em;
+}
+
+.dot {
+  margin-inline-start: auto;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: none;
+  background: var(--text-tertiary);
+  transition: background-color var(--t-micro) var(--ease-out);
+}
+
+.dot[data-tone='ok'] {
+  background: var(--success);
+}
+
+.dot[data-tone='warn'] {
+  background: var(--warning);
+}
+
+.dot[data-tone='bad'] {
+  background: var(--error);
+}
+
+/* -- motion ---------------------------------------------------------------
+   One movement, and everything that arrives uses it: the answer settling into
+   the card, the confirmation taking the buttons' place, the buttons coming
+   back. Same duration and same curve as the desktop app's `component` tier,
+   so the popup and the window it talks to move at one speed. */
+
+@keyframes settle {
+  from {
+    opacity: 0;
+    transform: translateY(5px);
+  }
+}
+
+.enter {
+  animation: settle var(--t-component) var(--ease-out) both;
+}
+
+.panel {
+  padding: 16px;
+}
+
+.title {
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.body {
+  margin-top: 6px;
+  color: var(--text-secondary);
+}
+
+.actions {
+  margin-top: 14px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+/* The way out of the state fills the row; the way round it takes only the
+   width of its own label, so which of the two is the answer is legible before
+   either is read. */
+.actions button {
+  flex: 1 1 auto;
+  min-width: 120px;
+}
+
+.actions button.quiet {
+  flex: 0 0 auto;
+  min-width: 0;
+}
+
+.confirm .ask {
+  margin-top: 14px;
+  font-weight: 600;
+}
+
+.confirm .actions {
+  margin-top: 8px;
+}
+
+/* -- folds ----------------------------------------------------------------
+   Opened by animating the grid row from 0fr to 1fr, which is the one way to
+   transition to a height nobody has measured. The inner element is what
+   clips, and hiding it outright while closed keeps the buttons inside out of
+   the tab order. */
+
+.fold {
+  border-top: 1px solid var(--border);
+}
+
+.fold-head {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 11px 16px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 12px;
+  text-align: start;
+  transition: background-color var(--t-micro) var(--ease-out),
+    color var(--t-micro) var(--ease-out);
+}
+
+.fold-head:hover {
+  background: var(--surface);
+  color: var(--text-primary);
+}
+
+.fold-head:focus-visible {
+  outline-offset: -2px;
+}
+
+.fold-head .chev {
+  width: 14px;
+  height: 14px;
+  flex: none;
+  margin-inline-start: auto;
+  color: var(--text-tertiary);
+  transition: transform var(--t-micro) var(--ease-out);
+}
+
+.fold[data-open] .fold-head .chev {
+  transform: rotate(180deg);
+}
+
+.fold-wrap {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows var(--t-component) var(--ease-out);
+}
+
+.fold[data-open] .fold-wrap {
+  grid-template-rows: 1fr;
+}
+
+.fold-body {
+  overflow: hidden;
+  min-height: 0;
+  visibility: hidden;
+  opacity: 0;
+  transition: opacity var(--t-component-out) var(--ease-in),
+    visibility 0s linear var(--t-component-out);
+}
+
+.fold[data-open] .fold-body {
+  visibility: visible;
+  opacity: 1;
+  transition: opacity var(--t-component) var(--ease-out) 40ms, visibility 0s;
+}
+
+.facts {
+  margin: 0;
+  padding: 2px 16px 14px;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 6px 14px;
+  align-items: baseline;
+}
+
+/* The rows carry the pairing; the grid carries the alignment, so a label and
+   its value stay in one column down the whole list however long either gets. */
+.fact {
+  display: contents;
+}
+
+.fact dt {
+  color: var(--text-tertiary);
+}
+
+.fact dd {
+  margin: 0;
+}
+
+/* The host path is the one thing on this page a user is meant to read
+   character by character, so it gets the full width and a font that does not
+   turn l into 1. */
+.fact-path dt,
+.fact-path dd {
+  grid-column: 1 / -1;
+}
+
+.fact-path dt {
+  margin-top: 4px;
+}
+
+.fact-path code {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-secondary);
+  background: var(--surface-sunken);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 7px 9px;
+  display: block;
+  word-break: break-all;
+}
+
+.hint {
+  padding: 0 16px 14px;
+  font-size: 11.5px;
+  color: var(--text-tertiary);
+}
+
+.grant {
+  padding: 2px 16px 14px;
+}
+
+.grant h3 {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.grant p {
+  margin-top: 3px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.grant button {
+  margin-top: 8px;
+  padding: 6px 10px;
+  font-size: 12px;
+}
+
+.grant .granted {
+  color: var(--success);
+}
+
+.pin {
+  display: flex;
+  gap: 10px;
+  padding: 14px 16px;
+  border-top: 1px solid var(--border);
+  background: var(--surface-sunken);
+}
+
+.pin svg {
+  width: 18px;
+  height: 18px;
+  flex: none;
+  margin-top: 1px;
+  color: var(--text-tertiary);
+}
+
+.pin strong {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.pin p {
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}

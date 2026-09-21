@@ -21,7 +21,7 @@ use crate::downloader::http::ProgressSample;
 use crate::error::{AppError, AppResult};
 use crate::providers::engine;
 use crate::settings::Settings;
-use crate::{log_debug, process, tools};
+use crate::{log_debug, logging, process, tools};
 
 /// A sentinel-prefixed, space-separated progress line. Parsing this is far more
 /// robust than scraping the human-readable progress bar.
@@ -35,11 +35,51 @@ pub struct EngineDownload<'a> {
     pub merge_container: Option<&'a str>,
 }
 
+/// Download once with nothing behind it, and -- only for a refusal a linked
+/// browser might answer -- once more with that browser's session.
+///
+/// The gate is the same one `analyze` uses, for the same reason: a public video
+/// is the overwhelmingly common case and must never cause the stored session to
+/// be written to disk. `--continue` means the second attempt picks up whatever
+/// the first managed to write, so nothing is downloaded twice.
 pub async fn run(
     options: EngineDownload<'_>,
     settings: &Settings,
     control: Arc<TaskControl>,
     on_progress: &mut (dyn FnMut(ProgressSample) + Send),
+) -> AppResult<u64> {
+    let refusal = match attempt(&options, settings, &control, on_progress, None).await {
+        Ok(size) => return Ok(size),
+        Err(err) => err,
+    };
+
+    let Some(session) = engine::session_for(&refusal, options.url, settings) else {
+        return Err(refusal);
+    };
+
+    let jar = session.path().to_string_lossy().into_owned();
+    let retried = attempt(&options, settings, &control, on_progress, Some(jar.as_str())).await;
+
+    // The engine rewrites the jar it was handed, carrying over whatever Google
+    // rotated while the download ran; folding that back is what keeps the
+    // session usable without the browser ever being opened again. Only after a
+    // run that succeeded, though -- the jar a refused run leaves behind may be
+    // a signed-out one, and storing that over a good session would break the
+    // next download rather than help it. Failing to fold back costs freshness,
+    // not this download, so it does not become the user's problem.
+    if retried.is_ok() {
+        session.fold_back();
+    }
+
+    retried
+}
+
+async fn attempt(
+    options: &EngineDownload<'_>,
+    settings: &Settings,
+    control: &Arc<TaskControl>,
+    on_progress: &mut (dyn FnMut(ProgressSample) + Send),
+    cookies: Option<&str>,
 ) -> AppResult<u64> {
     let binary = tools::require_engine()?;
     let mut args = engine::base_args(settings);
@@ -78,6 +118,11 @@ pub async fn run(
         args.push(location);
     }
 
+    if let Some(jar) = cookies {
+        args.push("--cookies".into());
+        args.push(jar.to_string());
+    }
+
     args.push(options.url.to_string());
     engine::log_engine_invocation(&args);
 
@@ -95,14 +140,16 @@ pub async fn run(
     let stderr = child.stderr.take();
 
     // stderr is drained on its own task: a full pipe buffer would otherwise
-    // deadlock the child while we are busy reading stdout.
+    // deadlock the child while we are busy reading stdout. Each line is cut
+    // down as it arrives, so the session can never be in the text that the
+    // failure message is later built from.
     let stderr_handle = tokio::spawn(async move {
         let mut collected = String::new();
         if let Some(stderr) = stderr {
             let mut lines = BufReader::new(stderr).lines();
             while let Ok(Some(line)) = lines.next_line().await {
                 if collected.len() < 8192 {
-                    collected.push_str(&line);
+                    collected.push_str(&logging::redact(&line));
                     collected.push('\n');
                 }
             }
@@ -130,7 +177,7 @@ pub async fn run(
                             }
                             last_sample = Some(sample);
                         } else if !line.trim().is_empty() {
-                            log_debug!("engine-dl", "{}", line.trim());
+                            log_debug!("engine-dl", "{}", logging::redact(line.trim()));
                         }
                     }
                     Ok(None) => break false,

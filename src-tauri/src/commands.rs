@@ -12,19 +12,21 @@ use crate::converter::ConvertManager;
 use crate::db::Database;
 use crate::error::{AppError, AppResult};
 use crate::model::{
-    CacheStats, ConvertFormatInfo, ConvertJob, ConvertRequest, DiagnosticsSnapshot, DownloadRequest,
-    DownloadTask, HistoryEntry, MediaMetadata, MediaProbe, PlatformId, ToolInstallProgress,
-    ToolKind, ToolsState,
+    BridgeStatus, CacheStats, ConvertFormatInfo, ConvertJob, ConvertRequest, DiagnosticsSnapshot,
+    DownloadRequest, DownloadTask, HistoryEntry, MediaMetadata, MediaProbe, PlatformId,
+    ToolInstallProgress, ToolKind, ToolsState,
 };
 use crate::queue::QueueManager;
 use crate::settings::Settings;
 use crate::{
-    cache, converter, downloader, filename, logging, net, paths, providers, tools, updater, util,
+    bridge, cache, converter, downloader, filename, log_warn, logging, net, paths, providers, tools,
+    updater, util,
 };
 
 pub const EVENT_TOOL_PROGRESS: &str = "tools://progress";
 pub const EVENT_TOOLS_CHANGED: &str = "tools://changed";
 pub const EVENT_SETTINGS_CHANGED: &str = "settings://changed";
+pub const EVENT_BRIDGE_CHANGED: &str = "bridge://changed";
 
 pub struct AppState {
     pub db: Arc<Database>,
@@ -87,6 +89,14 @@ pub async fn save_settings(
         apply_autostart(&app, settings.start_with_windows);
     }
 
+    // Turning the browser link off has to reach the disk, not just this
+    // process: the bridge host runs while the app is closed and reads the same
+    // state to decide whether to accept a push. Unregistering as well means a
+    // browser cannot even start the helper afterwards.
+    if previous.browser_link_enabled != settings.browser_link_enabled {
+        apply_browser_link(&app, settings.browser_link_enabled);
+    }
+
     let _ = app.emit(EVENT_SETTINGS_CHANGED, settings.clone());
     Ok(settings)
 }
@@ -117,6 +127,67 @@ fn apply_autostart(app: &AppHandle, enabled: bool) {
     {
         let _ = (app, enabled);
     }
+}
+
+fn apply_browser_link(app: &AppHandle, enabled: bool) {
+    if let Err(err) = bridge::set_enabled(enabled) {
+        log_warn!("bridge", "could not record the link state: {err}");
+    }
+
+    let result = if enabled {
+        bridge::register()
+    } else {
+        bridge::unregister()
+    };
+    if let Err(err) = result {
+        log_warn!("bridge", "could not update the browser registration: {err}");
+    }
+
+    let _ = app.emit(EVENT_BRIDGE_CHANGED, ());
+}
+
+// -- browser link ----------------------------------------------------------
+
+/// The Connection section polls this while it is on screen. It reads one small
+/// file and stats another, and never decrypts the session, so polling is
+/// cheaper than watching a file two processes write.
+#[tauri::command]
+pub fn bridge_status(app: AppHandle, state: State<'_, AppState>) -> BridgeStatus {
+    bridge::status(&state.settings(), &app.package_info().version.to_string())
+}
+
+/// Repair: point every supported browser back at this installation's helper.
+///
+/// One button for every broken shape of the link -- a browser update that
+/// cleared the value, a second copy of the app that claimed it, an uninstall
+/// that took it -- because a user cannot tell those apart and does not have to.
+#[tauri::command]
+pub fn bridge_repair(app: AppHandle, state: State<'_, AppState>) -> AppResult<BridgeStatus> {
+    bridge::register()?;
+    let _ = app.emit(EVENT_BRIDGE_CHANGED, ());
+    Ok(bridge::status(
+        &state.settings(),
+        &app.package_info().version.to_string(),
+    ))
+}
+
+/// Forget the browser and drop the stored session. The registration stays, so
+/// reconnecting is one press in the extension rather than a repair.
+#[tauri::command]
+pub fn bridge_disconnect(app: AppHandle, state: State<'_, AppState>) -> AppResult<BridgeStatus> {
+    bridge::disconnect()?;
+    let _ = app.emit(EVENT_BRIDGE_CHANGED, ());
+    Ok(bridge::status(
+        &state.settings(),
+        &app.package_info().version.to_string(),
+    ))
+}
+
+/// A support paste. Carries cookie names but never values: a jar without `SID`
+/// is a signed-out jar, and that distinction is most of field diagnosis.
+#[tauri::command]
+pub fn bridge_diagnostics(app: AppHandle, state: State<'_, AppState>) -> String {
+    bridge::diagnostics(&state.settings(), &app.package_info().version.to_string())
 }
 
 // -- tools -----------------------------------------------------------------
@@ -607,6 +678,10 @@ pub fn get_diagnostics(app: AppHandle, state: State<'_, AppState>) -> AppResult<
         ),
         engine: snapshot.engine,
         ffmpeg: snapshot.ffmpeg,
+        // A support paste that does not say whether a JavaScript runtime was
+        // present cannot explain the one failure this tool exists for.
+        #[cfg(not(target_os = "android"))]
+        js_runtime: snapshot.js_runtime,
         download_dir: settings.download_dir,
         db_path: paths::database_path()?.to_string_lossy().into_owned(),
         log_path: paths::logs_dir()?.to_string_lossy().into_owned(),
