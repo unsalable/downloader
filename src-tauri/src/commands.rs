@@ -358,6 +358,9 @@ pub async fn enqueue_gallery(
         return Ok(vec![state.queue.enqueue(request)]);
     }
 
+    // One creation time for the whole album: the Downloads screen lists newest
+    // first, so entries stamped one by one would read backwards there.
+    let created_at = util::now_ms();
     Ok(metadata
         .entries
         .iter()
@@ -372,7 +375,7 @@ pub async fn enqueue_gallery(
                 item.video_format_id = None;
                 item.audio_format_id = None;
             }
-            state.queue.enqueue(item)
+            state.queue.enqueue_at(item, created_at)
         })
         .collect())
 }
@@ -610,8 +613,8 @@ pub async fn platform_take_shared_text(app: AppHandle) -> AppResult<Option<Strin
 
 // -- app updates -----------------------------------------------------------
 
-/// Whether a newer build of the phone app has been released. Always `None` on
-/// the desktop, whose installer is updated by downloading it again.
+/// Whether a newer build has been released. `None` when this one is current,
+/// and always for a copy that no installer made.
 #[tauri::command]
 pub async fn check_app_update(state: State<'_, AppState>) -> AppResult<Option<updater::AppUpdate>> {
     let settings = state.settings();
@@ -622,14 +625,23 @@ pub async fn check_app_update(state: State<'_, AppState>) -> AppResult<Option<up
         .map_err(|_| AppError::Network("the update check timed out".into()))?
 }
 
-/// Download a newer build and open the system installer on it.
+/// The commit this build was made from. Releases carry no version number, so
+/// this is what the About page names a build by; empty when it is unknown.
+#[tauri::command]
+pub fn get_build_commit() -> &'static str {
+    updater::build_commit()
+}
+
+/// Download a newer build. The phone then opens the system installer on it;
+/// the desktop only stages the file, verified, for `apply_app_update` to run
+/// once nothing would be interrupted by it.
 #[tauri::command]
 pub async fn install_app_update(
     app: AppHandle,
     state: State<'_, AppState>,
     update: updater::AppUpdate,
 ) -> AppResult<()> {
-    #[cfg(target_os = "android")]
+    #[cfg(any(target_os = "android", windows))]
     {
         let settings = state.settings();
         let emitter = app.clone();
@@ -642,14 +654,67 @@ pub async fn install_app_update(
                 },
             );
         };
-        let apk = updater::download(&update, &crate::android::update_dir(), &settings, &on_progress).await?;
-        crate::android::install_apk(app, apk.to_string_lossy().into_owned()).await
+
+        #[cfg(target_os = "android")]
+        {
+            let apk =
+                updater::download(&update, &crate::android::update_dir(), &settings, &on_progress)
+                    .await?;
+            crate::android::install_apk(app, apk.to_string_lossy().into_owned()).await
+        }
+        #[cfg(windows)]
+        {
+            updater::download(&update, &paths::updates_dir()?, &settings, &on_progress).await?;
+            Ok(())
+        }
     }
-    #[cfg(not(target_os = "android"))]
+    #[cfg(not(any(target_os = "android", windows)))]
     {
         let _ = (app, state, update);
-        android_only()
+        no_self_update()
     }
+}
+
+/// Replace the running app with the build `install_app_update` staged: start
+/// its installer, then leave so the files are free to be replaced. Does not
+/// return when it works -- the installer starts the new build when it is done.
+#[tauri::command]
+pub async fn apply_app_update(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    update: updater::AppUpdate,
+) -> AppResult<()> {
+    #[cfg(windows)]
+    {
+        use tauri::Manager;
+
+        let installer = updater::staged(&update, &paths::updates_dir()?)?;
+
+        // A window the user has put away in the tray comes back put away.
+        let minimized = app
+            .get_webview_window("main")
+            .is_some_and(|window| !window.is_visible().unwrap_or(true));
+        updater::launch_installer(&installer, minimized)?;
+        crate::log_info!("updater", "handing over to {}", installer.display());
+
+        // The same way out as Quit in the tray menu. Closing the window would
+        // not do: with close-to-tray on that only hides it, and the process
+        // the installer needs gone would still be holding its files.
+        state.queue.shutdown();
+        state.converter.shutdown();
+        app.exit(0);
+        Ok(())
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (app, state, update);
+        no_self_update()
+    }
+}
+
+#[cfg(not(windows))]
+fn no_self_update<T>() -> AppResult<T> {
+    Err(AppError::Other("this build does not install its own updates".into()))
 }
 
 // -- cache and diagnostics -------------------------------------------------

@@ -1,37 +1,28 @@
-import { motion } from 'motion/react';
 import { openUrl } from '@tauri-apps/plugin-opener';
-import { ExternalLink, RefreshCw, ShieldCheck } from 'lucide-react';
+import { ExternalLink, ShieldCheck } from 'lucide-react';
 import { useEffect, useState } from 'react';
 
-import { Badge } from '@/components/ui/Badge';
-import { Button } from '@/components/ui/Button';
+import { UpdateRow } from '@/components/settings/UpdateRow';
+import { ListGroup } from '@/components/ui/ListGroup';
 import { Logo } from '@/components/layout/Logo';
+import { PageHeader } from '@/components/ui/PageHeader';
 import { SettingGroup, SettingRow } from '@/components/ui/SettingRow';
 import { useTranslation } from '@/i18n';
 import { cn } from '@/lib/cn';
-import { T } from '@/lib/motion';
 import { IS_MOBILE } from '@/lib/platform';
 import * as ipc from '@/services/ipc';
-import { useToastStore } from '@/stores/useToastStore';
-import { useUpdateStore } from '@/stores/useUpdateStore';
 import type { DiagnosticsSnapshot, LicenseEntry } from '@/types';
 
-const KIND_LABEL: Record<LicenseEntry['kind'], string> = {
-  npm: 'npm',
-  cargo: 'crate',
-  font: 'font',
-  asset: 'icons',
-  'external-tool': 'tool',
-};
+// The sizes a `SettingRow` sets its two lines in, so every row on the page agrees.
+const TITLE_SIZE = IS_MOBILE ? 'text-[15px]' : 'text-[13.5px]';
+const BODY_SIZE = IS_MOBILE ? 'text-[13px]' : 'text-[12.5px]';
 
 export function AboutPage() {
   const { t } = useTranslation();
-  const [version, setVersion] = useState('');
   const [licenses, setLicenses] = useState<LicenseEntry[]>([]);
   const [diagnostics, setDiagnostics] = useState<DiagnosticsSnapshot | null>(null);
 
   useEffect(() => {
-    void ipc.getAppVersion().then(setVersion);
     void ipc
       .getLicenses()
       .then((payload) => setLicenses(payload.packages))
@@ -43,47 +34,39 @@ export function AboutPage() {
   const libraries = licenses.filter((entry) => entry.kind !== 'external-tool');
 
   return (
-    <div className="mx-auto w-full max-w-[720px] px-6 pb-12">
-      <motion.header
-        initial={{ opacity: 0, y: 10 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={T.entrance}
-        className="flex flex-col items-center py-8 text-center"
-      >
-        <Logo size={52} />
-        <h2 className="mt-4 text-[19px] font-semibold tracking-[-0.02em] text-fg">
-          {t('app.name')}
-        </h2>
-        <p className="mt-1 text-[13px] text-fg-muted">
-          {version ? t('about.version', { version }) : ' '}
-        </p>
-        <p className="mt-2 max-w-[380px] text-[13px] leading-relaxed text-fg-muted">
-          {t('about.description')}
-        </p>
-      </motion.header>
+    <div className={cn('mx-auto w-full max-w-[720px] pb-12', IS_MOBILE ? 'px-4 pt-4' : 'px-6')}>
+      <PageHeader title={t('nav.about')} />
 
-      {IS_MOBILE && <UpdateCheck />}
-
-      <section
-        className={cn(
-          'rounded-[var(--radius-card)] border border-[var(--success)]/25',
-          'bg-[linear-gradient(135deg,var(--success-soft),transparent_60%)] p-4',
-        )}
-      >
-        <div className="flex gap-3">
-          <ShieldCheck size={18} className="mt-0.5 shrink-0 text-success" />
-          <div>
-            <h3 className="text-[13.5px] font-semibold text-fg">{t('about.privacyTitle')}</h3>
-            <p className="mt-1 text-[12.5px] leading-relaxed text-fg-muted">
-              {t(IS_MOBILE ? 'about.privacyBodyMobile' : 'about.privacyBody')}
-            </p>
+      <div className="flex flex-col gap-6">
+        {/* The app itself: what it is, then which build and whether a newer one
+            exists. Releases carry no version number; the build's commit is what
+            tells one from the next. */}
+        <ListGroup>
+          <div className={cn('flex items-center gap-3.5 px-4', IS_MOBILE ? 'py-4' : 'py-3.5')}>
+            <Logo size={40} className="shrink-0" />
+            {/* English whatever the interface language, and marked as such so
+                it is read out -- and cased -- as English. */}
+            <div lang="en" className="min-w-0 truncate text-[15px] font-semibold text-fg">
+              {t('app.name')}
+            </div>
           </div>
-        </div>
-      </section>
+          <UpdateRow />
+        </ListGroup>
 
-      {diagnostics && (
-        <div className="mt-6">
-          <SettingGroup title={t('settings.advanced')}>
+        <ListGroup>
+          <SettingRow
+            title={
+              <span className="flex items-center gap-1.5">
+                <ShieldCheck size={15} aria-hidden="true" className="shrink-0 text-success" />
+                {t('about.privacyTitle')}
+              </span>
+            }
+            description={t(IS_MOBILE ? 'about.privacyBodyMobile' : 'about.privacyBody')}
+          />
+        </ListGroup>
+
+        {diagnostics && (
+          <SettingGroup title={t('about.system')}>
             <DiagnosticRow label="OS" value={diagnostics.os} />
             <DiagnosticRow
               label={t('settings.engine')}
@@ -103,120 +86,85 @@ export function AboutPage() {
             />
             <DiagnosticRow label={t('settings.downloadDir')} value={diagnostics.downloadDir} />
           </SettingGroup>
-        </div>
-      )}
+        )}
 
-      {tools.length > 0 && (
-        <div className="mt-6">
+        {tools.length > 0 && (
           <SettingGroup
             title={t('about.externalTools')}
-            description={t('setup.body')}
+            description={t(IS_MOBILE ? 'setup.bodyMobile' : 'setup.body')}
           >
             {tools.map((entry) => (
               <LicenseRow key={entry.name} entry={entry} />
             ))}
           </SettingGroup>
-        </div>
-      )}
+        )}
 
-      {libraries.length > 0 && (
-        <div className="mt-6">
+        {libraries.length > 0 && (
           <SettingGroup title={t('about.licenses')}>
             {libraries.map((entry) => (
               <LicenseRow key={`${entry.kind}-${entry.name}`} entry={entry} />
             ))}
           </SettingGroup>
-        </div>
-      )}
+        )}
+      </div>
     </div>
   );
 }
 
 function DiagnosticRow({ label, value }: { label: string; value: string }) {
   return (
-    <div className="flex items-center justify-between gap-4 px-4 py-2.5">
-      <span className="text-[12.5px] text-fg-muted">{label}</span>
-      <span className="selectable truncate font-mono text-[11.5px] text-fg">{value}</span>
+    <div
+      className={cn(
+        'flex items-baseline justify-between gap-6 px-4',
+        IS_MOBILE ? 'py-3.5' : 'py-2.5',
+      )}
+    >
+      <span className={cn('shrink-0 text-fg', TITLE_SIZE)}>{label}</span>
+      {/* A long path breaks where it has to rather than being cut short: this
+          is the text someone copies into a bug report. */}
+      <span
+        className={cn(
+          'selectable tabular min-w-0 text-right text-fg-muted [overflow-wrap:anywhere]',
+          BODY_SIZE,
+        )}
+      >
+        {value}
+      </span>
     </div>
   );
 }
 
 function LicenseRow({ entry }: { entry: LicenseEntry }) {
   return (
-    <div className="flex items-center gap-3 px-4 py-2.5">
-      <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-2">
-          <span className="truncate text-[13px] font-medium text-fg">{entry.name}</span>
+    <button
+      type="button"
+      // Opens in the user's own browser rather than a webview: an external
+      // page has no business running inside the app's origin.
+      onClick={() => void openUrl(entry.url)}
+      className={cn(
+        'flex w-full items-center gap-3 px-4 text-left',
+        'transition-colors duration-150 ease-out-quint hover:bg-surface-hover active:bg-surface-active',
+        IS_MOBILE ? 'py-3.5' : 'py-2.5',
+      )}
+    >
+      <span className="min-w-0 flex-1">
+        <span className="flex items-baseline gap-2">
+          <span className={cn('truncate text-fg', TITLE_SIZE)}>{entry.name}</span>
           {entry.version && entry.version !== 'variable' && (
-            <span className="tabular shrink-0 text-[11.5px] text-fg-faint">{entry.version}</span>
+            <span className={cn('tabular shrink-0 text-fg-faint', BODY_SIZE)}>{entry.version}</span>
           )}
-          <Badge tone="outline">{KIND_LABEL[entry.kind]}</Badge>
-        </div>
+        </span>
         {entry.note && (
-          <p className="mt-0.5 text-[11.5px] leading-relaxed text-fg-faint">{entry.note}</p>
+          <span className={cn('mt-0.5 block leading-relaxed text-fg-muted', BODY_SIZE)}>
+            {entry.note}
+          </span>
         )}
-      </div>
+      </span>
 
-      <span className="shrink-0 text-[11.5px] text-fg-muted">{entry.license}</span>
-
-      <button
-        type="button"
-        // Opens in the user's own browser rather than a webview: an external
-        // page has no business running inside the app's origin.
-        onClick={() => void openUrl(entry.url)}
-        aria-label={entry.url}
-        className="pressable-sm shrink-0 rounded-md p-1 text-fg-faint hover:bg-surface-hover hover:text-fg"
-      >
-        <ExternalLink size={13} />
-      </button>
-    </div>
-  );
-}
-
-/** Ask for an update now, rather than waiting for the app to be opened again. */
-function UpdateCheck() {
-  const { t } = useTranslation();
-  const check = useUpdateStore((state) => state.check);
-  const pushToast = useToastStore((state) => state.push);
-  const [checking, setChecking] = useState(false);
-
-  const run = async () => {
-    setChecking(true);
-    try {
-      // A build that is found opens the update prompt by itself.
-      const found = await check(true);
-      if (!found) pushToast({ tone: 'success', title: t('update.upToDate') });
-    } catch (caught) {
-      pushToast({
-        tone: 'error',
-        title: t('update.checkFailed'),
-        body: ipc.toAppError(caught).message,
-        durationMs: 7000,
-      });
-    } finally {
-      setChecking(false);
-    }
-  };
-
-  return (
-    <div className="mb-6">
-      <SettingGroup>
-        <SettingRow
-          title={t('update.check')}
-          description={t('update.checkHint')}
-          control={
-            <Button
-              size="sm"
-              variant="secondary"
-              loading={checking}
-              icon={<RefreshCw size={14} />}
-              onClick={() => void run()}
-            >
-              {t('update.checkNow')}
-            </Button>
-          }
-        />
-      </SettingGroup>
-    </div>
+      <span className={cn('max-w-[42%] shrink-0 text-right text-fg-muted', BODY_SIZE)}>
+        {entry.license}
+      </span>
+      <ExternalLink size={14} aria-hidden="true" className="shrink-0 text-fg-faint" />
+    </button>
   );
 }

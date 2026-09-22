@@ -2,6 +2,7 @@ import type { ReactNode } from 'react';
 
 import { cn } from '@/lib/cn';
 import { IS_MOBILE } from '@/lib/platform';
+import { ListGroup, ListGroupLabel } from './ListGroup';
 import { Toggle, ToggleTrack } from './Toggle';
 
 interface SettingRowProps {
@@ -26,7 +27,7 @@ export function SettingRow({
     <div
       className={cn(
         'flex gap-4 px-4',
-        IS_MOBILE ? (stacked ? 'gap-3 py-4' : 'py-4') : 'py-3.5',
+        IS_MOBILE ? (stacked ? 'gap-3 py-4' : 'py-4') : 'py-3',
         // Wrapping lets a wide control drop under its label on a narrow screen;
         // the label's minimum width is what decides when that happens.
         stacked ? 'flex-col' : 'flex-wrap items-center justify-between',
@@ -45,9 +46,7 @@ export function SettingRow({
 function RowText({ title, description }: { title: ReactNode; description?: ReactNode }) {
   return (
     <>
-      <div className={cn('font-medium text-fg', IS_MOBILE ? 'text-[15px]' : 'text-[13.5px]')}>
-        {title}
-      </div>
+      <div className={cn('text-fg', IS_MOBILE ? 'text-[15px]' : 'text-[13.5px]')}>{title}</div>
       {description && (
         <p
           className={cn(
@@ -95,7 +94,7 @@ export function ToggleRow({ title, description, checked, onChange, disabled = fa
       onClick={() => onChange(!checked)}
       className={cn(
         'flex w-full items-center gap-4 px-4 py-4 text-left transition-colors duration-150 ease-out-quint',
-        'active:bg-surface-hover disabled:pointer-events-none disabled:opacity-40',
+        'active:bg-fill disabled:pointer-events-none disabled:opacity-40',
       )}
     >
       <div className="min-w-0 flex-1">
@@ -118,18 +117,14 @@ export function SettingGroup({
   className?: string;
 }) {
   return (
-    <section className={cn('flex flex-col gap-2.5', className)}>
+    <section className={cn('flex flex-col gap-2', className)}>
       {title && (
-        <div className="px-1">
-          <h3 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-fg-faint">
-            {title}
-          </h3>
-          {description && <p className="mt-1 text-[12.5px] text-fg-muted">{description}</p>}
+        <div>
+          <ListGroupLabel>{title}</ListGroupLabel>
+          {description && <p className="mt-0.5 px-4 text-[12.5px] text-fg-muted">{description}</p>}
         </div>
       )}
-      <div className="overflow-hidden rounded-[var(--radius-card)] border border-[var(--border)] bg-surface divide-y divide-[var(--border)]">
-        {children}
-      </div>
+      <ListGroup>{children}</ListGroup>
     </section>
   );
 }

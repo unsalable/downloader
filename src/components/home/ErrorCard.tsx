@@ -1,8 +1,10 @@
 import { motion } from 'motion/react';
-import { AlertCircle, ChevronDown, Copy, RotateCw } from 'lucide-react';
+import { Check, ChevronDown, CircleAlert, Copy, RotateCw } from 'lucide-react';
 import { useState } from 'react';
 
 import { Button } from '@/components/ui/Button';
+import { InlineNotice } from '@/components/ui/InlineNotice';
+import { useMomentary } from '@/hooks/useMomentary';
 import { useTranslation } from '@/i18n';
 import type { TranslationKey } from '@/i18n';
 import { cn } from '@/lib/cn';
@@ -13,6 +15,8 @@ interface ErrorCardProps {
   error: AppErrorInfo;
   onRetry?: () => void;
   extraAction?: { label: string; onClick: () => void };
+  /** Why `extraAction` did not work, set beside the button that ran it. */
+  actionError?: string | null;
 }
 
 /**
@@ -20,10 +24,10 @@ interface ErrorCardProps {
  * keyed by the error code, with the backend's English text as the fallback;
  * the raw technical detail stays collapsed until asked for.
  */
-export function ErrorCard({ error, onRetry, extraAction }: ErrorCardProps) {
+export function ErrorCard({ error, onRetry, extraAction, actionError }: ErrorCardProps) {
   const { t } = useTranslation();
   const [showDetails, setShowDetails] = useState(false);
-  const [copied, setCopied] = useState(false);
+  const [copied, markCopied] = useMomentary();
 
   const titleKey = `error.${error.code}.title` as TranslationKey;
   const messageKey = `error.${error.code}.message` as TranslationKey;
@@ -34,8 +38,7 @@ export function ErrorCard({ error, onRetry, extraAction }: ErrorCardProps) {
     if (!error.technical) return;
     try {
       await navigator.clipboard.writeText(error.technical);
-      setCopied(true);
-      window.setTimeout(() => setCopied(false), 1600);
+      markCopied();
     } catch {
       // Clipboard permission can be refused; the text is still on screen.
     }
@@ -48,18 +51,13 @@ export function ErrorCard({ error, onRetry, extraAction }: ErrorCardProps) {
       animate="animate"
       exit="exit"
       role="alert"
-      className={cn(
-        'overflow-hidden rounded-[var(--radius-panel)] border border-[var(--border)]',
-        'bg-surface p-5 shadow-raised edge-light',
-      )}
+      className="overflow-hidden rounded-[var(--radius-card)] border border-card-edge bg-surface p-4"
     >
-      <div className="flex gap-3.5">
-        <span className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-lg bg-error-soft text-error">
-          <AlertCircle size={17} />
-        </span>
+      <div className="flex gap-3">
+        <CircleAlert size={18} aria-hidden="true" className="mt-px shrink-0 text-error" />
 
         <div className="min-w-0 flex-1">
-          <h3 className="text-[14.5px] font-semibold text-fg">{title}</h3>
+          <h3 className="text-[14px] font-semibold text-fg">{title}</h3>
           <p className="mt-1 text-[13px] leading-relaxed text-fg-muted">{message}</p>
 
           <div className="mt-3.5 flex flex-wrap items-center gap-2">
@@ -78,7 +76,7 @@ export function ErrorCard({ error, onRetry, extraAction }: ErrorCardProps) {
                 type="button"
                 onClick={() => setShowDetails((value) => !value)}
                 aria-expanded={showDetails}
-                className="pressable flex items-center gap-1 rounded-md px-1.5 py-1 text-[12.5px] font-medium text-fg-faint hover:text-fg-muted"
+                className="pressable flex items-center gap-1 rounded-md px-1.5 py-1 text-[12.5px] font-medium text-fg-muted hover:text-fg"
               >
                 {showDetails ? t('analyze.hideDetails') : t('analyze.details')}
                 <ChevronDown
@@ -92,6 +90,12 @@ export function ErrorCard({ error, onRetry, extraAction }: ErrorCardProps) {
             )}
           </div>
 
+          {actionError && (
+            <InlineNotice tone="error" className="mt-2.5">
+              {actionError}
+            </InlineNotice>
+          )}
+
           {showDetails && error.technical && (
             <motion.div
               initial={{ opacity: 0, height: 0 }}
@@ -99,16 +103,18 @@ export function ErrorCard({ error, onRetry, extraAction }: ErrorCardProps) {
               transition={T.component}
               className="overflow-hidden"
             >
-              <div className="relative mt-3 rounded-lg border border-[var(--border)] bg-surface-sunken p-3">
-                <pre className="selectable max-h-40 overflow-auto whitespace-pre-wrap break-words font-mono text-[11.5px] leading-relaxed text-fg-muted">
+              {/* The one place on Home set in mono: raw engine output, which
+                  is copied into a bug report character for character. */}
+              <div className="mt-3 rounded-[var(--radius-control)] bg-fill p-3">
+                <pre className="selectable max-h-40 overflow-auto whitespace-pre-wrap break-words font-mono text-[12px] leading-relaxed text-fg-muted">
                   {error.technical}
                 </pre>
                 <button
                   type="button"
                   onClick={copyDetails}
-                  className="pressable-sm absolute right-2 top-2 flex items-center gap-1 rounded-md bg-surface px-1.5 py-1 text-[11px] text-fg-faint hover:text-fg"
+                  className="pressable -ml-1.5 mt-2 flex items-center gap-1 rounded-md px-1.5 py-1 text-[12.5px] font-medium text-fg-muted hover:text-fg"
                 >
-                  <Copy size={11} />
+                  {copied ? <Check size={13} /> : <Copy size={13} />}
                   {copied ? t('analyze.copied') : t('common.copy')}
                 </button>
               </div>

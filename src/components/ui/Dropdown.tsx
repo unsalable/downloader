@@ -205,11 +205,7 @@ export function Dropdown<T extends string>({
 
   return (
     <div className={cn('flex flex-col gap-1.5', className)}>
-      {label && (
-        <span className="text-[11px] font-medium uppercase tracking-[0.07em] text-fg-faint">
-          {label}
-        </span>
-      )}
+      {label && <span className="text-[12.5px] font-medium text-fg-muted">{label}</span>}
       <button
         ref={triggerRef}
         type="button"
@@ -221,31 +217,30 @@ export function Dropdown<T extends string>({
         onClick={() => (open ? closeMenu() : openMenu())}
         onKeyDown={onTriggerKeyDown}
         className={cn(
-          'pressable group flex w-full items-center gap-2 rounded-[10px] px-3 text-left',
-          IS_MOBILE ? 'h-12' : 'h-10',
-          'border border-[var(--border)] bg-surface',
-          'hover:border-[var(--border-strong)] hover:bg-surface-hover',
+          'pressable group flex w-full items-center gap-2 rounded-[var(--radius-control)] px-3 text-left',
+          IS_MOBILE ? 'h-12' : 'h-9',
+          'bg-fill hover:bg-fill-hover',
           'disabled:pointer-events-none disabled:opacity-45',
-          open && 'border-[var(--accent)] ring-2 ring-[var(--accent-ring)]/30',
+          open && 'bg-fill-hover',
         )}
       >
         {selected?.icon && <span className="shrink-0 text-fg-muted">{selected.icon}</span>}
         <span
           className={cn(
-            'min-w-0 flex-1 truncate font-medium',
+            'min-w-0 flex-1 truncate',
             IS_MOBILE ? 'text-[15px]' : 'text-[13.5px]',
-            selected ? 'text-fg' : 'text-fg-faint',
+            selected ? 'text-fg' : 'text-fg-muted',
           )}
         >
           {selected?.label ?? placeholder}
         </span>
         {selected?.meta && (
-          <span className="tabular shrink-0 text-[12px] text-fg-faint">{selected.meta}</span>
+          <span className="tabular shrink-0 text-[12.5px] text-fg-muted">{selected.meta}</span>
         )}
         <ChevronDown
           size={15}
           className={cn(
-            'shrink-0 text-fg-faint transition-transform duration-150 ease-out-quint',
+            'shrink-0 text-fg-muted transition-transform duration-150 ease-out-quint',
             open && 'rotate-180',
           )}
         />
@@ -260,9 +255,9 @@ export function Dropdown<T extends string>({
               role="listbox"
               tabIndex={-1}
               onKeyDown={onMenuKeyDown}
-              initial={{ opacity: 0, scale: 0.97, y: dropUp ? 6 : -6 }}
+              initial={{ opacity: 0, scale: 0.98, y: dropUp ? 4 : -4 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.97, y: dropUp ? 4 : -4, transition: T.microOut }}
+              exit={{ opacity: 0, scale: 0.98, transition: T.microOut }}
               transition={T.component}
               style={{
                 left: align === 'end' ? rect.right - width : rect.left,
@@ -273,9 +268,10 @@ export function Dropdown<T extends string>({
                 transformOrigin: dropUp ? 'bottom center' : 'top center',
               }}
               className={cn(
-                'fixed z-[900] overflow-y-auto overscroll-contain rounded-[var(--radius-panel)] p-1.5',
-                'border border-[var(--border-strong)] bg-[var(--surface)] shadow-floating',
-                'glass',
+                // The corner is the option's corner plus the padding around it,
+                // so the two curves stay concentric.
+                'fixed z-[900] overflow-y-auto overscroll-contain rounded-[var(--radius-card)] p-1.5',
+                'border border-[var(--border)] bg-surface shadow-floating dark:border-[var(--border-strong)]',
               )}
               autoFocus
             >
@@ -296,33 +292,29 @@ export function Dropdown<T extends string>({
                     }}
                     onClick={() => commit(option)}
                     className={cn(
-                      'flex cursor-pointer items-center gap-2.5 rounded-lg px-2.5 transition-colors duration-150 ease-out-quint',
-                      IS_MOBILE ? 'min-h-12 py-2.5' : 'py-2',
+                      'flex cursor-pointer items-center gap-2.5 rounded-[8px] px-2.5',
+                      IS_MOBILE ? 'min-h-12 py-2.5' : 'py-1.5',
                       option.disabled && 'cursor-not-allowed opacity-40',
-                      !option.disabled && activeIndex === index && 'bg-surface-hover',
+                      !option.disabled && activeIndex === index && 'bg-fill-hover',
                     )}
                   >
                     {option.icon && <span className="shrink-0 text-fg-muted">{option.icon}</span>}
                     <div className="min-w-0 flex-1">
                       <div
                         className={cn(
-                          'truncate',
+                          'truncate text-fg',
                           IS_MOBILE ? 'text-[15px]' : 'text-[13.5px]',
-                          isSelected ? 'font-semibold text-fg' : 'font-medium text-fg',
+                          isSelected && 'font-medium',
                         )}
                       >
                         {option.label}
                       </div>
                       {option.description && (
-                        <div className="truncate text-[11.5px] text-fg-faint">
-                          {option.description}
-                        </div>
+                        <div className="truncate text-[12px] text-fg-muted">{option.description}</div>
                       )}
                     </div>
                     {option.meta && (
-                      <span className="tabular shrink-0 text-[11.5px] text-fg-faint">
-                        {option.meta}
-                      </span>
+                      <span className="tabular shrink-0 text-[12px] text-fg-muted">{option.meta}</span>
                     )}
                     {isSelected && <Check size={14} className="shrink-0 text-accent" />}
                   </div>

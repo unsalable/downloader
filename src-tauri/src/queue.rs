@@ -106,7 +106,15 @@ impl QueueManager {
     }
 
     pub fn enqueue(self: &Arc<Self>, request: DownloadRequest) -> DownloadTask {
-        let now = util::now_ms();
+        self.enqueue_at(request, util::now_ms())
+    }
+
+    /// Enqueue with the creation time supplied by the caller, so every item of
+    /// one gallery carries the same one. Persisting and emitting between two
+    /// pushes costs more than a millisecond, so letting each call stamp itself
+    /// would spread an album over increasing times and the newest-first list on
+    /// the Downloads screen would read the album backwards.
+    pub fn enqueue_at(self: &Arc<Self>, request: DownloadRequest, created_at: i64) -> DownloadTask {
         let task = DownloadTask {
             id: util::new_id("dl"),
             url: request.url.clone(),
@@ -122,7 +130,7 @@ impl QueueManager {
             format_label: downloader::provisional_label(&request),
             output_path: None,
             error: None,
-            created_at: now,
+            created_at,
             started_at: None,
             completed_at: None,
             attempt: 0,

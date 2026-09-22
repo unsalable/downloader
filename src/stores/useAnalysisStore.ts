@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 
+import { normalizeUrl } from '@/lib/url';
 import * as ipc from '@/services/ipc';
 import type {
   AppErrorInfo,
@@ -31,8 +32,12 @@ interface AnalysisState {
   metadata: MediaMetadata | null;
   error: AppErrorInfo | null;
   options: DownloadOptions;
+  /** A link noticed on the clipboard, offered under the empty field on Home
+   *  rather than acted on. Not part of an analysis, so `reset` leaves it be. */
+  clipboardSuggestion: string | null;
 
   setUrl: (url: string) => void;
+  setClipboardSuggestion: (url: string | null) => void;
   setPlatform: (platform: PlatformId) => void;
   analyze: (url: string, defaults: Partial<DownloadOptions>) => Promise<void>;
   cancel: () => void;
@@ -64,14 +69,24 @@ export const useAnalysisStore = create<AnalysisState>((set, get) => ({
   metadata: null,
   error: null,
   options: DEFAULT_OPTIONS,
+  clipboardSuggestion: null,
 
-  setUrl: (url) => set({ url }),
+  // Anything in the field, typed or put there, answers the suggestion.
+  setUrl: (url) => set(url ? { url, clipboardSuggestion: null } : { url }),
+
+  setClipboardSuggestion: (suggestion) => {
+    // The link already in the field is not news. Without this it would be
+    // offered again the moment its own download was queued and the field cleared.
+    if (suggestion && suggestion === normalizeUrl(get().url)) return;
+    set({ clipboardSuggestion: suggestion });
+  },
   setPlatform: (platform) => set({ platform }),
 
   analyze: async (url, defaults) => {
     const token = ++requestToken;
     set({
       url,
+      clipboardSuggestion: null,
       phase: 'analyzing',
       error: null,
       metadata: null,

@@ -1,28 +1,27 @@
 import { AnimatePresence, motion } from 'motion/react';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import {
-  CheckCircle2,
+  Check,
   CircleAlert,
+  CircleCheck,
+  CircleDashed,
   Copy,
   ExternalLink,
-  Link2Off,
-  LogIn,
-  Puzzle,
   TriangleAlert,
-  Wrench,
+  type LucideIcon,
 } from 'lucide-react';
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useState } from 'react';
 
-import { Badge, type BadgeTone } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
+import { InlineNotice } from '@/components/ui/InlineNotice';
 import { SettingGroup, SettingRow, ToggleRow } from '@/components/ui/SettingRow';
+import { useMomentary } from '@/hooks/useMomentary';
 import { useTranslation } from '@/i18n';
 import type { TranslationKey } from '@/i18n';
 import { cn } from '@/lib/cn';
-import { COLLAPSE, T } from '@/lib/motion';
+import { COLLAPSE } from '@/lib/motion';
 import { IS_MOBILE } from '@/lib/platform';
 import * as ipc from '@/services/ipc';
-import { useToastStore } from '@/stores/useToastStore';
 import type { BridgeStatus, Settings } from '@/types';
 
 /**
@@ -94,52 +93,40 @@ function phaseOf(status: BridgeStatus): LinkPhase {
 }
 
 interface Presentation {
-  icon: ReactNode;
+  icon: LucideIcon;
   iconClass: string;
-  tone: BadgeTone;
-  badge: TranslationKey;
   title: TranslationKey;
   body: TranslationKey;
 }
 
 const PHASES: Record<LinkPhase, Presentation> = {
   broken: {
-    icon: <Wrench size={17} />,
-    iconClass: 'bg-error-soft text-error',
-    tone: 'error',
-    badge: 'settings.linkBadgeBroken',
+    icon: CircleAlert,
+    iconClass: 'text-error',
     title: 'settings.linkBroken',
     body: 'settings.linkBrokenHint',
   },
   waiting: {
-    icon: <Puzzle size={17} />,
-    iconClass: 'bg-accent-soft text-accent',
-    tone: 'neutral',
-    badge: 'settings.linkBadgeWaiting',
+    icon: CircleDashed,
+    iconClass: 'text-fg-muted',
     title: 'settings.linkWaiting',
     body: 'settings.linkWaitingHint',
   },
   signedOut: {
-    icon: <LogIn size={17} />,
-    iconClass: 'bg-warning-soft text-warning',
-    tone: 'warning',
-    badge: 'settings.linkBadgeSignedOut',
+    icon: CircleAlert,
+    iconClass: 'text-warning',
     title: 'settings.linkSignedOut',
     body: 'settings.linkSignedOutHint',
   },
   quiet: {
-    icon: <CircleAlert size={17} />,
-    iconClass: 'bg-warning-soft text-warning',
-    tone: 'warning',
-    badge: 'settings.linkBadgeQuiet',
+    icon: CircleAlert,
+    iconClass: 'text-warning',
     title: 'settings.linkQuiet',
     body: 'settings.linkQuietHint',
   },
   connected: {
-    icon: <CheckCircle2 size={17} />,
-    iconClass: 'bg-success-soft text-success',
-    tone: 'success',
-    badge: 'settings.linkBadgeConnected',
+    icon: CircleCheck,
+    iconClass: 'text-success',
     title: 'settings.linkConnected',
     body: 'settings.linkConnectedHint',
   },
@@ -177,53 +164,62 @@ interface BrowserLinkCardProps {
 
 export function BrowserLinkCard({ settings, update }: BrowserLinkCardProps) {
   const { t, language } = useTranslation();
-  const pushToast = useToastStore((state) => state.push);
   const status = useBridgeStatus(POLL_MS);
   const [working, setWorking] = useState(false);
+  const [problem, setProblem] = useState<TranslationKey | null>(null);
+  const [copied, markCopied] = useMomentary();
 
   // Repair and Disconnect both make the backend emit `bridge://changed`, so the
   // card is refreshed by the same path a push from the browser takes; there is
-  // no second copy of the state here to keep in step.
+  // no second copy of the state here to keep in step. That refresh is also the
+  // confirmation: the state above the buttons changes. Only a failure has to be
+  // put into words, because it changes nothing.
   const repair = async () => {
+    setProblem(null);
     setWorking(true);
     try {
       const next = await ipc.bridgeRepair();
-      pushToast(
-        next.registered
-          ? { tone: 'success', title: t('settings.linkRepaired') }
-          : { tone: 'error', title: t('settings.linkRepairFailed') },
-      );
+      if (!next.registered) setProblem('settings.linkRepairFailed');
     } catch {
-      pushToast({ tone: 'error', title: t('settings.linkRepairFailed') });
+      setProblem('settings.linkRepairFailed');
     } finally {
       setWorking(false);
     }
   };
 
   const disconnect = async () => {
+    setProblem(null);
     setWorking(true);
     try {
       await ipc.bridgeDisconnect();
-      pushToast({ tone: 'success', title: t('settings.linkDisconnected') });
     } catch {
-      pushToast({ tone: 'error', title: t('settings.linkDisconnectFailed') });
+      setProblem('settings.linkDisconnectFailed');
     } finally {
       setWorking(false);
     }
   };
 
   const copyDiagnostics = async () => {
+    setProblem(null);
     try {
       await navigator.clipboard.writeText(await ipc.bridgeDiagnostics());
-      pushToast({ tone: 'success', title: t('settings.linkDiagnosticsCopied') });
+      // Nothing on screen changes when text reaches the clipboard, so the
+      // button itself says that it did.
+      markCopied();
     } catch {
-      pushToast({ tone: 'error', title: t('settings.linkDiagnosticsFailed') });
+      setProblem('settings.linkDiagnosticsFailed');
     }
   };
 
   const phase = status ? phaseOf(status) : null;
   const look = phase ? PHASES[phase] : null;
+  const StateIcon = look?.icon;
+  // Whether a filled button -- Repair, or Get the extension -- heads the actions.
+  const leadAction = phase === 'broken' || (phase === 'waiting' && status?.storeListed === true);
   const browser = status?.browser ?? t('settings.linkBrowserFallback');
+  // The sizes a `SettingRow` sets its two lines in, so the rows of the group agree.
+  const titleSize = IS_MOBILE ? 'text-[15px]' : 'text-[13.5px]';
+  const bodySize = IS_MOBILE ? 'text-[13px]' : 'text-[12.5px]';
 
   // "Chrome is connected" is not an answer when two Chrome windows are open, so
   // a connected link is headed by the profile as well whenever the extension
@@ -234,7 +230,7 @@ export function BrowserLinkCard({ settings, update }: BrowserLinkCardProps) {
   }
 
   return (
-    <SettingGroup title={t('settings.connection')}>
+    <SettingGroup>
       <ToggleRow
         title={t('settings.browserLink')}
         description={t('settings.browserLinkHint')}
@@ -253,117 +249,124 @@ export function BrowserLinkCard({ settings, update }: BrowserLinkCardProps) {
           >
             {/* Nothing at all until the first read answers: an empty frame
                 that fills in a moment later is a flicker, not information. */}
-            {status && look && (
-              <div className="px-4 py-4">
-                <motion.div
-                  key={phase}
-                  initial={{ opacity: 0, y: 4 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={T.component}
-                  className="flex items-start gap-3"
-                >
-                  <span
-                    className={cn(
-                      'mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-lg',
-                      look.iconClass,
-                    )}
-                  >
-                    {look.icon}
-                  </span>
+            {status && look && StateIcon && (
+              <div className={cn('px-4', IS_MOBILE ? 'py-4' : 'py-3.5')}>
+                <div className="flex items-start gap-2">
+                  <StateIcon
+                    size={16}
+                    aria-hidden="true"
+                    className={cn('mt-[2px] shrink-0', look.iconClass)}
+                  />
+                  <span className={cn('min-w-0 text-fg', titleSize)}>{title}</span>
+                </div>
 
-                  <div className="min-w-0 flex-1">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="text-[13.5px] font-medium text-fg">{title}</span>
-                      <Badge tone={look.tone}>{t(look.badge)}</Badge>
+                <p className={cn('mt-1 leading-relaxed text-fg-muted', bodySize)}>
+                  {t(look.body, { browser })}
+                </p>
+
+                {/* Two Chrome windows look identical from here, so a link
+                    the user cannot place is a link they cannot trust. */}
+                {phase === 'connected' && !status.profileLabel && (
+                  <p className={cn('mt-1.5 leading-relaxed text-fg-muted', bodySize)}>
+                    {t('settings.linkNoProfileName')}
+                  </p>
+                )}
+
+                {/* All of these describe a browser that is bound; beside
+                    "no browser connected" they would describe a ghost. */}
+                {status.connected &&
+                  (status.accountHint || status.lastPushAt != null || status.extensionVersion) && (
+                    <div
+                      className={cn('mt-1.5 flex flex-wrap gap-x-3 gap-y-0.5 text-fg-muted', bodySize)}
+                    >
+                      {status.accountHint && (
+                        <span>{t('settings.linkAccount', { account: status.accountHint })}</span>
+                      )}
+                      {status.lastPushAt != null && (
+                        <span>
+                          {t('settings.linkRefreshed', {
+                            when: relativeTime(status.lastPushAt, language),
+                          })}
+                        </span>
+                      )}
                       {status.extensionVersion && (
-                        <Badge tone="outline">{status.extensionVersion}</Badge>
+                        <span className="tabular">
+                          {t('settings.linkExtensionVersion', {
+                            version: status.extensionVersion,
+                          })}
+                        </span>
                       )}
                     </div>
+                  )}
 
-                    <p className="mt-1 text-[12.5px] leading-relaxed text-fg-muted">
-                      {t(look.body, { browser })}
-                    </p>
+                {phase === 'waiting' && !status.storeListed && (
+                  <p className={cn('mt-1.5 leading-relaxed text-fg-muted', bodySize)}>
+                    {t('settings.linkStorePending')}
+                  </p>
+                )}
 
-                    {/* Two Chrome windows look identical from here, so a link
-                        the user cannot place is a link they cannot trust. */}
-                    {phase === 'connected' && !status.profileLabel && (
-                      <p className="mt-1.5 text-[12.5px] leading-relaxed text-fg-faint">
-                        {t('settings.linkNoProfileName')}
-                      </p>
-                    )}
+                {/* A quiet button has no fill to line up, so when one leads the
+                    row it is pulled out by its padding and its label starts
+                    where the text above it does. */}
+                <div className={cn('mt-3 flex flex-wrap items-center gap-2', !leadAction && '-ml-3')}>
+                  {phase === 'broken' && (
+                    <Button
+                      size="sm"
+                      variant="primary"
+                      loading={working}
+                      onClick={() => void repair()}
+                    >
+                      {t('settings.linkRepair')}
+                    </Button>
+                  )}
+                  {phase === 'waiting' && status.storeListed && (
+                    <Button
+                      size="sm"
+                      variant="primary"
+                      iconRight={<ExternalLink size={13} />}
+                      onClick={() =>
+                        void openUrl(
+                          `https://chromewebstore.google.com/detail/${status.extensionId}`,
+                        )
+                      }
+                    >
+                      {t('settings.linkGetExtension')}
+                    </Button>
+                  )}
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    icon={copied ? <Check size={13} /> : <Copy size={13} />}
+                    onClick={() => void copyDiagnostics()}
+                  >
+                    {t('settings.linkCopyDiagnostics')}
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    disabled={working}
+                    onClick={() => void disconnect()}
+                  >
+                    {t('settings.linkDisconnect')}
+                  </Button>
+                  {/* The check is for the eye; this is the same news for a
+                      screen reader. */}
+                  {copied && (
+                    <span role="status" className="sr-only">
+                      {t('settings.linkDiagnosticsCopied')}
+                    </span>
+                  )}
+                </div>
 
-                    {/* Both of these describe a browser that is bound; beside
-                        "no browser connected" they would describe a ghost. */}
-                    {status.connected && status.accountHint && (
-                      <p className="mt-1.5 text-[12.5px] text-fg-muted">
-                        {t('settings.linkAccount', { account: status.accountHint })}
-                      </p>
-                    )}
+                {problem && (
+                  <InlineNotice tone="error" className="mt-2">
+                    {t(problem)}
+                  </InlineNotice>
+                )}
 
-                    {status.connected && status.lastPushAt != null && (
-                      <p className="mt-1 text-[12.5px] text-fg-faint">
-                        {t('settings.linkRefreshed', {
-                          when: relativeTime(status.lastPushAt, language),
-                        })}
-                      </p>
-                    )}
-
-                    {phase === 'waiting' && !status.storeListed && (
-                      <p className="mt-2 text-[12.5px] leading-relaxed text-fg-faint">
-                        {t('settings.linkStorePending')}
-                      </p>
-                    )}
-
-                    <div className="mt-3 flex flex-wrap items-center gap-2">
-                      {phase === 'broken' && (
-                        <Button
-                          size="sm"
-                          variant="primary"
-                          loading={working}
-                          icon={<Wrench size={13} />}
-                          onClick={() => void repair()}
-                        >
-                          {t('settings.linkRepair')}
-                        </Button>
-                      )}
-                      {phase === 'waiting' && status.storeListed && (
-                        <Button
-                          size="sm"
-                          variant="primary"
-                          icon={<ExternalLink size={13} />}
-                          onClick={() =>
-                            void openUrl(
-                              `https://chromewebstore.google.com/detail/${status.extensionId}`,
-                            )
-                          }
-                        >
-                          {t('settings.linkGetExtension')}
-                        </Button>
-                      )}
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        icon={<Copy size={13} />}
-                        onClick={() => void copyDiagnostics()}
-                      >
-                        {t('settings.linkCopyDiagnostics')}
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        disabled={working}
-                        icon={<Link2Off size={13} />}
-                        onClick={() => void disconnect()}
-                      >
-                        {t('settings.linkDisconnect')}
-                      </Button>
-                    </div>
-
-                    <p className="mt-2 text-[11.5px] leading-relaxed text-fg-faint">
-                      {t('settings.linkDiagnosticsHint')}
-                    </p>
-                  </div>
-                </motion.div>
+                <p className={cn('mt-2 leading-relaxed text-fg-muted', bodySize)}>
+                  {t('settings.linkDiagnosticsHint')}
+                </p>
               </div>
             )}
           </motion.div>
@@ -376,7 +379,7 @@ export function BrowserLinkCard({ settings, update }: BrowserLinkCardProps) {
         <SettingRow
           title={
             <span className="flex items-center gap-1.5">
-              <TriangleAlert size={14} className="shrink-0 text-warning" />
+              <TriangleAlert size={14} aria-hidden="true" className="shrink-0 text-warning" />
               {t('settings.linkSecondAccount')}
             </span>
           }

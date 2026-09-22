@@ -2,6 +2,7 @@ import { RotateCcw } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 
 import { IconButton } from '@/components/ui/IconButton';
+import { InlineNotice } from '@/components/ui/InlineNotice';
 import { acceleratorFromEvent, formatAccelerator } from '@/hooks/useHotkeys';
 import { useTranslation } from '@/i18n';
 import { cn } from '@/lib/cn';
@@ -60,38 +61,38 @@ export function HotkeyRecorder({
   }, [recording, findConflict, onChange]);
 
   return (
-    <div className="flex items-center gap-1.5">
-      {conflict && (
-        <span className="text-[11.5px] text-error">
-          {t('settings.hotkeyConflict', { action: conflict })}
-        </span>
-      )}
-
-      <button
-        ref={buttonRef}
-        type="button"
-        onClick={() => {
-          setRecording((value) => !value);
-          setConflict(null);
-        }}
-        onBlur={() => setRecording(false)}
-        className={cn(
-          'pressable h-8 min-w-[132px] rounded-lg border px-3 font-mono text-[12px]',
-          recording
-            ? 'border-[var(--accent)] bg-accent-soft text-accent ring-2 ring-[var(--accent-ring)]/30'
-            : 'border-[var(--border)] bg-surface text-fg-muted hover:border-[var(--border-strong)] hover:text-fg',
+    <div className="flex flex-col items-end gap-1.5">
+      <div className="flex items-center gap-1.5">
+        {value !== defaultValue && (
+          <IconButton
+            icon={<RotateCcw size={14} />}
+            label={t('settings.hotkeyReset')}
+            size="sm"
+            onClick={() => onChange(defaultValue)}
+          />
         )}
-      >
-        {recording ? t('settings.hotkeyRecord') : formatAccelerator(value)}
-      </button>
 
-      {value !== defaultValue && (
-        <IconButton
-          icon={<RotateCcw size={13} />}
-          label={t('settings.hotkeyReset')}
-          size="sm"
-          onClick={() => onChange(defaultValue)}
-        />
+        <button
+          ref={buttonRef}
+          type="button"
+          onClick={() => {
+            setRecording((value) => !value);
+            setConflict(null);
+          }}
+          onBlur={() => setRecording(false)}
+          className={cn(
+            'pressable tabular h-8 min-w-[132px] rounded-[8px] px-3 text-[12.5px] font-medium',
+            recording
+              ? 'bg-accent-soft text-accent ring-2 ring-inset ring-[var(--accent)]'
+              : 'bg-fill text-fg hover:bg-fill-hover',
+          )}
+        >
+          {recording ? t('settings.hotkeyRecord') : formatAccelerator(value)}
+        </button>
+      </div>
+
+      {conflict && (
+        <InlineNotice tone="error">{t('settings.hotkeyConflict', { action: conflict })}</InlineNotice>
       )}
     </div>
   );

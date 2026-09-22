@@ -2,6 +2,6 @@
 <resources>
     <!-- The app opens in its dark theme; the window matches it so the launch
          does not flash white before the page has painted. -->
-    <color name="app_background">#FF0C0B09</color>
-    <color name="app_accent">#FFFF7A3D</color>
+    <color name="app_background">#FF1C1C1E</color>
+    <color name="app_accent">#FFFF8A4C</color>
 </resources>

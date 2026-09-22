@@ -42,10 +42,10 @@ const ORIGIN: Record<Side, string> = {
 
 /** A short slide toward the trigger, so the box reads as coming from it. */
 const OFFSET: Record<Side, { x: number; y: number }> = {
-  top: { x: 0, y: 4 },
-  bottom: { x: 0, y: -4 },
-  left: { x: 4, y: 0 },
-  right: { x: -4, y: 0 },
+  top: { x: 0, y: 2 },
+  bottom: { x: 0, y: -2 },
+  left: { x: 2, y: 0 },
+  right: { x: -2, y: 0 },
 };
 
 /** Kept clear of the window edge. */
@@ -192,15 +192,15 @@ export function Tooltip({ label, side = 'top', delayMs = 380, children }: Toolti
               <motion.div
                 id={id}
                 role="tooltip"
-                initial={{ opacity: 0, scale: 0.96, ...OFFSET[coords.side] }}
+                initial={{ opacity: 0, scale: 0.98, ...OFFSET[coords.side] }}
                 animate={{ opacity: 1, scale: 1, x: 0, y: 0 }}
-                exit={{ opacity: 0, scale: 0.96, transition: T.microOut }}
+                exit={{ opacity: 0, scale: 0.98, transition: T.microOut }}
                 transition={T.micro}
                 style={{ transformOrigin: ORIGIN[coords.side] }}
                 className={cn(
-                  'max-w-56 rounded-lg px-2.5 py-1.5',
-                  'bg-[var(--surface-active)] text-[12px] font-medium text-fg',
-                  'border border-[var(--border-strong)] shadow-floating',
+                  'max-w-56 rounded-[8px] px-2.5 py-1.5 text-[12px] font-medium text-fg',
+                  'border border-[var(--border)] bg-surface shadow-raised',
+                  'dark:border-[var(--border-strong)] dark:bg-surface-active',
                 )}
               >
                 {label}

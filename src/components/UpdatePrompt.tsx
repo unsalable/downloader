@@ -1,4 +1,4 @@
-import { Download, RotateCw, Sparkles } from 'lucide-react';
+import { Download, RotateCw } from 'lucide-react';
 import { useEffect } from 'react';
 
 import { Button } from '@/components/ui/Button';
@@ -72,12 +72,7 @@ export function UpdatePrompt() {
       // The download cannot be abandoned half way from here, so the prompt
       // stays until it has handed over to the installer.
       onClose={busy ? () => {} : postpone}
-      title={
-        <span className="flex items-center gap-2">
-          <Sparkles size={17} className="shrink-0 text-accent" />
-          {t('update.title')}
-        </span>
-      }
+      title={t('update.title')}
       description={body}
       closeLabel={t('common.close')}
       footer={
@@ -99,8 +94,8 @@ export function UpdatePrompt() {
     >
       <div className="pb-3">
         {busy ? (
-          <div className="rounded-[var(--radius-card)] border border-[var(--border)] bg-surface-sunken p-3">
-            <div className="metric mb-2 flex items-center justify-between text-[12px] text-fg-muted">
+          <div className="rounded-[var(--radius-control)] bg-surface-sunken p-3">
+            <div className="tabular mb-2 flex items-center justify-between text-[12.5px] text-fg-muted">
               <span>{fetched ? t('update.preparing') : t('update.downloading')}</span>
               <span>
                 {formatBytes(received)} / {formatBytes(total)}
@@ -109,7 +104,7 @@ export function UpdatePrompt() {
             <Progress value={fetched ? null : percent} label={t('update.downloading')} />
           </div>
         ) : (
-          <div className="metric flex flex-wrap gap-x-4 gap-y-1 text-[12px] text-fg-faint">
+          <div className="tabular flex flex-wrap gap-x-4 gap-y-1 text-[12.5px] text-fg-muted">
             <span>
               {t('update.size')}: {formatBytes(update.assetSize)}
             </span>

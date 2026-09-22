@@ -1,4 +1,4 @@
-import type { CSSProperties } from 'react';
+import { File, Globe, Link, type LucideIcon } from 'lucide-react';
 
 import { cn } from '@/lib/cn';
 import { platformPresentation } from '@/lib/platforms';
@@ -10,57 +10,65 @@ interface PlatformBadgeProps {
   className?: string;
 }
 
+/** Tile, corner and logo, in pixels. The corner is about 24% of the tile, which
+ *  is the proportion of a home-screen icon; the logo takes about 58% of it. */
 const SIZES = {
-  sm: 'size-5 text-[9px] rounded-[5px]',
-  md: 'size-7 text-[10.5px] rounded-[7px]',
-  lg: 'size-9 text-[12px] rounded-[9px]',
+  sm: { tile: 'size-[22px] rounded-[5px]', glyph: 13 },
+  md: { tile: 'size-7 rounded-[7px]', glyph: 16 },
+  lg: { tile: 'size-9 rounded-[9px]', glyph: 21 },
 } as const;
 
-/** The logo takes the room the two-letter monogram had inside the tile. */
-const ICON_SIZES = {
-  sm: 'size-3',
-  md: 'size-4',
-  lg: 'size-5',
-} as const;
+/** What stands in for a logo where there is no platform to have one. */
+const NEUTRAL_ICON: Partial<Record<PlatformId, LucideIcon>> = {
+  direct: File,
+  generic: Globe,
+  unknown: Link,
+};
 
 /**
- * A tinted tile carrying the platform's logo, in the platform's colour. Links
- * that have no platform behind them -- a direct file, a plain web page -- keep
- * a monogram in the same tile, so every source still reads at a glance and
- * every badge has the same footprint.
+ * The platform as an app icon: a rounded square in the brand's own colour with
+ * the logo in white on it, at full strength in both themes. A link with no
+ * platform behind it -- a direct file, a plain web page -- gets a neutral tile
+ * of the same footprint, so a column of badges stays aligned.
  */
 export function PlatformBadge({ platform, size = 'md', className }: PlatformBadgeProps) {
-  const { color, lightColor, icon, monogram, label } = platformPresentation(platform);
-
-  // The light theme may need a deeper shade than the brand colour to stay
-  // legible; the dark theme uses the brand colour as it is.
-  const style = {
-    '--badge-light': lightColor ?? color,
-    '--badge-dark': color,
-    color: 'var(--badge)',
-    backgroundColor: 'color-mix(in srgb, var(--badge) 16%, transparent)',
-    boxShadow: 'inset 0 0 0 1px color-mix(in srgb, var(--badge) 28%, transparent)',
-  } as CSSProperties;
+  const { tile, glyph, ring, icon, label } = platformPresentation(platform);
+  const { tile: tileClass, glyph: glyphSize } = SIZES[size];
+  const Neutral = NEUTRAL_ICON[platform] ?? Link;
 
   return (
     <span
       title={label}
       aria-label={label}
       role="img"
-      style={style}
+      style={
+        tile
+          ? {
+              background: tile,
+              color: glyph ?? 'white',
+              boxShadow: ring ? 'inset 0 0 0 1px rgb(255 255 255 / 0.14)' : undefined,
+            }
+          : undefined
+      }
       className={cn(
-        'inline-flex shrink-0 items-center justify-center font-bold uppercase tracking-tight',
-        '[--badge:var(--badge-light)] dark:[--badge:var(--badge-dark)]',
-        SIZES[size],
+        'inline-flex shrink-0 items-center justify-center',
+        !tile && 'bg-surface-active text-fg-muted',
+        tileClass,
         className,
       )}
     >
-      {icon ? (
-        <svg viewBox="0 0 24 24" aria-hidden="true" className={cn('fill-current', ICON_SIZES[size])}>
+      {tile && icon ? (
+        <svg
+          viewBox="0 0 24 24"
+          width={glyphSize}
+          height={glyphSize}
+          aria-hidden="true"
+          className="block fill-current"
+        >
           <path d={icon} />
         </svg>
       ) : (
-        monogram
+        <Neutral size={glyphSize} strokeWidth={2} aria-hidden="true" />
       )}
     </span>
   );

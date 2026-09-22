@@ -15,110 +15,123 @@
 /* ---------------------------------------------------------------------------
    Semantic tokens.
 
-   The palette is deliberately warm and slightly off-neutral: paper and ink in
-   the light theme, graphite and bone in the dark one, with a single ember
-   accent doing all of the signalling. Nothing else is coloured -- no second
-   brand hue, no gradients standing in for hierarchy.
+   A system-app palette: neutral greys with no tint of their own, and one ember
+   accent that is spent sparingly -- the primary button, a selected icon, a
+   switch that is on. Surfaces are told apart by their fill, not by outlines,
+   so the borders here are hairlines for the few places that still need one.
 
    Only these names are used by components; there is no raw hex in the
    component layer.
+
+   Every text colour below was measured against the fills it is set on (WCAG
+   relative luminance), not judged by eye. The ratios are in the comments so a
+   later change can be checked the same way.
    --------------------------------------------------------------------------- */
 :root {
-  --bg: #f7f4ee;
-  --bg-deep: #efeae0;
-  --surface: #fffdf9;
-  --surface-hover: #f3efe6;
-  --surface-active: #e9e3d7;
-  --surface-sunken: #f2ede4;
+  --bg: #f5f5f7;
+  --bg-deep: #ececee;
+  --surface: #ffffff;
+  --surface-hover: #f0f0f2;
+  --surface-active: #e6e6e9;
+  --surface-sunken: #ededf0;
 
-  --border: rgb(41 33 25 / 0.13);
-  --border-strong: rgb(41 33 25 / 0.22);
+  /* Control fills. Translucent, so one value works on whatever a control sits
+     on -- page, card or sidebar -- where an opaque grey tuned for one of them
+     vanishes on the next. `--fill` is a field, a quiet button, or the hover of
+     something that has no fill at rest; the other two are its hover and its
+     pressed or selected state. */
+  --fill: rgb(0 0 0 / 0.05);
+  --fill-hover: rgb(0 0 0 / 0.08);
+  --fill-active: rgb(0 0 0 / 0.11);
 
-  --text-primary: #1b1713;
-  --text-secondary: #5d554a;
-  /* Measured, not guessed: the tertiary tone carries 11px metadata and a few
-     small controls, so it has to clear 4.5:1 against the surface it sits on
-     like any other body text. The old value came in at 3.7:1. */
-  --text-tertiary: #746b5b;
+  --border: rgb(0 0 0 / 0.08);
+  --border-strong: rgb(0 0 0 / 0.16);
+  /* The edge of a card in the page flow. A white card on a near-white page
+     needs the hairline to read as a card at all; a dark one is told apart by
+     its fill alone, so there the edge is transparent. */
+  --card-edge: var(--border);
 
-  /* A shade deeper than the mark it comes from, for the same reason: the
-     accent is a text colour here -- "Open file", "Change", "Install now" --
-     and at its brighter value it measured 4.46:1 on paper, just short. */
-  --accent: #bd4a0c;
-  --accent-hover: #9c3a06;
-  --accent-fg: #fffaf5;
-  --accent-soft: rgb(189 74 12 / 0.1);
-  --accent-ring: rgb(189 74 12 / 0.3);
+  --text-primary: #1d1d1f;
+  /* 5.50:1 on --bg, 5.99 on --surface, 5.12 on --surface-sunken. The sidebar's
+     labels are this colour on the sunken fill, which is why it is a shade
+     deeper than the #6e6e73 it started as (4.34 there). */
+  --text-secondary: #636366;
+  /* 4.94:1 on --bg, 5.38 on --surface, 4.60 on --surface-sunken, 4.73 on a
+     hovered row. Not for text on a `--fill`, where it drops to 4.4 and under;
+     the secondary colour is the quietest that holds there. */
+  --text-tertiary: #6a6a6f;
 
-  --success: #10794c;
-  --success-soft: rgb(16 121 76 / 0.12);
-  --warning: #97600a;
-  --warning-soft: rgb(151 96 10 / 0.13);
+  /* The accent is a text colour as well as a fill -- "Open file", "Change" --
+     so it has to clear 4.5:1 on the page, not only on white: 5.38 on --bg,
+     5.86 on --surface, and on its own soft fill 4.66 over the page and 5.05
+     over a card. White on it is 5.86. */
+  --accent: #ac440b;
+  --accent-hover: #933a08;
+  --accent-fg: #ffffff;
+  --accent-soft: rgb(172 68 11 / 0.1);
+
+  /* Each is at least 4.7:1 on --bg and on its own soft fill over --surface. */
+  --success: #0e7046;
+  --success-soft: rgb(14 112 70 / 0.12);
+  --warning: #8a5707;
+  --warning-soft: rgb(138 87 7 / 0.12);
   --error: #b4271c;
   --error-soft: rgb(180 39 28 / 0.1);
 
-  --shadow-sm: 0 1px 2px rgb(41 33 25 / 0.07);
-  --shadow-md: 0 3px 10px -3px rgb(41 33 25 / 0.12), 0 1px 3px -1px rgb(41 33 25 / 0.07);
-  --shadow-lg: 0 20px 44px -18px rgb(41 33 25 / 0.28), 0 4px 12px -6px rgb(41 33 25 / 0.12);
+  /* Shadows belong to things that float over the page -- a menu, a dialog, a
+     tooltip -- and to nothing in the page flow. Wide and faint, so the edge of
+     the object is what is seen and not the shadow under it. */
+  --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.08);
+  --shadow-md: 0 4px 16px -4px rgb(0 0 0 / 0.1);
+  --shadow-lg: 0 24px 60px -12px rgb(0 0 0 / 0.18), 0 2px 8px rgb(0 0 0 / 0.06);
 
-  --glass: rgb(255 253 249 / 0.78);
-  --scrim: rgb(27 23 19 / 0.34);
-
-  /* Aurora bands.
-     One family, and it is the accent's: ember, the brick it cools to, and the
-     gold it heats to. An earlier set reached for magenta and teal as its
-     second and third stops, which is the whole colour wheel rather than a
-     family -- on screen it read as a rainbow wash behind the headline, which
-     is the one thing the rest of this palette is arranged to avoid. */
-  --aurora-1: #c9500f;
-  --aurora-2: #e0761f;
-  --aurora-3: #f2a94a;
-  --aurora-opacity: 0.2;
+  --scrim: rgb(0 0 0 / 0.28);
 }
 
 .dark {
-  --bg: #0c0b09;
-  --bg-deep: #070605;
-  --surface: #15130f;
-  --surface-hover: #1c1915;
-  --surface-active: #262119;
-  --surface-sunken: #100e0b;
+  --bg: #1c1c1e;
+  --bg-deep: #161618;
+  --surface: #2c2c2e;
+  --surface-hover: #343437;
+  --surface-active: #3a3a3d;
+  --surface-sunken: #232325;
 
-  --border: rgb(255 244 228 / 0.09);
-  --border-strong: rgb(255 244 228 / 0.18);
+  --fill: rgb(255 255 255 / 0.08);
+  --fill-hover: rgb(255 255 255 / 0.12);
+  --fill-active: rgb(255 255 255 / 0.16);
 
-  --text-primary: #f4efe5;
-  --text-secondary: #a69c8c;
-  /* 3.3:1 before, which is under the bar for the 11px readouts it sets. */
-  --text-tertiary: #8b8173;
+  --border: rgb(255 255 255 / 0.08);
+  --border-strong: rgb(255 255 255 / 0.16);
+  --card-edge: transparent;
 
-  --accent: #ff7a3d;
-  --accent-hover: #ff9059;
-  /* Dark ink on the bright accent reads far better than white does. */
-  --accent-fg: #1a0c04;
-  --accent-soft: rgb(255 122 61 / 0.14);
-  --accent-ring: rgb(255 122 61 / 0.4);
+  --text-primary: #f5f5f7;
+  /* 8.06:1 on --bg, 6.60 on --surface, 5.37 on --surface-active, and 4.51 on
+     the hover fill over a card, which is the lightest thing it is set on. */
+  --text-secondary: #b2b2b7;
+  /* 6.30:1 on --bg, 5.16 on --surface, 4.60 on a hovered row. #8a8a8f measured
+     4.06 on --surface. As in the light theme, not for text on a `--fill`. */
+  --text-tertiary: #9d9da2;
+
+  --accent: #ff8a4c;
+  --accent-hover: #ff9d69;
+  /* Dark ink on the bright accent reads far better than white does: 8.05:1. */
+  --accent-fg: #1d0e05;
+  --accent-soft: rgb(255 138 76 / 0.14);
 
   --success: #58cd8e;
   --success-soft: rgb(88 205 142 / 0.14);
   --warning: #efc059;
   --warning-soft: rgb(239 192 89 / 0.14);
-  --error: #ff6f5e;
-  --error-soft: rgb(255 111 94 / 0.14);
+  /* 5.90:1 on --surface and 4.64 on its own soft fill there; the deeper
+     #ff6f5e it replaces came in at 4.15 on the fill. */
+  --error: #ff857a;
+  --error-soft: rgb(255 133 122 / 0.14);
 
-  --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.45);
-  --shadow-md: 0 6px 18px -8px rgb(0 0 0 / 0.6), 0 2px 5px -2px rgb(0 0 0 / 0.45);
-  --shadow-lg: 0 26px 60px -20px rgb(0 0 0 / 0.75), 0 8px 20px -12px rgb(0 0 0 / 0.5);
+  --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.3);
+  --shadow-md: 0 6px 20px -6px rgb(0 0 0 / 0.4);
+  --shadow-lg: 0 24px 60px -12px rgb(0 0 0 / 0.55), 0 2px 8px rgb(0 0 0 / 0.3);
 
-  --glass: rgb(21 19 15 / 0.74);
-  --scrim: rgb(0 0 0 / 0.6);
-
-  --aurora-1: #ff7a3d;
-  --aurora-2: #b4410f;
-  --aurora-3: #ffb066;
-  /* Bright colour on a near-black ground carries much further than the same
-     value does on paper, so the dark theme takes less of it, not more. */
-  --aurora-opacity: 0.3;
+  --scrim: rgb(0 0 0 / 0.5);
 }
 
 /* Map the semantic tokens onto Tailwind's utility namespace. `inline` keeps the
@@ -132,8 +145,13 @@
   --color-surface-active: var(--surface-active);
   --color-surface-sunken: var(--surface-sunken);
 
+  --color-fill: var(--fill);
+  --color-fill-hover: var(--fill-hover);
+  --color-fill-active: var(--fill-active);
+
   --color-border-subtle: var(--border);
   --color-border-strong: var(--border-strong);
+  --color-card-edge: var(--card-edge);
 
   --color-fg: var(--text-primary);
   --color-fg-muted: var(--text-secondary);
@@ -151,17 +169,21 @@
   --color-error: var(--error);
   --color-error-soft: var(--error-soft);
 
-  --color-glass: var(--glass);
   --color-scrim: var(--scrim);
 
   --font-sans: "InterVariable", "Inter", -apple-system, "Segoe UI Variable Text",
     "Segoe UI", system-ui, sans-serif;
+  /* Only for text the user may have to copy character by character -- a raw
+     error, a path. Figures are set in the sans face (see `.tabular`). */
   --font-mono: "Cascadia Code", "SF Mono", ui-monospace, "Consolas", monospace;
 
-  /* Squarer than the default rounded-card look: the app is an instrument, and
-     the corners say so. */
-  --radius-card: 8px;
-  --radius-panel: 12px;
+  /* Four radii, by what the thing is: a control (button, field, menu item), a
+     thumbnail, a card or grouped list in the page, and a panel that floats
+     over it. Soft throughout; nothing in the app has a square corner. */
+  --radius-control: 10px;
+  --radius-thumb: 8px;
+  --radius-card: 14px;
+  --radius-panel: 18px;
 
   --shadow-soft: var(--shadow-sm);
   --shadow-raised: var(--shadow-md);
@@ -173,8 +195,6 @@
      curve, so the accelerating exit and the symmetric move that motion.ts also
      defines have nowhere to apply on this side. */
   --ease-out-quint: cubic-bezier(0.22, 1, 0.36, 1);
-
-  --animate-aurora: ud-aurora 34s linear infinite;
 }
 
 /* The micro tier, as milliseconds, for the press utilities below. The other two
@@ -203,7 +223,6 @@
     font-family: var(--font-sans);
     font-size: 14px;
     line-height: 1.5;
-    font-feature-settings: "cv05" 1, "cv09" 1, "ss03" 1;
     -webkit-font-smoothing: antialiased;
     text-rendering: optimizeLegibility;
     /* A desktop shell should not rubber-band or text-select like a document. */
@@ -237,7 +256,7 @@
   :focus-visible {
     outline: 2px solid var(--accent);
     outline-offset: 2px;
-    border-radius: 6px;
+    border-radius: 8px;
   }
 
   ::-webkit-scrollbar {
@@ -264,54 +283,45 @@
 }
 
 @layer utilities {
-  /* Numeric readouts (speed, ETA, size) must not jitter as digits change. */
+  /* Everything the app measures -- bytes, rates, timings, percentages -- in
+     the same face and size as the text around it; only the figures are made
+     equal in width, so a readout does not jitter as its digits change. */
   .tabular {
     font-variant-numeric: tabular-nums;
-  }
-
-  /* Everything the app measures -- bytes, rates, timings, percentages -- is set
-     in the mono face. It is the one typographic decision that separates a
-     transfer readout from body copy, and it makes a column of figures line up
-     without any per-component width fiddling. */
-  .metric {
-    font-family: var(--font-mono);
-    font-variant-numeric: tabular-nums;
-    font-size: 0.92em;
-    letter-spacing: -0.01em;
-  }
-
-  /* Section labels and status chips: small, spaced, upper case. */
-  .eyebrow {
-    text-transform: uppercase;
-    letter-spacing: 0.09em;
-    font-size: 10.5px;
-    font-weight: 600;
-  }
-
-  .glass {
-    background: var(--glass);
-    backdrop-filter: blur(20px) saturate(160%);
-    -webkit-backdrop-filter: blur(20px) saturate(160%);
-  }
-
-  /* Hairline that reads as a lit top edge on raised surfaces. */
-  .edge-light {
-    box-shadow: inset 0 1px 0 0 rgb(255 255 255 / 0.06);
-  }
-  :root:not(.dark) .edge-light {
-    box-shadow: inset 0 1px 0 0 rgb(255 255 255 / 0.9);
   }
 
   .no-drag {
     -webkit-user-drag: none;
   }
 
+  /* ---- grouped list ------------------------------------------------------
+
+     The hairline between the rows of a `ListGroup`, starting `--list-inset`
+     in from the left so it lines up with the rows' text rather than running
+     edge to edge. It is painted as the row's background image: that needs no
+     positioning on the row and no extra element, and a hover fill, which only
+     sets the background colour, shows through beneath it. */
+  .list-group > * + * {
+    background-image: linear-gradient(var(--border), var(--border));
+    background-size: calc(100% - var(--list-inset, 16px)) 1px;
+    background-position: right top;
+    background-repeat: no-repeat;
+  }
+
+  /* The group clips its rows to its rounded corners, which would clip a focus
+     ring drawn outside a row as well, so inside one the ring is drawn inward. */
+  .list-group :focus-visible {
+    outline-offset: -2px;
+  }
+
   /* ---- press feedback ----------------------------------------------------
 
      Every control in the app gives way under the pointer by roughly the same
      number of pixels, not by the same percentage: a ratio that reads as a firm
-     press on a wide button is a cartoon squash on a 32px square, which is why
-     these were drifting apart before they were named.
+     press on a wide button is a cartoon squash on a 30px square, which is why
+     these were drifting apart before they were named. Both are slight -- the
+     change of fill is the feedback, and the give only keeps it from feeling
+     painted on.
 
      `pressable` is for anything with a text label, `pressable-sm` for square
      icon targets. Both are inert under reduced motion, where the global rule
@@ -324,10 +334,10 @@
     transition-timing-function: var(--ease-out-quint);
   }
   .pressable:active:not(:disabled) {
-    transform: scale(0.97);
+    transform: scale(0.98);
   }
   .pressable-sm:active:not(:disabled) {
-    transform: scale(0.92);
+    transform: scale(0.95);
   }
 
   /* The focus ring arrives instantly.
@@ -363,30 +373,11 @@
 }
 
 /* ---------------------------------------------------------------------------
-   Keyframes. Decorative, unattended motion lives in CSS so it stays on the
+   Keyframes. The only unattended motion in the app is the kind that says
+   something is still happening -- a spinner, an indeterminate bar, a
+   placeholder waiting for its content. It lives in CSS so it stays on the
    compositor instead of waking React on every frame.
    --------------------------------------------------------------------------- */
-@keyframes ud-shimmer {
-  0% {
-    background-position: -180% 0;
-  }
-  100% {
-    background-position: 180% 0;
-  }
-}
-
-/* The aurora: two offset repeating gradients, one fixed to the viewport, drawn
-   over each other and translated forever. It is a background-position
-   animation, so the compositor owns it and React never sees a frame. */
-@keyframes ud-aurora {
-  from {
-    background-position: 50% 50%, 50% 50%;
-  }
-  to {
-    background-position: 350% 50%, 350% 50%;
-  }
-}
-
 @keyframes ud-sweep {
   0% {
     transform: translateX(-100%);
@@ -402,31 +393,22 @@
   }
 }
 
-/* The ring that leaves the aperture in the idle-queue illustration. Two copies
-   run half a cycle apart, so one is always on its way out. */
-@keyframes ud-pulse-ring {
-  0% {
-    transform: scale(0.72);
-    opacity: 0;
-  }
-  22% {
-    opacity: 0.5;
-  }
+@keyframes ud-pulse {
+  0%,
   100% {
-    transform: scale(1.65);
-    opacity: 0;
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
   }
 }
 
+/* A fade rather than a travelling shimmer: a background-position animation
+   repaints every frame, while opacity stays on the compositor, and a quiet
+   pulse says "loading" without sliding a highlight across the page. */
 .skeleton {
-  background-image: linear-gradient(
-    90deg,
-    var(--surface-hover) 0%,
-    var(--surface-active) 40%,
-    var(--surface-hover) 80%
-  );
-  background-size: 220% 100%;
-  animation: ud-shimmer 1.6s ease-in-out infinite;
+  background-color: var(--surface-active);
+  animation: ud-pulse 1.4s ease-in-out infinite;
 }
 
 /* Respect "reduce motion" -- the OS setting, and the app's own toggle, which
@@ -455,11 +437,10 @@
   scroll-behavior: auto !important;
 }
 
-/* A phone. Frosted glass re-blurs whatever moves beneath it on every frame, and
-   on a 120 Hz panel that is a constant GPU load for an effect a small screen
-   barely shows, so panels keep a solid fill instead. The shimmer is a
-   background-position animation, which repaints every frame; a fade in
-   opacity says the same thing and stays on the compositor. */
+/* A phone. A backdrop blur re-blurs whatever moves beneath it on every frame,
+   and on a 120 Hz panel that is a constant GPU load for an effect a small
+   screen barely shows, so anything that asks for one keeps its solid fill
+   instead. */
 :root[data-mobile="true"] {
   -webkit-tap-highlight-color: transparent;
 }
@@ -476,29 +457,9 @@
   display: none;
 }
 
-:root[data-mobile="true"] .glass {
-  background: var(--surface);
-}
-
-:root[data-mobile="true"] .skeleton {
-  background-image: none;
-  background-color: var(--surface-active);
-  animation: ud-pulse 1.4s ease-in-out infinite;
-}
-
-@keyframes ud-pulse {
-  0%,
-  100% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0.5;
-  }
-}
-
-/* Low resource mode: frosted-glass panels re-blur everything behind them on
-   every frame that changes, which is the most expensive effect in the app. The
-   surfaces keep their tinted fill, so nothing becomes unreadable. */
+/* Low resource mode: a backdrop blur re-blurs everything behind it on every
+   frame that changes, which is the most expensive effect a page can ask for.
+   The surfaces keep their fill, so nothing becomes unreadable. */
 :root[data-low-resource="true"] * {
   backdrop-filter: none !important;
 }

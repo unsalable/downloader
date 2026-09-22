@@ -3,18 +3,9 @@ import { cn } from '@/lib/cn';
 interface ProgressProps {
   /** 0..100. Pass null for an indeterminate bar. */
   value: number | null;
-  tone?: 'accent' | 'success' | 'error' | 'muted';
-  size?: 'sm' | 'md';
   className?: string;
   label?: string;
 }
-
-const TONES = {
-  accent: 'bg-[var(--accent)]',
-  success: 'bg-[var(--success)]',
-  error: 'bg-[var(--error)]',
-  muted: 'bg-[var(--text-tertiary)]',
-} as const;
 
 /**
  * Determinate fill is animated with a CSS transition rather than a spring: the
@@ -22,7 +13,7 @@ const TONES = {
  * between those samples is what makes the bar look continuous. A spring would
  * overshoot backwards whenever a tick arrived slightly late.
  */
-export function Progress({ value, tone = 'accent', size = 'md', className, label }: ProgressProps) {
+export function Progress({ value, className, label }: ProgressProps) {
   const indeterminate = value == null;
 
   return (
@@ -32,17 +23,13 @@ export function Progress({ value, tone = 'accent', size = 'md', className, label
       aria-valuemin={0}
       aria-valuemax={100}
       aria-valuenow={indeterminate ? undefined : Math.round(value)}
-      className={cn(
-        'relative w-full overflow-hidden rounded-[2px] bg-[var(--surface-active)]',
-        size === 'sm' ? 'h-1' : 'h-[5px]',
-        className,
-      )}
+      className={cn('relative h-[3px] w-full overflow-hidden rounded-full bg-fill-hover', className)}
     >
       {indeterminate ? (
         <div
           className={cn(
-            'motion-essential absolute inset-y-0 w-2/5 rounded-[2px] [animation:ud-sweep_1.25s_ease-in-out_infinite]',
-            TONES[tone],
+            'motion-essential absolute inset-y-0 w-2/5 rounded-full bg-accent',
+            '[animation:ud-sweep_1.25s_ease-in-out_infinite]',
           )}
         />
       ) : (
@@ -55,9 +42,8 @@ export function Progress({ value, tone = 'accent', size = 'md', className, label
             // indeterminate bar is: the interpolation is not decoration, it is
             // how a sample taken three times a second is drawn as a rate. Frozen,
             // the bar steps, and a stepping bar is harder to read, not calmer.
-            'motion-essential h-full w-full origin-left rounded-[2px]',
-            'transition-transform duration-300 ease-linear',
-            TONES[tone],
+            'motion-essential h-full w-full origin-left',
+            'bg-accent transition-transform duration-300 ease-linear',
           )}
           style={{ transform: `scaleX(${Math.min(100, Math.max(0, value)) / 100})` }}
         />

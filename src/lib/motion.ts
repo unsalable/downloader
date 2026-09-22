@@ -15,9 +15,14 @@ import type { Transition, Variants } from 'motion/react';
  *   micro      a control answering the pointer -- hover, press, a chevron
  *              flipping. Must feel like part of the click, not a reply to it.
  *   component  a thing appearing, leaving or changing inside the page: a
- *              queue row, a dropdown, a disclosure, a toast.
+ *              queue row, a dropdown, a disclosure.
  *   spatial    the page itself rearranging: a modal, a screen change, Home
  *              collapsing its headline away.
+ *
+ * Motion here only ever answers something the user did. Nothing plays on its
+ * own when a screen opens -- no staggered arrivals, no first-impression
+ * flourish -- and nothing loops except the spinners and bars that say work is
+ * still going on (those live in globals.css).
  *
  * Exits are shorter than entrances throughout. What arrives deserves to be
  * watched; what leaves is already decided, and lingering over it is what makes
@@ -49,8 +54,6 @@ const DURATION = {
   component: 0.26,
   /** A whole region rearranging. */
   spatial: 0.34,
-  /** A first impression that plays once -- onboarding, an empty state. */
-  entrance: 0.45,
 } as const;
 
 // -- transitions ------------------------------------------------------------
@@ -68,8 +71,6 @@ export const T = {
 
   spatial: { duration: DURATION.spatial, ease: EASE.out },
   spatialOut: { duration: DURATION.spatial * 0.55, ease: EASE.in },
-
-  entrance: { duration: DURATION.entrance, ease: EASE.out },
 } as const satisfies Record<string, Transition>;
 
 /**
@@ -81,8 +82,8 @@ export const T = {
  * same motion.
  */
 export const SPRING = {
-  /** Small controls that should feel clicky. A touch of overshoot. */
-  snap: { type: 'spring', stiffness: 620, damping: 34, mass: 0.6 },
+  /** Small controls that should feel clicky: quick, and at rest without a wobble. */
+  snap: { type: 'spring', stiffness: 620, damping: 40, mass: 0.6 },
   /** Shared-element indicators sliding between positions. No overshoot to speak of. */
   glide: { type: 'spring', stiffness: 480, damping: 40, mass: 0.75 },
   /** Something with size arriving and coming to rest. */
@@ -158,12 +159,3 @@ export const DIALOG: Variants = {
   animate: { opacity: 1, scale: 1, y: 0, transition: T.spatial },
   exit: { opacity: 0, scale: 0.98, y: 6, transition: T.spatialOut },
 };
-
-/**
- * Delay for the nth item of a staggered group. Capped so a long list does not
- * keep the last row waiting: past the cap everything arrives together, which
- * is better than a wave that outlasts the user's patience.
- */
-export function stagger(index: number, step = 0.05, cap = 0.3): number {
-  return Math.min(index * step, cap);
-}

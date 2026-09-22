@@ -1,52 +1,28 @@
-import { motion } from 'motion/react';
-
 import { useTranslation } from '@/i18n';
 import { cn } from '@/lib/cn';
-import { T } from '@/lib/motion';
 import { IS_MOBILE } from '@/lib/platform';
 
 /**
- * The Home headline. Entrance is a short, staggered rise -- it plays once on
- * mount and is then inert, so nothing keeps animating behind the input.
+ * The Home headline: what to do, and one sentence about what it is for. It
+ * stands in for the page title, which is why it is the desktop's `<h1>` -- a
+ * phone already has one in its top bar. It has no entrance of its own; the
+ * screen change it arrives with is the only fade.
  */
 export function Hero() {
   const { t } = useTranslation();
+  const Heading = IS_MOBILE ? 'h2' : 'h1';
 
   return (
     <div className="text-center">
-      <motion.h2
-        initial={{ opacity: 0, y: 14 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={T.entrance}
+      <Heading
         className={cn(
-          'font-semibold leading-[1.04] tracking-[-0.045em] text-fg',
-          IS_MOBILE ? 'text-[36px]' : 'text-[44px]',
+          'font-semibold leading-[1.12] tracking-[-0.03em] text-fg',
+          IS_MOBILE ? 'text-[28px]' : 'text-[34px]',
         )}
       >
-        {t('hero.title1')}
-        <br />
-        <span className="text-accent">{t('hero.title2')}</span>
-      </motion.h2>
-
-      {/* The promise reads as a specification line rather than a tagline: mono,
-          spaced, ruled off on both sides.
-
-          The rules only work while the line is one line. A phone is too narrow
-          for it, and a rule hanging beside a two-line block points at nothing,
-          so there the text stands on its own. */}
-      <motion.div
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        transition={{ ...T.entrance, delay: 0.12 }}
-        className={cn(
-          'mt-5 flex items-center justify-center',
-          IS_MOBILE ? 'px-6' : 'gap-3',
-        )}
-      >
-        {!IS_MOBILE && <span className="h-px w-6 bg-[var(--border-strong)]" />}
-        <p className="eyebrow font-mono text-fg-faint">{t('hero.subtitle')}</p>
-        {!IS_MOBILE && <span className="h-px w-6 bg-[var(--border-strong)]" />}
-      </motion.div>
+        {t('hero.title')}
+      </Heading>
+      <p className="mt-2.5 text-[14px] text-fg-muted">{t('hero.subtitle')}</p>
     </div>
   );
 }

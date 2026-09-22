@@ -168,6 +168,14 @@ pub fn run() {
             }
             cache::enforce_limit(loaded.cache_limit_mb);
 
+            // The installer that produced this build has done its job. Until
+            // the update happened it was kept, so that a restart in between
+            // did not mean downloading it again.
+            #[cfg(windows)]
+            if let Ok(dir) = paths::updates_dir() {
+                updater::sweep_applied(&dir);
+            }
+
             // Launched by the autostart entry: stay in the tray rather than
             // stealing focus during sign-in.
             #[cfg(desktop)]
@@ -247,7 +255,9 @@ pub fn run() {
             commands::platform_set_system_bars,
             commands::platform_take_shared_text,
             commands::check_app_update,
+            commands::get_build_commit,
             commands::install_app_update,
+            commands::apply_app_update,
         ])
         .run(tauri::generate_context!())
         .expect("the application failed to start");

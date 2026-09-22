@@ -1,6 +1,6 @@
 import { AnimatePresence, motion } from 'motion/react';
 import { ClipboardPaste, CornerDownLeft, X } from 'lucide-react';
-import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
+import { forwardRef, useEffect, useId, useImperativeHandle, useRef, useState } from 'react';
 
 import { Spinner } from '@/components/ui/Spinner';
 import { useTranslation } from '@/i18n';
@@ -32,6 +32,7 @@ export const UrlInput = forwardRef<UrlInputHandle, UrlInputProps>(function UrlIn
   const inputRef = useRef<HTMLInputElement>(null);
   const [focused, setFocused] = useState(false);
   const [touched, setTouched] = useState(false);
+  const hintId = useId();
 
   useImperativeHandle(ref, () => ({
     focus: () => inputRef.current?.focus(),
@@ -45,6 +46,7 @@ export const UrlInput = forwardRef<UrlInputHandle, UrlInputProps>(function UrlIn
   }, [value]);
 
   const invalid = touched && value.trim().length > 0 && !isProbablyUrl(value);
+  const hint = invalid ? t('input.invalid') : disabledHint;
 
   const submit = () => {
     const normalized = normalizeUrl(value);
@@ -57,24 +59,23 @@ export const UrlInput = forwardRef<UrlInputHandle, UrlInputProps>(function UrlIn
 
   return (
     <div className="w-full">
+      {/* The edge and the focus ring are both box-shadows, so going from one to
+          the other moves nothing: at rest the card's hairline (light theme
+          only), focused a 2px ring in the accent, or in red while the text is
+          not an address. */}
       <div
         className={cn(
-          'relative rounded-[10px] border transition-[border-color,box-shadow] duration-150 ease-out-quint',
+          'rounded-[var(--radius-card)] bg-surface transition-shadow duration-150 ease-out-quint',
           focused && !disabled
-            ? 'border-[var(--accent)] shadow-[0_0_0_3px_var(--accent-ring)]'
-            : 'border-[var(--border-strong)]',
-          invalid && 'border-[var(--error)] shadow-none',
+            ? invalid
+              ? 'shadow-[0_0_0_2px_var(--error)]'
+              : 'shadow-[0_0_0_2px_var(--accent)]'
+            : invalid
+              ? 'shadow-[inset_0_0_0_1px_var(--error)]'
+              : 'shadow-[inset_0_0_0_1px_var(--card-edge)]',
         )}
       >
-        <div
-          className={cn(
-            'relative flex h-[54px] items-center gap-3 rounded-[9px] bg-surface pl-3.5 pr-2',
-            disabled && 'opacity-60',
-          )}
-        >
-          <span className="eyebrow shrink-0 select-none font-mono text-fg-faint">URL</span>
-          <span className="h-5 w-px shrink-0 bg-[var(--border)]" />
-
+        <div className={cn('flex h-[52px] items-center gap-2 pl-4 pr-2', disabled && 'opacity-60')}>
           <input
             ref={inputRef}
             type="text"
@@ -87,6 +88,7 @@ export const UrlInput = forwardRef<UrlInputHandle, UrlInputProps>(function UrlIn
             placeholder={t('input.placeholder')}
             aria-label={t('input.placeholder')}
             aria-invalid={invalid || undefined}
+            aria-describedby={hint ? hintId : undefined}
             onChange={(event) => onChange(event.target.value)}
             onFocus={() => setFocused(true)}
             onBlur={() => {
@@ -103,7 +105,7 @@ export const UrlInput = forwardRef<UrlInputHandle, UrlInputProps>(function UrlIn
               }
             }}
             className={cn(
-              'min-w-0 flex-1 bg-transparent text-[15px] text-fg outline-none',
+              'min-w-0 flex-1 text-ellipsis bg-transparent text-[15px] text-fg outline-none',
               'placeholder:text-fg-faint',
             )}
           />
@@ -124,7 +126,7 @@ export const UrlInput = forwardRef<UrlInputHandle, UrlInputProps>(function UrlIn
                 whileTap={{ scale: 0.9 }}
                 onClick={onClear}
                 aria-label={t('input.clear')}
-                className="shrink-0 rounded-md p-1 text-fg-faint transition-colors duration-150 ease-out-quint hover:bg-surface-hover hover:text-fg"
+                className="shrink-0 rounded-full p-1.5 text-fg-faint transition-colors duration-150 ease-out-quint hover:bg-fill hover:text-fg"
               >
                 <X size={15} />
               </motion.button>
@@ -137,9 +139,9 @@ export const UrlInput = forwardRef<UrlInputHandle, UrlInputProps>(function UrlIn
               onClick={onPaste}
               disabled={disabled}
               className={cn(
-                'pressable flex h-9 shrink-0 items-center gap-1.5 rounded-md px-2.5',
-                'text-[12.5px] font-medium text-fg-muted',
-                'hover:bg-surface-hover hover:text-fg disabled:pointer-events-none',
+                'pressable flex h-9 shrink-0 items-center gap-1.5 rounded-[var(--radius-control)] px-3',
+                'text-[13px] font-medium text-fg-muted',
+                'hover:bg-fill hover:text-fg disabled:pointer-events-none',
               )}
             >
               <ClipboardPaste size={15} />
@@ -151,8 +153,8 @@ export const UrlInput = forwardRef<UrlInputHandle, UrlInputProps>(function UrlIn
               onClick={submit}
               disabled={disabled || analyzing}
               className={cn(
-                'pressable flex h-9 shrink-0 items-center gap-1.5 rounded-md px-3',
-                'bg-accent text-[12.5px] font-semibold text-accent-fg',
+                'pressable flex h-9 shrink-0 items-center gap-1.5 rounded-[var(--radius-control)] px-3.5',
+                'bg-accent text-[13px] font-medium text-accent-fg',
                 'hover:bg-accent-hover',
                 'disabled:pointer-events-none disabled:opacity-60',
               )}
@@ -165,8 +167,9 @@ export const UrlInput = forwardRef<UrlInputHandle, UrlInputProps>(function UrlIn
       </div>
 
       <AnimatePresence>
-        {(invalid || disabledHint) && (
+        {hint && (
           <motion.p
+            id={hintId}
             initial={{ opacity: 0, y: -4 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -4, transition: T.microOut }}
@@ -176,7 +179,7 @@ export const UrlInput = forwardRef<UrlInputHandle, UrlInputProps>(function UrlIn
               invalid ? 'text-error' : 'text-warning',
             )}
           >
-            {invalid ? t('input.invalid') : disabledHint}
+            {hint}
           </motion.p>
         )}
       </AnimatePresence>

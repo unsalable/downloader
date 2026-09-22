@@ -4,25 +4,30 @@ import { Images, RotateCcw } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { AnalyzingCard } from '@/components/home/AnalyzingCard';
+import { ClipboardSuggestion } from '@/components/home/ClipboardSuggestion';
 import { DownloadOptionsPanel } from '@/components/home/DownloadOptionsPanel';
 import { ErrorCard } from '@/components/home/ErrorCard';
 import { Hero } from '@/components/home/Hero';
 import { MediaPreviewCard } from '@/components/home/MediaPreviewCard';
 import { PlatformIndicator } from '@/components/home/PlatformIndicator';
 import { UrlInput, type UrlInputHandle } from '@/components/home/UrlInput';
+import { useToolInstall } from '@/components/home/useToolInstall';
 import { InstallProgress } from '@/components/settings/ToolCard';
 import { Button } from '@/components/ui/Button';
+import { InlineNotice } from '@/components/ui/InlineNotice';
 import { useDebouncedValue } from '@/hooks/useDebouncedValue';
-import { useTranslation } from '@/i18n';
+import { useTranslation, type TranslationKey } from '@/i18n';
 import { cn } from '@/lib/cn';
-import { RISE, T } from '@/lib/motion';
+import { FADE, RISE, T, rise } from '@/lib/motion';
 import { IS_MOBILE } from '@/lib/platform';
 import { normalizeUrl } from '@/lib/url';
 import * as ipc from '@/services/ipc';
 import { useAnalysisStore } from '@/stores/useAnalysisStore';
-import { useToastStore } from '@/stores/useToastStore';
 import { useToolsStore } from '@/stores/useToolsStore';
-import type { DownloadRequest, Settings } from '@/types';
+import type { AppErrorInfo, DownloadRequest, Settings } from '@/types';
+
+/** The result arrives as one object: the preview and its options together. */
+const READY = rise(10);
 
 interface HomePageProps {
   settings: Settings;
@@ -45,6 +50,8 @@ export function HomePage({
   const metadata = useAnalysisStore((state) => state.metadata);
   const error = useAnalysisStore((state) => state.error);
   const options = useAnalysisStore((state) => state.options);
+  const clipboardSuggestion = useAnalysisStore((state) => state.clipboardSuggestion);
+  const setClipboardSuggestion = useAnalysisStore((state) => state.setClipboardSuggestion);
   const setUrl = useAnalysisStore((state) => state.setUrl);
   const setPlatform = useAnalysisStore((state) => state.setPlatform);
   const setOptions = useAnalysisStore((state) => state.setOptions);
@@ -54,11 +61,15 @@ export function HomePage({
   const tools = useToolsStore((state) => state.tools);
   const checkingTools = useToolsStore((state) => state.checking);
   const engineInstall = useToolsStore((state) => state.installing.engine);
-  const installTool = useToolsStore((state) => state.install);
-  const pushToast = useToastStore((state) => state.push);
+  const { install: installEngine, error: engineInstallError } = useToolInstall('engine');
 
   const [submitting, setSubmitting] = useState(false);
   const [dragging, setDragging] = useState(false);
+  // Which of the two download buttons failed, so the reason is set under it.
+  const [enqueueError, setEnqueueError] = useState<{ gallery: boolean; text: string } | null>(
+    null,
+  );
+  useEffect(() => setEnqueueError(null), [metadata]);
 
   const engineReady = tools?.engine.available ?? false;
   const engineMissing = !engineReady && tools != null && !checkingTools;
@@ -180,63 +191,58 @@ export function HomePage({
     };
   };
 
+  // The plain-language pair from the dictionary, keyed by the error code, with
+  // the backend's English text as the fallback -- here as a single line.
+  const describeError = (info: AppErrorInfo) => {
+    const titleKey = `error.${info.code}.title` as TranslationKey;
+    const messageKey = `error.${info.code}.message` as TranslationKey;
+    const title = t(titleKey) === titleKey ? info.title : t(titleKey);
+    const message = t(messageKey) === messageKey ? info.message : t(messageKey);
+    return `${title}. ${message}`;
+  };
+
   const startDownload = async (asGallery: boolean) => {
     const request = buildRequest();
     if (!request) return;
 
     setSubmitting(true);
+    setEnqueueError(null);
     try {
       // A carousel or album becomes one task per item, so each gets its own
       // progress, retry and history row.
-      const count = asGallery ? (await ipc.enqueueGallery(request)).length : 1;
-      if (!asGallery) await ipc.enqueueDownload(request);
+      if (asGallery) await ipc.enqueueGallery(request);
+      else await ipc.enqueueDownload(request);
 
-      // On a phone the download itself is the next thing to look at, and the
-      // screen that shows it is a tab away; going there says "added" on its own.
-      if (IS_MOBILE) {
-        reset();
-        onGoToDownloads();
-        return;
-      }
-
-      pushToast({
-        tone: 'success',
-        title: t('action.addedToQueue'),
-        body: count > 1 ? t('preview.entries', { n: count }) : metadata?.title,
-        actions: [{ label: t('nav.downloads'), onClick: onGoToDownloads, primary: true }],
-      });
+      // The download itself is the next thing to look at, and going to the
+      // screen that shows it says "added" on its own.
       reset();
+      onGoToDownloads();
     } catch (caught) {
-      const info = ipc.toAppError(caught);
-      pushToast({ tone: 'error', title: info.title, body: info.message, durationMs: 7000 });
+      setEnqueueError({ gallery: asGallery, text: describeError(ipc.toAppError(caught)) });
     } finally {
       setSubmitting(false);
     }
   };
 
-  const installEngine = async () => {
-    const ok = await installTool('engine');
-    pushToast(
-      ok
-        ? { tone: 'success', title: t('settings.engine'), body: t('common.done') }
-        : {
-            tone: 'error',
-            title: t('settings.toolInstallFailed'),
-            body: useToolsStore.getState().error ?? t('error.network.message'),
-            durationMs: 9000,
-          },
-    );
+  const acceptSuggestion = () => {
+    if (!clipboardSuggestion) return;
+    setUrl(clipboardSuggestion);
+    startAnalysis(clipboardSuggestion);
   };
 
   // What the user can do about a failure, beyond trying again.
   const errorAction =
     error?.code === 'engineMissing'
-      ? { label: t('setup.installNow'), onClick: installEngine }
+      ? { label: t('setup.installNow'), onClick: () => void installEngine() }
       : error?.code === 'networkBlocked' && IS_MOBILE
         ? { label: t('error.networkBlocked.action'), onClick: () => void ipc.platformOpenAppSettings() }
         : undefined;
 
   const isCollapsed = phase !== 'idle';
+  // Offered only while there is nothing else to do with the field, and only
+  // when accepting it could actually start an analysis.
+  const suggestion =
+    phase === 'idle' && !url.trim() && engineReady ? clipboardSuggestion : null;
 
   return (
     <div
@@ -249,6 +255,8 @@ export function HomePage({
       )}
     >
       <motion.div
+        // Coming back to a result that is already on screen is not a collapse.
+        initial={false}
         animate={{
           height: isCollapsed ? 0 : 'auto',
           opacity: isCollapsed ? 0 : 1,
@@ -276,8 +284,29 @@ export function HomePage({
         />
       </div>
 
+      {/* One slot, one height: the suggestion takes the platform row's place
+          rather than pushing it down, so a link turning up on the clipboard
+          does not move the page under the pointer. */}
       <div className="mt-3">
-        <PlatformIndicator platform={platform} />
+        <AnimatePresence mode="wait" initial={false}>
+          <motion.div
+            key={suggestion ? 'suggestion' : 'platform'}
+            variants={FADE}
+            initial="initial"
+            animate="animate"
+            exit="exit"
+          >
+            {suggestion ? (
+              <ClipboardSuggestion
+                url={suggestion}
+                onAccept={acceptSuggestion}
+                onDismiss={() => setClipboardSuggestion(null)}
+              />
+            ) : (
+              <PlatformIndicator platform={platform} />
+            )}
+          </motion.div>
+        </AnimatePresence>
       </div>
 
       {IS_MOBILE && phase === 'idle' && engineReady && !url.trim() && (
@@ -291,7 +320,7 @@ export function HomePage({
           variants={RISE}
           initial="initial"
           animate="animate"
-          className="mt-4 rounded-[var(--radius-card)] border border-[var(--border)] bg-surface p-4 shadow-soft"
+          className="mt-4 rounded-[var(--radius-card)] border border-card-edge bg-surface p-4"
         >
           <h3 className="text-[14px] font-semibold text-fg">{t('setup.title')}</h3>
           <p className="mt-1.5 text-[13px] leading-relaxed text-fg-muted">
@@ -301,13 +330,18 @@ export function HomePage({
             <InstallProgress progress={engineInstall} className="mt-3" />
           ) : (
             <div className="mt-3 flex gap-2">
-              <Button variant="primary" size="sm" onClick={installEngine}>
+              <Button variant="primary" size="sm" onClick={() => void installEngine()}>
                 {t('setup.installNow')}
               </Button>
               <Button variant="ghost" size="sm" onClick={onOpenSettings}>
                 {t('nav.settings')}
               </Button>
             </div>
+          )}
+          {engineInstallError && !engineInstall && (
+            <InlineNotice tone="error" className="mt-2.5">
+              {engineInstallError}
+            </InlineNotice>
           )}
         </motion.div>
       )}
@@ -322,11 +356,22 @@ export function HomePage({
               error={error}
               onRetry={() => startAnalysis(url)}
               extraAction={errorAction}
+              // The setup card above reports the same failure while it is showing.
+              actionError={
+                error.code === 'engineMissing' && !engineMissing ? engineInstallError : null
+              }
             />
           )}
 
           {phase === 'ready' && metadata && (
-            <motion.div key="ready" className="flex flex-col gap-4">
+            <motion.div
+              key="ready"
+              variants={READY}
+              initial="initial"
+              animate="animate"
+              exit="exit"
+              className="flex flex-col gap-4"
+            >
               <MediaPreviewCard metadata={metadata} />
 
               <DownloadOptionsPanel
@@ -336,36 +381,32 @@ export function HomePage({
                 defaultDownloadDir={settings.downloadDir}
                 submitting={submitting}
                 onDownload={() => void startDownload(false)}
-                onInstallFfmpeg={async () => {
-                  const ok = await installTool('ffmpeg');
-                  pushToast(
-                    ok
-                      ? { tone: 'success', title: t('settings.ffmpeg'), body: t('common.done') }
-                      : {
-                          tone: 'error',
-                          title: t('settings.toolInstallFailed'),
-                          body: useToolsStore.getState().error ?? t('error.network.message'),
-                          durationMs: 9000,
-                        },
-                  );
-                }}
+                downloadError={enqueueError && !enqueueError.gallery ? enqueueError.text : null}
               />
 
               {metadata.entryCount != null && metadata.entryCount > 1 && (
-                <Button
-                  variant="secondary"
-                  icon={<Images size={15} />}
-                  onClick={() => void startDownload(true)}
-                  loading={submitting}
-                >
-                  {t('preview.entries', { n: metadata.entryCount })}
-                </Button>
+                <div>
+                  <Button
+                    variant="secondary"
+                    fullWidth
+                    icon={<Images size={15} />}
+                    onClick={() => void startDownload(true)}
+                    loading={submitting}
+                  >
+                    {t('action.downloadAll', { n: metadata.entryCount })}
+                  </Button>
+                  {enqueueError?.gallery && (
+                    <InlineNotice tone="error" className="mt-2.5">
+                      {enqueueError.text}
+                    </InlineNotice>
+                  )}
+                </div>
               )}
 
               <button
                 type="button"
                 onClick={reset}
-                className="pressable mx-auto flex items-center gap-1.5 rounded-md px-2 py-1 text-[12.5px] font-medium text-fg-faint hover:text-fg-muted"
+                className="pressable mx-auto flex items-center gap-1.5 rounded-md px-2 py-1 text-[12.5px] font-medium text-fg-muted hover:text-fg"
               >
                 <RotateCcw size={13} />
                 {t('preview.startOver')}
@@ -388,7 +429,7 @@ export function HomePage({
               initial={{ scale: 0.94, y: 8 }}
               animate={{ scale: 1, y: 0 }}
               transition={T.spatial}
-              className="rounded-[var(--radius-panel)] border border-dashed border-[var(--accent)] bg-surface px-8 py-6 text-[13.5px] font-medium text-fg shadow-floating"
+              className="rounded-[var(--radius-panel)] border border-card-edge bg-surface px-8 py-6 text-[13.5px] font-medium text-fg shadow-floating"
             >
               {t('input.dropHint')}
             </motion.div>

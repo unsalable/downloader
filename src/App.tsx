@@ -1,17 +1,16 @@
 import { AnimatePresence, motion } from 'motion/react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
+import { DesktopUpdater } from '@/components/DesktopUpdater';
 import { UpdatePrompt } from '@/components/UpdatePrompt';
 import { WelcomeScreen } from '@/components/WelcomeScreen';
 import { Background } from '@/components/layout/Background';
 import { BottomNav } from '@/components/layout/BottomNav';
 import { Sidebar, type Route } from '@/components/layout/Sidebar';
 import { Topbar } from '@/components/layout/Topbar';
-import { Toaster } from '@/components/ui/Toaster';
 import type { UrlInputHandle } from '@/components/home/UrlInput';
 import { useClipboardMonitor } from '@/hooks/useClipboardMonitor';
 import { useHotkeys } from '@/hooks/useHotkeys';
-import { useTranslation } from '@/i18n';
 import { SCREEN } from '@/lib/motion';
 import { IS_MOBILE } from '@/lib/platform';
 import { extractFirstUrl } from '@/lib/url';
@@ -26,9 +25,8 @@ import { useAnalysisStore } from '@/stores/useAnalysisStore';
 import { selectConvertInFlight, useConvertStore } from '@/stores/useConvertStore';
 import { selectInFlightCount, useQueueStore } from '@/stores/useQueueStore';
 import { useSettingsStore } from '@/stores/useSettingsStore';
-import { useToastStore } from '@/stores/useToastStore';
 import { useToolsStore } from '@/stores/useToolsStore';
-import type { ConvertJob, DownloadTask, ThemePreference, ToolsState } from '@/types';
+import type { ToolsState } from '@/types';
 
 const SIDEBAR_COLLAPSED_KEY = 'ud.sidebar.collapsed';
 
@@ -47,8 +45,6 @@ function depthOf(state: NavState): number {
 }
 
 export function App() {
-  const { t } = useTranslation();
-
   const settings = useSettingsStore((state) => state.settings);
   const settingsLoading = useSettingsStore((state) => state.loading);
   const loadSettings = useSettingsStore((state) => state.load);
@@ -68,9 +64,9 @@ export function App() {
   const applyTools = useToolsStore((state) => state.apply);
   const setInstallProgress = useToolsStore((state) => state.setInstallProgress);
 
-  const pushToast = useToastStore((state) => state.push);
   const setUrl = useAnalysisStore((state) => state.setUrl);
   const analyze = useAnalysisStore((state) => state.analyze);
+  const setClipboardSuggestion = useAnalysisStore((state) => state.setClipboardSuggestion);
 
   const [nav, setNavState] = useState<NavState>(HOME);
   const route = nav.route;
@@ -189,93 +185,6 @@ export function App() {
     setRoute,
   ]);
 
-  // Surface finished and failed downloads even when the user is on another
-  // screen. Only transitions are announced, never the steady state.
-  //
-  // Read through a store subscription rather than a hook: progress replaces the
-  // task list several times a second, and subscribing here would re-render the
-  // whole app -- every screen under it -- on each of those ticks.
-  const previousStatuses = useRef(new Map<string, string>());
-  useEffect(() => {
-    const seen = previousStatuses.current;
-
-    const announce = (tasks: DownloadTask[]) => {
-      for (const task of tasks) {
-        const before = seen.get(task.id);
-        seen.set(task.id, task.status);
-        if (before === undefined || before === task.status) continue;
-
-        if (task.status === 'completed') {
-          pushToast({
-            tone: 'success',
-            title: t('toast.downloadComplete'),
-            body: task.title,
-            dedupeKey: `done-${task.id}`,
-          });
-        } else if (task.status === 'failed' && task.error) {
-          pushToast({
-            tone: 'error',
-            title: t('toast.downloadFailed'),
-            body: task.error.title,
-            durationMs: 7000,
-            dedupeKey: `fail-${task.id}`,
-            actions: [{ label: t('nav.downloads'), onClick: () => setRoute('downloads') }],
-          });
-        }
-      }
-
-      // Forget ids that have left the queue so the map cannot grow unbounded.
-      const live = new Set(tasks.map((task) => task.id));
-      for (const id of seen.keys()) if (!live.has(id)) seen.delete(id);
-    };
-
-    announce(useQueueStore.getState().tasks);
-    return useQueueStore.subscribe((state, previous) => {
-      if (state.tasks !== previous.tasks) announce(state.tasks);
-    });
-  }, [pushToast, t, setRoute]);
-
-  // Conversions get the same treatment: only transitions are announced, and
-  // only once, however many times progress arrives afterwards.
-  const previousConvertStatuses = useRef(new Map<string, string>());
-  useEffect(() => {
-    const seen = previousConvertStatuses.current;
-
-    const announce = (conversions: ConvertJob[]) => {
-      for (const job of conversions) {
-        const before = seen.get(job.id);
-        seen.set(job.id, job.status);
-        if (before === undefined || before === job.status) continue;
-
-        if (job.status === 'completed') {
-          pushToast({
-            tone: 'success',
-            title: t('convert.done'),
-            body: job.inputName,
-            dedupeKey: `convert-done-${job.id}`,
-          });
-        } else if (job.status === 'failed' && job.error) {
-          pushToast({
-            tone: 'error',
-            title: t('convert.failed'),
-            body: job.inputName,
-            durationMs: 7000,
-            dedupeKey: `convert-fail-${job.id}`,
-            actions: [{ label: t('nav.convert'), onClick: () => setRoute('convert') }],
-          });
-        }
-      }
-
-      const live = new Set(conversions.map((job) => job.id));
-      for (const id of seen.keys()) if (!live.has(id)) seen.delete(id);
-    };
-
-    announce(useConvertStore.getState().jobs);
-    return useConvertStore.subscribe((state, previous) => {
-      if (state.jobs !== previous.jobs) announce(state.jobs);
-    });
-  }, [pushToast, t, setRoute]);
-
   // A download that failed only because a tool was missing is retried as soon
   // as that tool appears. The error told the user to install it; having done
   // so, they should not also have to find the task and press Retry -- and
@@ -332,19 +241,16 @@ export function App() {
     return () => window.removeEventListener(ipc.SHARED_TEXT_EVENT, take);
   }, [goHomeWithUrl, settingsReady]);
 
-  useClipboardMonitor(settings?.clipboardMonitoring ?? false, (url) => {
-    pushToast({
-      tone: 'info',
-      title: t('toast.linkDetected'),
-      body: t('toast.linkDetectedBody'),
-      durationMs: 9000,
-      dedupeKey: 'clipboard',
-      actions: [
-        { label: t('toast.analyze'), onClick: () => goHomeWithUrl(url), primary: true },
-        { label: t('toast.dismiss'), onClick: () => {} },
-      ],
-    });
-  });
+  // A link on the clipboard is only offered, under the empty field on Home.
+  // It takes the user nowhere: they may be in the middle of something else.
+  const clipboardOn = settings?.clipboardMonitoring ?? false;
+  useClipboardMonitor(clipboardOn, setClipboardSuggestion);
+
+  // Turning the setting off takes the standing offer away with it, instead of
+  // leaving a live one on Home for a feature that is no longer on.
+  useEffect(() => {
+    if (!clipboardOn) setClipboardSuggestion(null);
+  }, [clipboardOn, setClipboardSuggestion]);
 
   const hotkeyHandlers = useMemo(
     () => ({
@@ -385,20 +291,15 @@ export function App() {
   }
 
   if (!settings.onboardingComplete) {
-    return (
-      <>
-        <WelcomeScreen onStart={() => void updateSettings({ onboardingComplete: true })} />
-        <Toaster />
-      </>
-    );
+    return <WelcomeScreen onStart={() => void updateSettings({ onboardingComplete: true })} />;
   }
 
-  // A phone's backdrop does not move (see Background), so only low resource
-  // mode turns it off there.
+  // The glow stands still (see Background), so reduced motion has no say in it.
+  // A phone has no setting for it; only low resource mode turns it off there.
   const backgroundActive =
     route === 'home' &&
     !settings.lowResourceMode &&
-    (IS_MOBILE || (settings.showAnimatedBackground && !settings.reduceMotion));
+    (IS_MOBILE || settings.showAnimatedBackground);
 
   return (
     <div className="flex h-full overflow-hidden bg-bg">
@@ -416,14 +317,11 @@ export function App() {
       <div className="relative flex min-w-0 flex-1 flex-col">
         <Background active={backgroundActive} />
 
-        <Topbar
-          route={route}
-          theme={settings.theme}
-          onThemeChange={(theme: ThemePreference) => void updateSettings({ theme })}
-          onOpenSettings={() => setRoute('settings')}
-          onOpenAbout={() => setRoute('about')}
-          onOpenDownloads={() => setRoute('downloads')}
-        />
+        {/* A settings section opened on the phone brings its own bar, with Back
+            and its name; under the screen's bar that would be two titles. */}
+        {IS_MOBILE && !nav.section && (
+          <Topbar route={route} onOpenAbout={() => setRoute('about')} />
+        )}
 
         <main ref={mainRef} className="relative z-10 min-h-0 flex-1 overflow-y-auto">
           <AnimatePresence mode="wait">
@@ -468,8 +366,7 @@ export function App() {
         )}
       </div>
 
-      {IS_MOBILE && <UpdatePrompt />}
-      <Toaster />
+      {IS_MOBILE ? <UpdatePrompt /> : <DesktopUpdater />}
     </div>
   );
 }

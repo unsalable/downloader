@@ -1,10 +1,10 @@
 import { motion } from 'motion/react';
 import {
-  ChevronsLeft,
   Clock,
   Download,
   House,
   Info,
+  PanelLeft,
   Repeat,
   Settings as SettingsIcon,
   type LucideIcon,
@@ -62,20 +62,23 @@ export function Sidebar({
       className={cn(
         'relative z-20 flex shrink-0 flex-col border-r border-[var(--border)] bg-surface-sunken',
         'transition-[width] duration-350 ease-out-quint',
-        collapsed ? 'w-[62px]' : 'w-[212px]',
+        collapsed ? 'w-[57px]' : 'w-[217px]',
       )}
     >
-      <div className={cn('flex h-14 items-center gap-2.5 px-4', collapsed && 'justify-center px-0')}>
+      {/* Padded, and the rail sized, so the mark stands over the column of icons
+          beneath it and neither moves sideways when the sidebar collapses. */}
+      <div className={cn('flex h-[52px] items-center gap-2.5 px-[17px]', collapsed && 'justify-center px-0')}>
         <Logo size={22} className="shrink-0" />
         {!collapsed && (
-          <span className="truncate font-mono text-[11px] font-semibold uppercase leading-tight tracking-[0.14em] text-fg">
-            Universal
-            <span className="block text-fg-faint">Downloader</span>
+          // The name is English whatever language the interface is in, and says
+          // so, so that it is read out -- and cased -- as English.
+          <span lang="en" className="truncate text-[13px] font-semibold text-fg">
+            {t('app.name')}
           </span>
         )}
       </div>
 
-      <div className="flex flex-1 flex-col gap-0.5 px-2.5 pt-2">
+      <div className="flex flex-1 flex-col gap-0.5 px-2.5 pt-1">
         {PRIMARY.map((entry) => (
           <NavButton
             key={entry.route}
@@ -86,9 +89,11 @@ export function Sidebar({
             onClick={() => onNavigate(entry.route)}
           />
         ))}
+      </div>
 
-        <div className="mx-1 my-2.5 h-px bg-[var(--border)]" />
-
+      {/* The app's own pages sit at the foot of the list, apart from the places
+          where work happens; the distance does what a rule would. */}
+      <div className="flex flex-col gap-0.5 px-2.5 pb-2.5">
         {SECONDARY.map((entry) => (
           <NavButton
             key={entry.route}
@@ -99,9 +104,7 @@ export function Sidebar({
             onClick={() => onNavigate(entry.route)}
           />
         ))}
-      </div>
 
-      <div className="p-2.5">
         <Tooltip label={collapsed ? t('nav.expand') : t('nav.collapse')} side="right">
           <button
             type="button"
@@ -109,17 +112,12 @@ export function Sidebar({
             aria-label={collapsed ? t('nav.expand') : t('nav.collapse')}
             aria-expanded={!collapsed}
             className={cn(
-              'pressable flex h-8 w-full items-center justify-center rounded-lg text-fg-faint',
-              'hover:bg-surface-hover hover:text-fg-muted',
+              'pressable-sm flex h-[34px] items-center rounded-[8px] px-2.5 text-fg-faint',
+              'hover:bg-fill hover:text-fg-muted',
+              collapsed && 'justify-center px-0',
             )}
           >
-            <ChevronsLeft
-              size={15}
-              className={cn(
-                'transition-transform duration-350 ease-out-quint',
-                collapsed && 'rotate-180',
-              )}
-            />
+            <PanelLeft size={16} />
           </button>
         </Tooltip>
       </div>
@@ -157,35 +155,36 @@ function NavButton({
       onClick={onClick}
       aria-current={active ? 'page' : undefined}
       className={cn(
-        'group relative flex h-9 items-center gap-2.5 rounded-[6px] px-2.5 text-[13px] font-medium',
+        'relative flex h-[34px] items-center gap-2.5 rounded-[8px] px-2.5 text-[13px] font-medium',
         'transition-colors duration-150 ease-out-quint',
         collapsed && 'justify-center px-0',
-        active ? 'text-fg' : 'text-fg-muted hover:bg-surface-hover hover:text-fg',
+        active ? 'text-fg' : 'text-fg-muted hover:bg-fill hover:text-fg',
       )}
     >
       {active && (
         <motion.span
           // One shared element slides between items, so switching pages reads
-          // as the indicator moving rather than two highlights crossfading.
+          // as the selection moving rather than two highlights crossfading.
           layoutId="sidebar-active"
           transition={SPRING.glide}
-          className="absolute inset-0 rounded-[6px] bg-surface-active before:absolute before:inset-y-1.5 before:-left-2.5 before:w-[2px] before:rounded-full before:bg-[var(--accent)] before:content-['']"
+          className="absolute inset-0 rounded-[8px] bg-fill-active"
         />
       )}
       <Icon size={16} className={cn('relative z-10 shrink-0', active && 'text-accent')} />
       {!collapsed && <span className="relative z-10 truncate">{label}</span>}
 
-      {badge > 0 && (
-        <span
-          className={cn(
-            'relative z-10 metric ml-auto rounded-[4px] bg-accent px-1.5 text-[10px]',
-            'font-semibold leading-[16px] text-accent-fg',
-            collapsed && 'absolute -right-0.5 -top-0.5 ml-0 px-1',
-          )}
-        >
-          {badge > 99 ? '99+' : badge}
-        </span>
-      )}
+      {badge > 0 &&
+        (collapsed ? (
+          // The rail has no room for a figure, so it only says there is one;
+          // a screen reader still gets the figure.
+          <span className="absolute right-[7px] top-[6px] z-10 size-[7px] rounded-full bg-accent">
+            <span className="sr-only">{badge}</span>
+          </span>
+        ) : (
+          <span className="tabular relative z-10 ml-auto min-w-5 rounded-full bg-fill-hover px-1.5 text-center text-[12px] font-medium leading-5 text-fg">
+            {badge > 99 ? '99+' : badge}
+          </span>
+        ))}
     </button>
   );
 

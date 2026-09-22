@@ -22,7 +22,7 @@
         "center": true,
         "focus": true,
         "theme": "Dark",
-        "backgroundColor": "#0C0B09",
+        "backgroundColor": "#1C1C1E",
         "visible": false,
         "dragDropEnabled": true
       }
@@ -61,6 +61,7 @@
           "Turkish"
         ],
         "installerIcon": "icons/icon.ico",
+        "installerHooks": "./windows/hooks.nsh",
         "compression": "lzma"
       }
     }

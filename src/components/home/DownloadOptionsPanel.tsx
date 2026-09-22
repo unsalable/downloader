@@ -12,15 +12,16 @@ import {
 } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 
+import { useToolInstall } from '@/components/home/useToolInstall';
 import { InstallProgress } from '@/components/settings/ToolCard';
-import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Dropdown } from '@/components/ui/Dropdown';
+import { InlineNotice } from '@/components/ui/InlineNotice';
 import { Segmented, type SegmentedOption } from '@/components/ui/Segmented';
 import { Tooltip } from '@/components/ui/Tooltip';
 import { useTranslation } from '@/i18n';
 import { cn } from '@/lib/cn';
-import { COLLAPSE, T } from '@/lib/motion';
+import { COLLAPSE } from '@/lib/motion';
 import {
   audioStreamOptions,
   availableModes,
@@ -45,7 +46,8 @@ interface DownloadOptionsPanelProps {
   defaultDownloadDir: string;
   onDownload: () => void;
   submitting: boolean;
-  onInstallFfmpeg: () => void;
+  /** Why the last press of Download did not queue anything. */
+  downloadError?: string | null;
 }
 
 const MODE_ICONS = { video: Video, audio: Music, image: ImageIcon } as const;
@@ -57,7 +59,7 @@ export function DownloadOptionsPanel({
   defaultDownloadDir,
   onDownload,
   submitting,
-  onInstallFfmpeg,
+  downloadError,
 }: DownloadOptionsPanelProps) {
   const { t } = useTranslation();
   const [plan, setPlan] = useState<ipc.PlanSummary | null>(null);
@@ -68,6 +70,7 @@ export function DownloadOptionsPanel({
   // touch another control first.
   const ffmpegAvailable = useToolsStore((state) => state.tools?.ffmpeg.available ?? false);
   const ffmpegInstall = useToolsStore((state) => state.installing.ffmpeg);
+  const { install: installFfmpeg, error: ffmpegInstallError } = useToolInstall('ffmpeg');
 
   const modes = useMemo(() => availableModes(metadata), [metadata]);
   const qualities = useMemo(
@@ -142,12 +145,7 @@ export function DownloadOptionsPanel({
   const outputDir = options.outputDir ?? defaultDownloadDir;
 
   return (
-    <motion.section
-      initial={{ opacity: 0, y: 10 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ ...T.spatial, delay: 0.06 }}
-      className="rounded-[var(--radius-panel)] border border-[var(--border)] bg-surface p-4 shadow-raised edge-light"
-    >
+    <section className="rounded-[var(--radius-card)] border border-card-edge bg-surface p-4">
       {modeOptions.length > 1 && (
         <Segmented
           value={options.mode}
@@ -189,22 +187,29 @@ export function DownloadOptionsPanel({
               size="sm"
             />
           ) : (
-            <div className="flex items-start gap-2 rounded-lg bg-warning-soft px-3 py-2 text-[12.5px] text-warning">
-              <TriangleAlert size={14} className="mt-px shrink-0" />
-              <span>{t('options.watermarkUnavailable')}</span>
-            </div>
+            <InlineNotice>{t('options.watermarkUnavailable')}</InlineNotice>
           )}
         </div>
       )}
 
-      <div className="mt-3">
-        <span className="text-[11px] font-medium uppercase tracking-[0.07em] text-fg-faint">
-          {t('options.saveTo')}
-        </span>
-        <div className="mt-1.5 flex h-10 items-center gap-2 rounded-[10px] border border-[var(--border)] bg-surface px-3">
-          <FolderOpen size={15} className="shrink-0 text-fg-faint" />
+      {/* Labelled and filled like the dropdowns above it, so the panel reads as
+          one column of fields rather than fields and a box. */}
+      <div className="mt-3 flex flex-col gap-1.5">
+        <span className="text-[12.5px] font-medium text-fg-muted">{t('options.saveTo')}</span>
+        <div
+          className={cn(
+            'flex items-center gap-2 rounded-[var(--radius-control)] bg-fill pl-3 pr-1',
+            IS_MOBILE ? 'h-12' : 'h-9',
+          )}
+        >
+          <FolderOpen size={15} className="shrink-0 text-fg-muted" />
           <Tooltip label={outputDir}>
-            <span className="min-w-0 flex-1 truncate text-[13px] text-fg-muted">
+            <span
+              className={cn(
+                'min-w-0 flex-1 truncate text-fg',
+                IS_MOBILE ? 'text-[15px]' : 'text-[13.5px]',
+              )}
+            >
               {truncateMiddle(outputDir, 46)}
             </span>
           </Tooltip>
@@ -213,7 +218,7 @@ export function DownloadOptionsPanel({
             <button
               type="button"
               onClick={pickFolder}
-              className="pressable shrink-0 rounded-md px-2 py-1 text-[12.5px] font-medium text-accent hover:bg-accent-soft"
+              className="pressable h-7 shrink-0 rounded-[7px] px-2 text-[12.5px] font-medium text-accent hover:bg-accent-soft"
             >
               {t('options.change')}
             </button>
@@ -225,7 +230,7 @@ export function DownloadOptionsPanel({
         type="button"
         onClick={() => onChange({ advanced: !options.advanced })}
         aria-expanded={options.advanced}
-        className="pressable -ml-1.5 mt-3 flex items-center gap-1.5 rounded-md px-1.5 py-1 text-[12.5px] font-medium text-fg-faint hover:text-fg-muted"
+        className="pressable -ml-1.5 mt-3 flex items-center gap-1.5 rounded-md px-1.5 py-1 text-[12.5px] font-medium text-fg-muted hover:text-fg"
       >
         <Sliders size={13} />
         {options.advanced ? t('options.advancedHide') : t('options.advanced')}
@@ -247,7 +252,7 @@ export function DownloadOptionsPanel({
             exit="exit"
             className="overflow-hidden"
           >
-            <div className="mt-3 grid gap-3 rounded-[var(--radius-card)] border border-[var(--border)] bg-surface-sunken p-3">
+            <div className="mt-2 grid gap-3">
               <Dropdown
                 label={t('options.videoStream')}
                 value={options.videoFormatId ?? plan?.videoFormatId ?? ''}
@@ -267,7 +272,7 @@ export function DownloadOptionsPanel({
       </AnimatePresence>
 
       {ffmpegBlocked && (
-        <div className="mt-3.5 flex items-start gap-2.5 rounded-lg bg-warning-soft p-3">
+        <div className="mt-3.5 flex items-start gap-2.5 rounded-[var(--radius-control)] bg-warning-soft p-3">
           <TriangleAlert size={15} className="mt-px shrink-0 text-warning" />
           <div className="min-w-0 flex-1">
             <p className="text-[12.5px] leading-relaxed text-warning">
@@ -276,47 +281,54 @@ export function DownloadOptionsPanel({
             {ffmpegInstall ? (
               <InstallProgress progress={ffmpegInstall} className="mt-2" />
             ) : (
-              <button
-                type="button"
-                onClick={onInstallFfmpeg}
-                className="pressable mt-1.5 rounded-md text-[12.5px] font-semibold text-warning underline underline-offset-2"
-              >
+              <Button size="sm" className="mt-2" onClick={() => void installFfmpeg()}>
                 {t('setup.installNow')}
-              </button>
+              </Button>
+            )}
+            {ffmpegInstallError && !ffmpegInstall && (
+              <InlineNotice tone="error" className="mt-2">
+                {ffmpegInstallError}
+              </InlineNotice>
             )}
           </div>
         </div>
       )}
 
       {planError && (
-        <p className="mt-3.5 rounded-lg bg-error-soft px-3 py-2 text-[12.5px] text-error">
+        <InlineNotice tone="error" className="mt-3.5">
           {planError}
-        </p>
+        </InlineNotice>
       )}
 
-      <div className="mt-4 flex items-center gap-3">
-        <Button
-          variant="cta"
-          size="lg"
-          fullWidth
-          icon={<Download size={17} />}
-          loading={submitting}
-          disabled={ffmpegBlocked || plan == null}
-          onClick={onDownload}
-        >
-          {submitting ? t('action.preparing') : t('action.download')}
-        </Button>
-      </div>
+      <Button
+        variant="cta"
+        size="lg"
+        fullWidth
+        icon={<Download size={17} />}
+        loading={submitting}
+        disabled={ffmpegBlocked || plan == null}
+        onClick={onDownload}
+        className="mt-4"
+      >
+        {submitting ? t('action.preparing') : t('action.download')}
+      </Button>
 
-      <div className="mt-3 flex flex-wrap items-center justify-center gap-2 text-[12px] text-fg-faint">
-        {plan && <Badge tone="outline">{plan.label}</Badge>}
-        {plan?.needsMerge && <Badge tone="outline">{t('stage.merging')}</Badge>}
-        <span className="tabular">
-          {plan?.estimatedBytes != null
-            ? `${t('options.estimatedSize')} ${formatBytes(plan.estimatedBytes)}`
-            : t('options.unknownSize')}
-        </span>
-      </div>
-    </motion.section>
+      {downloadError && (
+        <InlineNotice tone="error" className="mt-2.5">
+          {downloadError}
+        </InlineNotice>
+      )}
+
+      {/* What the button will fetch, as one plain line: the resolved format,
+          and roughly how big it is when the source said. */}
+      {plan && (
+        <p className="mt-2.5 flex flex-wrap items-center justify-center gap-x-3 text-[12.5px] text-fg-muted">
+          <span>{plan.label}</span>
+          {plan.estimatedBytes != null && (
+            <span className="tabular">~{formatBytes(plan.estimatedBytes)}</span>
+          )}
+        </p>
+      )}
+    </section>
   );
 }

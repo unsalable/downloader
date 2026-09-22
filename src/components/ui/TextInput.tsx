@@ -9,11 +9,10 @@ export interface TextInputProps extends InputHTMLAttributes<HTMLInputElement> {
   error?: string | null;
   icon?: ReactNode;
   trailing?: ReactNode;
-  monospace?: boolean;
 }
 
 export const TextInput = forwardRef<HTMLInputElement, TextInputProps>(function TextInput(
-  { label, hint, error, icon, trailing, monospace, className, id, ...rest },
+  { label, hint, error, icon, trailing, className, id, ...rest },
   ref,
 ) {
   const generatedId = useId();
@@ -22,40 +21,39 @@ export const TextInput = forwardRef<HTMLInputElement, TextInputProps>(function T
   return (
     <div className="flex flex-col gap-1.5">
       {label && (
-        <label htmlFor={inputId} className="text-[13px] font-medium text-fg">
+        <label htmlFor={inputId} className="text-[12.5px] font-medium text-fg-muted">
           {label}
         </label>
       )}
       <div
         className={cn(
-          'flex items-center gap-2 rounded-[10px] border bg-surface px-3',
-          IS_MOBILE ? 'h-12' : 'h-10',
-          'transition-[border-color,box-shadow] duration-150 ease-out-quint',
-          'focus-within:border-[var(--accent)] focus-within:ring-2 focus-within:ring-[var(--accent-ring)]/30',
-          error ? 'border-[var(--error)]' : 'border-[var(--border)] hover:border-[var(--border-strong)]',
+          'flex items-center gap-2 rounded-[var(--radius-control)] bg-fill px-3',
+          IS_MOBILE ? 'h-12' : 'h-9',
+          // The ring is the whole of the focus treatment: a filled field has no
+          // border to recolour, and the input inside draws no outline of its own.
+          'ring-inset',
+          error
+            ? 'ring-2 ring-[var(--error)]'
+            : 'focus-within:ring-2 focus-within:ring-[var(--accent)]',
           className,
         )}
       >
-        {icon && <span className="shrink-0 text-fg-faint">{icon}</span>}
+        {icon && <span className="shrink-0 text-fg-muted">{icon}</span>}
         <input
           ref={ref}
           id={inputId}
           aria-invalid={error ? true : undefined}
           className={cn(
             'min-w-0 flex-1 bg-transparent text-fg outline-none',
-            'placeholder:text-fg-faint',
-            monospace
-              ? cn('font-mono', IS_MOBILE ? 'text-[13.5px]' : 'text-[12.5px]')
-              : IS_MOBILE
-                ? 'text-[15px]'
-                : 'text-[13.5px]',
+            'placeholder:text-fg-muted',
+            IS_MOBILE ? 'text-[15px]' : 'text-[13.5px]',
           )}
           {...rest}
         />
         {trailing}
       </div>
       {(error || hint) && (
-        <p className={cn('text-[12px] leading-snug', error ? 'text-error' : 'text-fg-faint')}>
+        <p className={cn('text-[12.5px] leading-snug', error ? 'text-error' : 'text-fg-muted')}>
           {error ?? hint}
         </p>
       )}

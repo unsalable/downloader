@@ -40,13 +40,13 @@ export function Slider({
           because the title often lives in the surrounding settings row. */}
       <div className="flex items-baseline justify-between gap-3">
         {label ? (
-          <label htmlFor={id} className="text-[13px] font-medium text-fg">
+          <label htmlFor={id} className="text-[12.5px] font-medium text-fg-muted">
             {label}
           </label>
         ) : (
           <span aria-hidden="true" />
         )}
-        <span className={cn('tabular font-medium text-fg', IS_MOBILE ? 'text-[14px]' : 'text-[13px]')}>
+        <span className={cn('tabular text-fg-muted', IS_MOBILE ? 'text-[14px]' : 'text-[13px]')}>
           {formatValue ? formatValue(value) : value}
         </span>
       </div>
@@ -60,7 +60,7 @@ export function Slider({
         disabled={disabled}
         onChange={(event) => onChange(Number(event.target.value))}
         style={{
-          background: `linear-gradient(to right, var(--accent) ${percent}%, var(--surface-active) ${percent}%)`,
+          background: `linear-gradient(to right, var(--accent) ${percent}%, var(--fill-active) ${percent}%)`,
         }}
         className={cn(
           'w-full cursor-pointer appearance-none rounded-full outline-none',
@@ -68,14 +68,10 @@ export function Slider({
           '[&::-webkit-slider-thumb]:appearance-none',
           // A thumb a finger can find without covering the value it sets.
           IS_MOBILE
-            ? 'my-2 h-2 [&::-webkit-slider-thumb]:size-6'
-            : 'h-1.5 [&::-webkit-slider-thumb]:size-4',
+            ? 'my-3 h-1 [&::-webkit-slider-thumb]:size-7'
+            : 'my-2 h-1 [&::-webkit-slider-thumb]:size-[18px]',
           '[&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-white',
-          '[&::-webkit-slider-thumb]:shadow-[0_1px_4px_rgb(0_0_0/0.4)]',
-          '[&::-webkit-slider-thumb]:border [&::-webkit-slider-thumb]:border-black/10',
-          '[&::-webkit-slider-thumb]:transition-transform [&::-webkit-slider-thumb]:duration-150',
-          '[&::-webkit-slider-thumb]:ease-out-quint',
-          'hover:[&::-webkit-slider-thumb]:scale-110 active:[&::-webkit-slider-thumb]:scale-95',
+          '[&::-webkit-slider-thumb]:shadow-[0_0_0_0.5px_rgb(0_0_0/0.08),0_2px_6px_rgb(0_0_0/0.22)]',
         )}
       />
     </div>

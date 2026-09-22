@@ -19,26 +19,27 @@ export interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
 const SIZES: Record<ButtonSize, string> = IS_MOBILE
   ? // Sized for a fingertip rather than a pointer.
     {
-      sm: 'h-10 px-3.5 text-[13.5px] gap-1.5 rounded-lg',
-      md: 'h-11 px-4 text-[14px] gap-2 rounded-[9px]',
-      lg: 'h-13 px-6 text-[15px] gap-2.5 rounded-[10px]',
+      sm: 'h-10 px-3.5 text-[13.5px] gap-1.5 rounded-[var(--radius-control)]',
+      md: 'h-11 px-4 text-[14px] gap-2 rounded-[var(--radius-control)]',
+      lg: 'h-13 px-6 text-[15px] gap-2.5 rounded-[var(--radius-card)]',
     }
   : {
-      sm: 'h-8 px-3 text-[12.5px] gap-1.5 rounded-md',
-      md: 'h-9.5 px-4 text-[13px] gap-2 rounded-[7px]',
-      lg: 'h-12 px-6 text-[14.5px] gap-2.5 rounded-[9px]',
+      sm: 'h-8 px-3 text-[12.5px] gap-1.5 rounded-[8px]',
+      md: 'h-9 px-4 text-[13px] gap-2 rounded-[var(--radius-control)]',
+      lg: 'h-11 px-6 text-[14px] gap-2 rounded-[12px]',
     };
 
+const ACCENT = 'bg-accent text-accent-fg hover:bg-accent-hover';
+
+// Told apart by fill alone; none of them carries a border or a shadow.
 const VARIANTS: Record<ButtonVariant, string> = {
-  primary: 'bg-accent text-accent-fg hover:bg-accent-hover active:brightness-95',
-  secondary:
-    'bg-surface text-fg border border-[var(--border-strong)] hover:bg-surface-hover active:bg-surface-active',
-  ghost: 'text-fg-muted hover:bg-surface-hover hover:text-fg',
-  danger: 'bg-error-soft text-error hover:brightness-110 active:brightness-95',
-  // The one call to action on a screen. It is the accent at full strength with
-  // a warm cast beneath it -- the weight comes from the shadow, not from a
-  // second colour sliding across the fill.
-  cta: 'bg-accent text-accent-fg shadow-[0_6px_20px_-8px_var(--accent-ring)] hover:bg-accent-hover hover:shadow-[0_10px_28px_-8px_var(--accent-ring)] active:brightness-95',
+  primary: ACCENT,
+  secondary: 'bg-fill text-fg hover:bg-fill-hover active:bg-fill-active',
+  ghost: 'text-fg-muted hover:bg-fill hover:text-fg active:bg-fill-hover',
+  danger: 'bg-error-soft text-error hover:brightness-95 dark:hover:brightness-110',
+  // The one call to action on a screen. Its size is what sets it apart; the
+  // fill is the same accent as any other primary button.
+  cta: ACCENT,
 };
 
 export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button(

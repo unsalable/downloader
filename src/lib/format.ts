@@ -74,6 +74,21 @@ export function formatDate(timestampMs: number, locale: string): string {
   }).format(date);
 }
 
+/**
+ * The day alone, for a row too narrow for `formatDate`: "21 Sep", and the year
+ * only once it is no longer this one.
+ */
+export function formatDay(timestampMs: number, locale: string): string {
+  const date = new Date(timestampMs);
+  if (Number.isNaN(date.getTime())) return '--';
+  const sameYear = date.getFullYear() === new Date().getFullYear();
+  return new Intl.DateTimeFormat(locale, {
+    year: sameYear ? undefined : 'numeric',
+    month: 'short',
+    day: 'numeric',
+  }).format(date);
+}
+
 /** "2026-09-07" or "20260907" as reported by sources -> localized short date. */
 export function formatUploadDate(raw: string | null, locale: string): string | null {
   if (!raw) return null;

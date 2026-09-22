@@ -9,10 +9,10 @@ fn main() {
 /// Record the commit this build was made from.
 ///
 /// Releases carry no version number -- one rolling release is replaced in
-/// place -- so the commit is what tells two builds apart. The Android app
-/// compares it with the commit the release tag points at to learn whether a
-/// newer build exists. A build made outside a git checkout records nothing and
-/// never reports an update.
+/// place -- so the commit is what tells two builds apart. The app compares it
+/// with the commit the release tag points at to learn whether a newer build
+/// exists. A build made outside a git checkout records nothing and never
+/// reports an update.
 fn embed_commit() {
     let commit = Command::new("git")
         .args(["rev-parse", "HEAD"])

@@ -1,15 +1,8 @@
 import { open } from '@tauri-apps/plugin-dialog';
-import {
-  CheckCircle2,
-  CircleAlert,
-  CircleDashed,
-  Download,
-  FolderSearch,
-  RotateCw,
-} from 'lucide-react';
+import { Check } from 'lucide-react';
 
-import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
+import { InlineNotice } from '@/components/ui/InlineNotice';
 import { Progress } from '@/components/ui/Progress';
 import { Tooltip } from '@/components/ui/Tooltip';
 import { useTranslation } from '@/i18n';
@@ -24,6 +17,8 @@ interface ToolCardProps {
   titleKey: TranslationKey;
   hintKey: TranslationKey;
   installing: ToolInstallProgress | undefined;
+  /** Why the last install failed, shown in the row until the next attempt. */
+  installError?: string | null;
   onInstall: () => void;
   optionalNoteKey?: TranslationKey;
   /**
@@ -36,7 +31,7 @@ interface ToolCardProps {
   onResetPath?: () => void;
   /**
    * Whether an ordinary download works without this tool. When it does, the
-   * missing state drops the warning colours: the card is an offer, and dressing
+   * missing state drops the warning colour: the row is an offer, and dressing
    * it as a fault makes a perfectly working app look broken.
    */
   optional?: boolean;
@@ -71,7 +66,7 @@ export function InstallProgress({
   return (
     <div className={className}>
       <Progress value={percent} />
-      <div className="mt-1.5 flex items-center gap-2 text-[11.5px] text-fg-muted">
+      <div className="mt-1.5 flex items-center gap-3 text-[12.5px] text-fg-muted">
         <span>{t(STAGE_LABEL[progress.stage])}</span>
         {downloading && progress.receivedBytes > 0 && (
           <span className="tabular ml-auto">
@@ -92,11 +87,13 @@ const SOURCE_LABEL = {
   missing: 'settings.toolMissing',
 } as const satisfies Record<ToolStatus['source'], TranslationKey>;
 
+/** One tool as a row of a `ListGroup`: what it is, its state, what can be done. */
 export function ToolCard({
   status,
   titleKey,
   hintKey,
   installing,
+  installError,
   customPath,
   onInstall,
   onLocate,
@@ -106,11 +103,9 @@ export function ToolCard({
 }: ToolCardProps) {
   const { t } = useTranslation();
   const quietlyMissing = !status.available && optional === true;
-  const chipClass = status.available
-    ? 'bg-success-soft text-success'
-    : quietlyMissing
-      ? 'bg-[var(--surface-active)] text-fg-muted'
-      : 'bg-warning-soft text-warning';
+  // The sizes a `SettingRow` sets its two lines in, so the rows of a group agree.
+  const titleSize = IS_MOBILE ? 'text-[15px]' : 'text-[13.5px]';
+  const bodySize = IS_MOBILE ? 'text-[13px]' : 'text-[12.5px]';
 
   const pickFile = async () => {
     if (!onLocate) return;
@@ -123,92 +118,80 @@ export function ToolCard({
   };
 
   return (
-    <div className="px-4 py-4">
-      <div className="flex items-start gap-3">
-        <span
+    <div className={cn('px-4', IS_MOBILE ? 'py-4' : 'py-3.5')}>
+      <div className="flex items-center justify-between gap-3">
+        <span className={cn('min-w-0 text-fg', titleSize)}>{t(titleKey)}</span>
+        {status.available ? (
+          <span className={cn('tabular flex min-w-0 max-w-[55%] items-center gap-1.5 text-fg-muted', bodySize)}>
+            <Check size={14} aria-hidden="true" className="shrink-0 text-success" />
+            {status.version && <span className="truncate">{status.version}</span>}
+          </span>
+        ) : (
+          <span className={cn('shrink-0', bodySize, quietlyMissing ? 'text-fg-muted' : 'text-warning')}>
+            {t('settings.toolMissing')}
+          </span>
+        )}
+      </div>
+
+      <p className={cn('mt-0.5 leading-relaxed text-fg-muted', bodySize)}>{t(hintKey)}</p>
+
+      {!status.available && optionalNoteKey && (
+        <p
           className={cn(
-            'mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-lg',
-            chipClass,
+            'mt-1.5 leading-relaxed',
+            bodySize,
+            quietlyMissing ? 'text-fg-muted' : 'text-warning',
           )}
         >
-          {status.available ? (
-            <CheckCircle2 size={17} />
-          ) : quietlyMissing ? (
-            <CircleDashed size={17} />
-          ) : (
-            <CircleAlert size={17} />
-          )}
-        </span>
+          {t(optionalNoteKey)}
+        </p>
+      )}
 
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="text-[13.5px] font-medium text-fg">{t(titleKey)}</span>
-            {status.available ? (
-              <>
-                {status.version && <Badge tone="success">{status.version}</Badge>}
-                <Badge tone="outline">{t(SOURCE_LABEL[status.source])}</Badge>
-              </>
-            ) : (
-              <Badge tone={quietlyMissing ? 'neutral' : 'warning'}>
-                {t('settings.toolMissing')}
-              </Badge>
-            )}
-          </div>
-
-          <p className="mt-1 text-[12.5px] leading-relaxed text-fg-muted">{t(hintKey)}</p>
-
-          {!status.available && optionalNoteKey && (
-            <p
-              className={cn(
-                'mt-1.5 text-[12.5px] leading-relaxed',
-                quietlyMissing ? 'text-fg-muted' : 'text-warning',
-              )}
-            >
-              {t(optionalNoteKey)}
-            </p>
-          )}
-
+      {status.available && (
+        <div className={cn('mt-1.5 flex min-w-0 flex-wrap items-baseline gap-x-3 text-fg-muted', bodySize)}>
+          <span>{t(SOURCE_LABEL[status.source])}</span>
           {status.path && (
             <Tooltip label={status.path}>
-              <p className="mt-1.5 truncate font-mono text-[11.5px] text-fg-faint">
+              <span className="selectable min-w-0 truncate font-mono text-[12px] text-fg-faint">
                 {truncateMiddle(status.path, 56)}
-              </p>
+              </span>
             </Tooltip>
           )}
+        </div>
+      )}
 
-          {installing && <InstallProgress progress={installing} className="mt-3" />}
+      {installing && <InstallProgress progress={installing} className="mt-3" />}
 
-          {/* A tool that ships inside the app has nothing to install, and on a
-              phone a file the user points at would not be allowed to run. */}
-          {!installing && !(status.source === 'bundled' && status.available) && (
-            <div className="mt-3 flex flex-wrap items-center gap-2">
-              <Button
-                size="sm"
-                variant={status.available || quietlyMissing ? 'secondary' : 'primary'}
-                icon={status.available ? <RotateCw size={13} /> : <Download size={13} />}
-                onClick={onInstall}
-              >
-                {status.available ? t('settings.toolUpdate') : t('settings.toolInstall')}
-              </Button>
-              {onLocate && !IS_MOBILE && (
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  icon={<FolderSearch size={13} />}
-                  onClick={pickFile}
-                >
-                  {t('settings.toolLocate')}
-                </Button>
-              )}
-              {customPath && onResetPath && !IS_MOBILE && (
-                <Button size="sm" variant="ghost" onClick={onResetPath}>
-                  {t('settings.toolReset')}
-                </Button>
-              )}
-            </div>
+      {installError != null && !installing && (
+        <InlineNotice tone="error" className="mt-2.5">
+          <span className="block font-medium">{t('settings.toolInstallFailed')}</span>
+          {installError}
+        </InlineNotice>
+      )}
+
+      {/* A tool that ships inside the app has nothing to install, and on a
+          phone a file the user points at would not be allowed to run. */}
+      {!installing && !(status.source === 'bundled' && status.available) && (
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <Button
+            size="sm"
+            variant={status.available || quietlyMissing ? 'secondary' : 'primary'}
+            onClick={onInstall}
+          >
+            {status.available ? t('settings.toolUpdate') : t('settings.toolInstall')}
+          </Button>
+          {onLocate && !IS_MOBILE && (
+            <Button size="sm" variant="ghost" onClick={pickFile}>
+              {t('settings.toolLocate')}
+            </Button>
+          )}
+          {customPath && onResetPath && !IS_MOBILE && (
+            <Button size="sm" variant="ghost" onClick={onResetPath}>
+              {t('settings.toolReset')}
+            </Button>
           )}
         </div>
-      </div>
+      )}
     </div>
   );
 }

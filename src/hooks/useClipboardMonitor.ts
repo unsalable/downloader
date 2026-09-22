@@ -60,11 +60,3 @@ export function useClipboardMonitor(
     };
   }, [enabled]);
 }
-
-/**
- * Marks a link as already handled, so pasting it manually does not then
- * produce a "new link detected" prompt for the same address.
- */
-export function useClipboardAcknowledge() {
-  return useRef<(url: string) => void>(() => {});
-}

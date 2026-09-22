@@ -157,7 +157,6 @@ export const clearCache = () => invoke<void>('clear_cache');
 export const getDiagnostics = () => invoke<DiagnosticsSnapshot>('get_diagnostics');
 export const getLogDir = () => invoke<string>('get_log_dir');
 export const getLicenses = () => invoke<{ packages: LicenseEntry[] }>('get_licenses');
-export const getAppVersion = () => invoke<string>('get_app_version');
 export const sweepTempFiles = () => invoke<number>('sweep_temp_files');
 
 // -- mobile platform -------------------------------------------------------
@@ -174,14 +173,25 @@ export const platformSetSystemBars = (dark: boolean) =>
   invoke<void>('platform_set_system_bars', { dark });
 export const platformTakeSharedText = () => invoke<string | null>('platform_take_shared_text');
 
-/** A newer build of the phone app, or null when this one is current. */
-export const checkAppUpdate = () => invoke<AppUpdate | null>('check_app_update');
-/** Resolves once the system installer has been opened on the downloaded APK. */
-export const installAppUpdate = (update: AppUpdate) =>
-  invoke<void>('install_app_update', { update });
-
 /** Dispatched by the Android side when a link is shared into a running app. */
 export const SHARED_TEXT_EVENT = 'ud-shared-text';
+
+// -- app updates -----------------------------------------------------------
+
+/** A newer build, or null when this one is current or never updates itself. */
+export const checkAppUpdate = () => invoke<AppUpdate | null>('check_app_update');
+/**
+ * Downloads the build. On the phone this resolves once the system installer
+ * has been opened on it; on the desktop, once the installer is staged and
+ * verified, which changes nothing until `applyAppUpdate`.
+ */
+export const installAppUpdate = (update: AppUpdate) =>
+  invoke<void>('install_app_update', { update });
+/** Desktop only. Starts the staged installer and exits the app. */
+export const applyAppUpdate = (update: AppUpdate) =>
+  invoke<void>('apply_app_update', { update });
+/** The commit this build was made from; empty when it was built outside git. */
+export const getBuildCommit = () => invoke<string>('get_build_commit');
 
 // -- events ----------------------------------------------------------------
 

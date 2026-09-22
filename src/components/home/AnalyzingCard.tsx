@@ -4,14 +4,19 @@ import { Skeleton } from '@/components/ui/Skeleton';
 import { useTranslation } from '@/i18n';
 import { cn } from '@/lib/cn';
 import { rise } from '@/lib/motion';
+import { IS_MOBILE } from '@/lib/platform';
+
+const CARD = 'overflow-hidden rounded-[var(--radius-card)] border border-card-edge bg-surface';
 
 /**
- * Skeleton shown while the engine resolves a link. It mirrors the real preview
- * card's proportions, so the transition to actual content is a fill rather than
- * a layout jump.
+ * Skeleton shown while the engine resolves a link. It mirrors the preview card
+ * and the options panel that replace it, so the change to real content is a
+ * fill rather than a layout jump. The spinner in the field says what is going
+ * on; this only holds the space, and tells a screen reader the same thing.
  */
 export function AnalyzingCard() {
   const { t } = useTranslation();
+  const field = IS_MOBILE ? 'h-12' : 'h-9';
 
   return (
     <motion.div
@@ -19,40 +24,27 @@ export function AnalyzingCard() {
       initial="initial"
       animate="animate"
       exit="exit"
-      className={cn(
-        'overflow-hidden rounded-[var(--radius-panel)] border border-[var(--border)]',
-        'bg-surface shadow-raised edge-light',
-      )}
+      className="flex flex-col gap-4"
       role="status"
       aria-live="polite"
       aria-label={t('analyze.analyzing')}
     >
-      <Skeleton className="aspect-video w-full" rounded="sm" />
-
-      <div className="p-4">
-        <div className="flex items-center gap-2 text-[13px] font-medium text-fg-muted">
-          <span className="size-1.5 shrink-0 bg-accent" />
-          <span className="eyebrow font-mono">{t('analyze.analyzing')}</span>
-        </div>
-
-        <Skeleton className="mt-3 h-4 w-4/5" />
-        <Skeleton className="mt-2 h-4 w-2/5" />
-
-        <div className="mt-4 flex gap-1.5">
-          <Skeleton className="h-5 w-14" />
-          <Skeleton className="h-5 w-12" />
-          <Skeleton className="h-5 w-16" />
+      <div className={CARD}>
+        {/* Square-cornered: the card clips it, as it does the real thumbnail. */}
+        <div aria-hidden="true" className="skeleton aspect-video w-full" />
+        <div className="p-4">
+          <Skeleton className="h-4 w-4/5" />
+          <Skeleton className="mt-3 h-3.5 w-2/5" />
         </div>
       </div>
 
-      <div className="border-t border-[var(--border)] p-4">
+      <div className={cn(CARD, 'p-4')}>
         <div className="grid grid-cols-2 gap-3">
-          <Skeleton className="h-10" />
-          <Skeleton className="h-10" />
-          <Skeleton className="h-10" />
-          <Skeleton className="h-10" />
+          <Skeleton className={field} />
+          <Skeleton className={field} />
         </div>
-        <Skeleton className="mt-4 h-12 w-full" rounded="lg" />
+        <Skeleton className={cn('mt-3', field)} />
+        <Skeleton className={cn('mt-4', IS_MOBILE ? 'h-13' : 'h-11')} rounded="lg" />
       </div>
     </motion.div>
   );

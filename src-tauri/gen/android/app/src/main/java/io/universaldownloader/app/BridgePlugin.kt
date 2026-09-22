@@ -157,7 +157,7 @@ class BridgePlugin(private val activity: Activity) : Plugin(activity) {
             val window = activity.window
             // The page pads itself clear of the bars, so what shows behind them
             // is the window, which has to match the page's background.
-            window.decorView.setBackgroundColor(Color.parseColor(if (args.dark) "#0C0B09" else "#F7F4EE"))
+            window.decorView.setBackgroundColor(Color.parseColor(if (args.dark) "#1C1C1E" else "#F5F5F7"))
             val controller = WindowCompat.getInsetsController(window, window.decorView)
             controller.isAppearanceLightStatusBars = !args.dark
             controller.isAppearanceLightNavigationBars = !args.dark

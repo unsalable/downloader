@@ -38,18 +38,12 @@ export function Segmented<T extends string>({
 
   return (
     <div className={cn('flex flex-col gap-1.5', className)}>
-      {label && (
-        <span className="text-[11px] font-medium uppercase tracking-[0.07em] text-fg-faint">
-          {label}
-        </span>
-      )}
+      {label && <span className="text-[12.5px] font-medium text-fg-muted">{label}</span>}
       <div
         role="radiogroup"
         aria-label={label}
-        className={cn(
-          'inline-flex w-full items-center gap-1 rounded-[10px] border border-[var(--border)]',
-          'bg-[var(--surface-sunken)] p-1',
-        )}
+        // The thumb's corner plus the 2px around it is the track's corner.
+        className="inline-flex w-full items-center rounded-[var(--radius-control)] bg-fill p-0.5"
       >
         {options.map((option) => {
           const selected = option.value === value;
@@ -62,7 +56,7 @@ export function Segmented<T extends string>({
               disabled={option.disabled}
               onClick={() => onChange(option.value)}
               className={cn(
-                'relative flex flex-1 items-center justify-center gap-1.5 rounded-[7px] font-medium',
+                'relative flex flex-1 items-center justify-center gap-1.5 rounded-[8px] font-medium',
                 'transition-colors duration-150 ease-out-quint',
                 'disabled:pointer-events-none disabled:opacity-40',
                 IS_MOBILE
@@ -77,7 +71,7 @@ export function Segmented<T extends string>({
                 <motion.span
                   layoutId={layoutId}
                   transition={SPRING.glide}
-                  className="absolute inset-0 rounded-[7px] bg-surface shadow-soft"
+                  className="absolute inset-0 rounded-[8px] bg-surface shadow-soft dark:bg-fill-active"
                 />
               )}
               <span className="relative z-10 flex items-center gap-1.5">

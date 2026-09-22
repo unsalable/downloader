@@ -9,6 +9,16 @@
         "dev"
       ],
       "port": 1420
+    },
+    {
+      "name": "ui-preview",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": [
+        "vite",
+        "--config",
+        "scripts/ui-preview/vite.config.mjs"
+      ],
+      "port": 1430
     }
   ]
 }

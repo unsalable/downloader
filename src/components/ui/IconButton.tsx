@@ -34,14 +34,14 @@ export const IconButton = forwardRef<HTMLButtonElement, IconButtonProps>(functio
       aria-label={label}
       aria-pressed={active || undefined}
       className={cn(
-        'pressable-sm inline-flex shrink-0 items-center justify-center rounded-md',
+        'pressable-sm inline-flex shrink-0 items-center justify-center rounded-[8px]',
         'disabled:pointer-events-none disabled:opacity-40',
         // A fingertip needs a larger target than a pointer does.
-        size === 'sm' ? (IS_MOBILE ? 'size-9' : 'size-7') : IS_MOBILE ? 'size-10' : 'size-8.5',
-        tone === 'default' && 'text-fg-muted hover:bg-surface-hover hover:text-fg',
+        size === 'sm' ? (IS_MOBILE ? 'size-9' : 'size-7') : IS_MOBILE ? 'size-10' : 'size-7.5',
+        tone === 'default' && 'text-fg-muted hover:bg-fill hover:text-fg',
         tone === 'accent' && 'text-accent hover:bg-accent-soft',
         tone === 'danger' && 'text-fg-muted hover:bg-error-soft hover:text-error',
-        active && 'bg-surface-active text-fg',
+        active && 'bg-fill-active text-fg',
         className,
       )}
       {...rest}

@@ -1,31 +1,24 @@
 import { AnimatePresence, motion } from 'motion/react';
 import { open } from '@tauri-apps/plugin-dialog';
 import { getCurrentWebview } from '@tauri-apps/api/webview';
-import {
-  CircleAlert,
-  Eraser,
-  FileAudio,
-  FilePlus2,
-  FileVideo,
-  FolderOpen,
-  Repeat,
-  RotateCcw,
-  X,
-} from 'lucide-react';
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { CircleAlert, FileAudio, FilePlus2, FileVideo, Repeat, X } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { ConvertCard } from '@/components/convert/ConvertCard';
-import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Dropdown, type DropdownOption } from '@/components/ui/Dropdown';
+import { IconButton } from '@/components/ui/IconButton';
+import { InlineNotice } from '@/components/ui/InlineNotice';
+import { ListGroup, ListGroupLabel, ROW_LINE } from '@/components/ui/ListGroup';
+import { PageHeader } from '@/components/ui/PageHeader';
 import { Segmented } from '@/components/ui/Segmented';
+import { SettingRow, ToggleRow } from '@/components/ui/SettingRow';
 import { Spinner } from '@/components/ui/Spinner';
-import { Toggle } from '@/components/ui/Toggle';
 import { Tooltip } from '@/components/ui/Tooltip';
 import { useTranslation } from '@/i18n';
 import type { TranslationKey } from '@/i18n';
 import { cn } from '@/lib/cn';
-import { LIST_ITEM, T } from '@/lib/motion';
+import { COLLAPSE, LIST_ITEM } from '@/lib/motion';
 import {
   AUDIO_BITRATES,
   INPUT_EXTENSIONS,
@@ -38,30 +31,33 @@ import {
 import { formatBytes, formatDuration, prettyCodec, truncateMiddle } from '@/lib/format';
 import { IS_MOBILE } from '@/lib/platform';
 import * as ipc from '@/services/ipc';
-import {
-  selectActiveJobs,
-  selectFinishedJobs,
-  useConvertStore,
-  type StagedFile,
-} from '@/stores/useConvertStore';
-import { useToastStore } from '@/stores/useToastStore';
+import { selectFinishedJobs, useConvertStore, type StagedFile } from '@/stores/useConvertStore';
 import { useToolsStore } from '@/stores/useToolsStore';
-import type { ConvertFormatInfo, ConvertJob, ConvertQuality, Settings } from '@/types';
+import type { ConvertFormatInfo, ConvertQuality, Settings } from '@/types';
 
 const DEFAULT_TARGET = 'mp4';
 
-/** Stable across renders so the memoised cards only re-render when their job does. */
-const JOB_HANDLERS: JobHandlers = {
-  onCancel: (id) => void ipc.cancelConversion(id),
-  onRetry: (id) => void ipc.retryConversion(id),
-  onRemove: (id) => void ipc.removeConversion(id),
+/** Where a row's text starts: its padding, the 44px tile, the gap. */
+const TEXT_INSET = 72;
+
+/** A phone stacks the control under its label, where it takes the full width. */
+const CONTROL_WIDTH = IS_MOBILE ? 'w-full' : 'w-[220px]';
+
+const DROP_TRANSITION = 'transition-[background-color,box-shadow] duration-150 ease-out-quint';
+
+const STAGED_LINE = cn(ROW_LINE, 'mt-0.5');
+
+/** Stable across renders so the memoised rows only re-render when their job does. */
+const JOB_HANDLERS = {
+  onCancel: (id: string) => void ipc.cancelConversion(id),
+  onRetry: (id: string) => void ipc.retryConversion(id),
+  onRemove: (id: string) => void ipc.removeConversion(id),
 };
 
 export function ConvertPage({ settings }: { settings: Settings }) {
   const { t } = useTranslation();
 
   const files = useConvertStore((state) => state.files);
-  const jobs = useConvertStore((state) => state.jobs);
   const submitting = useConvertStore((state) => state.submitting);
   const addFiles = useConvertStore((state) => state.addFiles);
   const removeFile = useConvertStore((state) => state.removeFile);
@@ -71,7 +67,6 @@ export function ConvertPage({ settings }: { settings: Settings }) {
   const ffmpeg = useToolsStore((state) => state.tools?.ffmpeg ?? null);
   const installing = useToolsStore((state) => state.installing.ffmpeg);
   const installTool = useToolsStore((state) => state.install);
-  const pushToast = useToastStore((state) => state.push);
 
   const [catalogue, setCatalogue] = useState<ConvertFormatInfo[]>([]);
   const [target, setTarget] = useState(DEFAULT_TARGET);
@@ -81,6 +76,12 @@ export function ConvertPage({ settings }: { settings: Settings }) {
   const [allowStreamCopy, setAllowStreamCopy] = useState(true);
   const [outputDir, setOutputDir] = useState<string | null>(null);
   const [dragging, setDragging] = useState(false);
+
+  // Each failure is reported beside the control that caused it, and cleared
+  // the next time that control is used.
+  const [pickError, setPickError] = useState<string | null>(null);
+  const [submitError, setSubmitError] = useState<string | null>(null);
+  const [installError, setInstallError] = useState<string | null>(null);
 
   // The catalogue is fixed for the life of the process, so it is fetched once.
   useEffect(() => {
@@ -117,8 +118,6 @@ export function ConvertPage({ settings }: { settings: Settings }) {
   }, [addFiles]);
 
   const targetKind = kindOf(catalogue, target) ?? 'video';
-  const active = useMemo(() => selectActiveJobs(jobs), [jobs]);
-  const finished = useMemo(() => selectFinishedJobs(jobs), [jobs]);
   const ready = files.filter((file) => file.error === null && !file.probing);
   const ffmpegReady = ffmpeg?.available ?? false;
 
@@ -134,26 +133,34 @@ export function ConvertPage({ settings }: { settings: Settings }) {
     ];
   }, [catalogue, t]);
 
+  // Both notices under the file section talk about the staged list, so they go
+  // when that list changes -- rather than sitting under a control the user can
+  // no longer press.
+  const forgetFileNotices = useCallback(() => {
+    setPickError(null);
+    setSubmitError(null);
+  }, []);
+
   const pickFiles = useCallback(async () => {
-    // The Android picker returns content URIs that FFmpeg cannot open; the
-    // platform side copies the choices somewhere it can and returns those.
-    if (IS_MOBILE) {
-      try {
+    setPickError(null);
+    try {
+      // The Android picker returns content URIs that FFmpeg cannot open; the
+      // platform side copies the choices somewhere it can and returns those.
+      if (IS_MOBILE) {
         const picked = await ipc.platformPickMediaFiles();
         if (picked.length > 0) void addFiles(picked);
-      } catch (caught) {
-        const info = ipc.toAppError(caught);
-        pushToast({ tone: 'error', title: info.title, body: info.message });
+        return;
       }
-      return;
+      const selected = await open({
+        multiple: true,
+        filters: [{ name: t('convert.mediaFiles'), extensions: [...INPUT_EXTENSIONS] }],
+      });
+      if (Array.isArray(selected)) void addFiles(selected);
+      else if (typeof selected === 'string') void addFiles([selected]);
+    } catch (caught) {
+      setPickError(ipc.toAppError(caught).message);
     }
-    const selected = await open({
-      multiple: true,
-      filters: [{ name: t('convert.mediaFiles'), extensions: [...INPUT_EXTENSIONS] }],
-    });
-    if (Array.isArray(selected)) void addFiles(selected);
-    else if (typeof selected === 'string') void addFiles([selected]);
-  }, [addFiles, pushToast, t]);
+  }, [addFiles, t]);
 
   const pickFolder = useCallback(async () => {
     const selected = await open({
@@ -165,6 +172,7 @@ export function ConvertPage({ settings }: { settings: Settings }) {
   }, [outputDir, settings.downloadDir]);
 
   const startConversion = useCallback(async () => {
+    setSubmitError(null);
     const result = await submit({
       targetFormat: target,
       outputDir,
@@ -173,234 +181,249 @@ export function ConvertPage({ settings }: { settings: Settings }) {
       audioBitrateKbps: acceptsBitrate(target) ? bitrate : null,
       allowStreamCopy,
     });
+    // Success needs no announcement: the files leave this list and turn up as
+    // rows in the one below.
+    if (result.error) setSubmitError(result.error);
+  }, [allowStreamCopy, bitrate, maxHeight, outputDir, quality, submit, target, targetKind]);
 
-    if (result.error) {
-      pushToast({ tone: 'error', title: t('convert.failedToQueue'), body: result.error });
-    } else if (result.queued > 0) {
-      pushToast({
-        tone: 'success',
-        title: t('convert.queued', { n: result.queued }),
-        dedupeKey: 'convert-queued',
-      });
-    }
-  }, [
-    allowStreamCopy,
-    bitrate,
-    maxHeight,
-    outputDir,
-    pushToast,
-    quality,
-    submit,
-    t,
-    target,
-    targetKind,
-  ]);
+  const installFfmpeg = useCallback(async () => {
+    setInstallError(null);
+    if (await installTool('ffmpeg')) return;
+    setInstallError(useToolsStore.getState().error ?? t('error.network.message'));
+  }, [installTool, t]);
 
   return (
-    <div className="mx-auto w-full max-w-[760px] px-6 pb-12 pt-2">
-      <AnimatePresence>
+    <div className={cn('mx-auto w-full max-w-[760px] pb-12', IS_MOBILE ? 'px-4 pt-2' : 'px-6')}>
+      <PageHeader title={t('convert.title')} />
+
+      <AnimatePresence initial={false}>
         {ffmpeg != null && !ffmpegReady && (
           <motion.div
-            initial={{ opacity: 0, y: -6 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, height: 0, transition: T.componentOut }}
-            transition={T.component}
-            className={cn(
-              'mb-4 flex items-center gap-3 rounded-[var(--radius-card)] border px-4 py-3',
-              'border-[var(--warning)]/35 bg-warning-soft',
-            )}
+            variants={COLLAPSE}
+            initial="initial"
+            animate="animate"
+            exit="exit"
+            className="overflow-hidden"
           >
-            <CircleAlert size={16} className="shrink-0 text-warning" />
-            <div className="min-w-0 flex-1">
-              <p className="text-[13px] font-medium text-fg">{t('convert.ffmpegRequired')}</p>
-              <p className="text-[12px] leading-relaxed text-fg-muted">
-                {t('convert.ffmpegRequiredBody')}
-              </p>
+            <div className="mb-5 flex items-center gap-3 rounded-[var(--radius-card)] border border-card-edge bg-surface px-4 py-3">
+              <CircleAlert size={16} aria-hidden="true" className="shrink-0 text-warning" />
+              <div className="min-w-0 flex-1">
+                <p className="text-[13.5px] font-medium text-fg">{t('convert.ffmpegRequired')}</p>
+                <p className="mt-0.5 text-[12.5px] leading-relaxed text-fg-muted">
+                  {t('convert.ffmpegRequiredBody')}
+                </p>
+                {installError && (
+                  <InlineNotice tone="error" className="mt-1.5">
+                    {installError}
+                  </InlineNotice>
+                )}
+              </div>
+              <Button
+                size="sm"
+                variant="secondary"
+                loading={installing != null}
+                onClick={() => void installFfmpeg()}
+              >
+                {installing != null ? t('settings.toolInstalling') : t('settings.toolInstall')}
+              </Button>
             </div>
-            <Button
-              size="sm"
-              variant="secondary"
-              loading={installing != null}
-              onClick={async () => {
-                if (await installTool('ffmpeg')) return;
-                pushToast({
-                  tone: 'error',
-                  title: t('settings.toolInstallFailed'),
-                  body: useToolsStore.getState().error ?? t('error.network.message'),
-                  durationMs: 9000,
-                });
-              }}
-            >
-              {installing != null ? t('settings.toolInstalling') : t('settings.toolInstall')}
-            </Button>
           </motion.div>
         )}
       </AnimatePresence>
 
       {/* -- picking files ------------------------------------------------- */}
 
-      <section
-        className={cn(
-          'rounded-[var(--radius-panel)] border border-dashed p-5 transition-colors duration-250 ease-out-quint',
-          dragging
-            ? 'border-[var(--accent)] bg-accent-soft/40'
-            : 'border-[var(--border-strong)] bg-surface-sunken/60',
-        )}
-      >
+      <section>
         {files.length === 0 ? (
-          <div className="flex flex-col items-center gap-2.5 py-6 text-center">
-            <FilePlus2 size={22} className="text-fg-faint" />
-            <div>
-              <p className="text-[13.5px] font-medium text-fg">
-                {t(IS_MOBILE ? 'convert.pickTitle' : 'convert.dropTitle')}
-              </p>
-              <p className="mt-0.5 text-[12.5px] text-fg-muted">
-                {t(IS_MOBILE ? 'convert.pickBody' : 'convert.dropBody')}
-              </p>
-            </div>
-            <Button size="sm" variant="secondary" className="mt-1" onClick={() => void pickFiles()}>
+          <div
+            className={cn(
+              'flex flex-col items-center rounded-[var(--radius-card)] border border-card-edge px-6 py-9 text-center',
+              DROP_TRANSITION,
+              dragging ? 'bg-accent-soft ring-2 ring-accent' : 'bg-surface',
+            )}
+          >
+            <FilePlus2 size={28} strokeWidth={1.5} aria-hidden="true" className="text-fg-faint" />
+            <p className="mt-3 text-[14px] font-medium text-fg">
+              {t(IS_MOBILE ? 'convert.pickTitle' : 'convert.dropTitle')}
+            </p>
+            <p className="mt-0.5 text-[12.5px] text-fg-muted">
+              {t(IS_MOBILE ? 'convert.pickBody' : 'convert.dropBody')}
+            </p>
+            <Button size="sm" variant="secondary" className="mt-4" onClick={() => void pickFiles()}>
               {t('convert.chooseFiles')}
             </Button>
           </div>
         ) : (
           <>
-            <div className="mb-3 flex items-center gap-2">
-              <span className="eyebrow text-fg-faint">
+            <div className="mb-1.5 flex items-center gap-1.5">
+              <ListGroupLabel className="min-w-0 flex-1 truncate">
                 {t('convert.fileCount', { n: files.length })}
-              </span>
-              <div className="ml-auto flex items-center gap-1.5">
-                <Button size="sm" variant="ghost" onClick={() => void pickFiles()}>
-                  {t('convert.addMore')}
-                </Button>
-                <Button size="sm" variant="ghost" onClick={clearFiles}>
-                  {t('convert.clearFiles')}
-                </Button>
-              </div>
+              </ListGroupLabel>
+              <Button size="sm" variant="ghost" onClick={() => void pickFiles()}>
+                {t('convert.addMore')}
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => {
+                  clearFiles();
+                  forgetFileNotices();
+                }}
+              >
+                {t('convert.clearFiles')}
+              </Button>
             </div>
-            <div className="flex flex-col gap-1.5">
+            <ListGroup
+              inset={TEXT_INSET}
+              className={cn('relative', DROP_TRANSITION, dragging && 'ring-2 ring-accent')}
+            >
               <AnimatePresence initial={false} mode="popLayout">
                 {files.map((file) => (
-                  <StagedRow key={file.path} file={file} onRemove={() => removeFile(file.path)} />
+                  <StagedRow
+                    key={file.path}
+                    file={file}
+                    onRemove={() => {
+                      removeFile(file.path);
+                      forgetFileNotices();
+                    }}
+                  />
                 ))}
               </AnimatePresence>
-            </div>
+            </ListGroup>
           </>
+        )}
+        {pickError && (
+          <InlineNotice tone="error" className="mt-2 px-4">
+            {pickError}
+          </InlineNotice>
         )}
       </section>
 
       {/* -- what to convert them into ------------------------------------- */}
 
-      <section className="mt-4 rounded-[var(--radius-panel)] border border-[var(--border)] bg-surface p-4">
-        <div className="grid grid-cols-2 gap-3">
-          <Dropdown
-            label={t('convert.target')}
-            value={target}
-            options={formatOptions}
-            onChange={setTarget}
-            menuWidth={300}
+      <section className="mt-6">
+        <ListGroup>
+          <SettingRow
+            title={t('convert.target')}
+            stacked={IS_MOBILE}
+            control={
+              <Dropdown
+                className={CONTROL_WIDTH}
+                value={target}
+                options={formatOptions}
+                onChange={setTarget}
+                menuWidth={300}
+                align="end"
+              />
+            }
           />
 
           {targetKind === 'video' ? (
-            <Dropdown
-              label={t('convert.resolution')}
-              value={maxHeight == null ? 'source' : String(maxHeight)}
-              options={[
-                { value: 'source', label: t('convert.resolutionSource') },
-                ...RESOLUTION_CAPS.map((height) => ({
-                  value: String(height),
-                  label: `${height}p`,
-                })),
-              ]}
-              onChange={(value) => setMaxHeight(value === 'source' ? null : Number(value))}
+            <SettingRow
+              title={t('convert.resolution')}
+              stacked={IS_MOBILE}
+              control={
+                <Dropdown
+                  className={CONTROL_WIDTH}
+                  value={maxHeight == null ? 'source' : String(maxHeight)}
+                  options={[
+                    { value: 'source', label: t('convert.resolutionSource') },
+                    ...RESOLUTION_CAPS.map((height) => ({
+                      value: String(height),
+                      label: `${height}p`,
+                    })),
+                  ]}
+                  onChange={(value) => setMaxHeight(value === 'source' ? null : Number(value))}
+                />
+              }
             />
           ) : (
-            <Dropdown
-              label={t('convert.bitrate')}
-              value={bitrate == null ? 'auto' : String(bitrate)}
-              disabled={!acceptsBitrate(target)}
-              options={[
-                {
-                  value: 'auto',
-                  label: t('convert.bitrateAuto'),
-                  description: t('convert.bitrateAutoHint'),
-                },
-                ...AUDIO_BITRATES.map((kbps) => ({
-                  value: String(kbps),
-                  label: `${kbps} kbps`,
-                })),
-              ]}
-              onChange={(value) => setBitrate(value === 'auto' ? null : Number(value))}
+            <SettingRow
+              title={t('convert.bitrate')}
+              stacked={IS_MOBILE}
+              control={
+                <Dropdown
+                  className={CONTROL_WIDTH}
+                  value={bitrate == null ? 'auto' : String(bitrate)}
+                  disabled={!acceptsBitrate(target)}
+                  options={[
+                    {
+                      value: 'auto',
+                      label: t('convert.bitrateAuto'),
+                      description: t('convert.bitrateAutoHint'),
+                    },
+                    ...AUDIO_BITRATES.map((kbps) => ({
+                      value: String(kbps),
+                      label: `${kbps} kbps`,
+                    })),
+                  ]}
+                  onChange={(value) => setBitrate(value === 'auto' ? null : Number(value))}
+                />
+              }
             />
           )}
-        </div>
 
-        {targetKind === 'video' && (
-          <div className="mt-3">
-            <Segmented
-              label={t('convert.quality')}
-              value={quality}
-              onChange={setQuality}
-              options={[
-                { value: 'high', label: t('convert.qualityHigh') },
-                { value: 'balanced', label: t('convert.qualityBalanced') },
-                { value: 'small', label: t('convert.qualitySmall') },
-              ]}
+          {targetKind === 'video' && (
+            <SettingRow
+              title={t('convert.quality')}
+              description={t('convert.qualityHint')}
+              stacked={IS_MOBILE}
+              control={
+                <Segmented
+                  className={CONTROL_WIDTH}
+                  size="sm"
+                  value={quality}
+                  onChange={setQuality}
+                  options={[
+                    { value: 'high', label: t('convert.qualityHigh') },
+                    { value: 'balanced', label: t('convert.qualityBalanced') },
+                    { value: 'small', label: t('convert.qualitySmall') },
+                  ]}
+                />
+              }
             />
-            <p className="mt-1.5 text-[11.5px] leading-relaxed text-fg-faint">
-              {t('convert.qualityHint')}
-            </p>
-          </div>
-        )}
+          )}
 
-        <div className="mt-4 flex items-center gap-3 border-t border-[var(--border)] pt-3.5">
-          <div className="min-w-0 flex-1">
-            <p className="text-[12.5px] font-medium text-fg">{t('convert.repackage')}</p>
-            <p className="text-[11.5px] leading-relaxed text-fg-muted">
-              {t('convert.repackageHint')}
-            </p>
-          </div>
-          <Toggle
+          <ToggleRow
+            title={t('convert.repackage')}
+            description={t('convert.repackageHint')}
             checked={allowStreamCopy}
             onChange={setAllowStreamCopy}
-            label={t('convert.repackage')}
           />
-        </div>
 
-        {IS_MOBILE ? (
+          {!IS_MOBILE && (
+            <SettingRow
+              title={
+                outputDir == null ? (
+                  t('convert.besideSource')
+                ) : (
+                  <Tooltip label={outputDir}>
+                    <span>{truncateMiddle(outputDir, 46)}</span>
+                  </Tooltip>
+                )
+              }
+              control={
+                <div className="flex items-center gap-1.5">
+                  {outputDir != null && (
+                    <Button size="sm" variant="ghost" onClick={() => setOutputDir(null)}>
+                      {t('convert.resetFolder')}
+                    </Button>
+                  )}
+                  <Button size="sm" variant="secondary" onClick={() => void pickFolder()}>
+                    {t('options.change')}
+                  </Button>
+                </div>
+              }
+            />
+          )}
+        </ListGroup>
+
+        {IS_MOBILE && (
           // Picked files are private copies, so results always go to the
           // Downloads folder; there is no other writable place to offer.
-          <div className="mt-3 flex items-start gap-2 border-t border-[var(--border)] pt-3.5">
-            <FolderOpen size={14} className="mt-0.5 shrink-0 text-fg-faint" />
-            <span className="min-w-0 flex-1 text-[12px] text-fg-muted [overflow-wrap:anywhere]">
-              {t('convert.savedTo', { folder: settings.downloadDir })}
-            </span>
-          </div>
-        ) : (
-          <div className="mt-3 flex items-center gap-2 border-t border-[var(--border)] pt-3.5">
-            <FolderOpen size={14} className="shrink-0 text-fg-faint" />
-            <span className="min-w-0 flex-1 truncate text-[12px] text-fg-muted">
-              {outputDir == null ? (
-                t('convert.besideSource')
-              ) : (
-                <Tooltip label={outputDir}>
-                  <span className="font-mono text-[11.5px]">{truncateMiddle(outputDir, 46)}</span>
-                </Tooltip>
-              )}
-            </span>
-            {outputDir != null && (
-              <Button
-                size="sm"
-                variant="ghost"
-                icon={<RotateCcw size={13} />}
-                onClick={() => setOutputDir(null)}
-              >
-                {t('convert.resetFolder')}
-              </Button>
-            )}
-            <Button size="sm" variant="secondary" onClick={() => void pickFolder()}>
-              {t('options.change')}
-            </Button>
-          </div>
+          <p className="mt-2 px-4 text-[12.5px] leading-relaxed text-fg-muted [overflow-wrap:anywhere]">
+            {t('convert.savedTo', { folder: settings.downloadDir })}
+          </p>
         )}
 
         <Button
@@ -413,36 +436,18 @@ export function ConvertPage({ settings }: { settings: Settings }) {
           disabled={ready.length === 0 || !ffmpegReady}
           onClick={() => void startConversion()}
         >
-          {ready.length > 1
-            ? t('convert.startMany', { n: ready.length })
-            : t('convert.start')}
+          {ready.length > 1 ? t('convert.startMany', { n: ready.length }) : t('convert.start')}
         </Button>
+        {submitError && (
+          <InlineNotice tone="error" className="mt-2 px-4">
+            {submitError}
+          </InlineNotice>
+        )}
       </section>
 
       {/* -- what is running ------------------------------------------------ */}
 
-      {jobs.length > 0 && (
-        <div className="mt-7 flex flex-col gap-6">
-          <JobGroup title={t('convert.inProgress')} jobs={active} handlers={JOB_HANDLERS} />
-          <JobGroup
-            title={t('downloads.finished')}
-            jobs={finished}
-            handlers={JOB_HANDLERS}
-            action={
-              finished.length > 0 && (
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  icon={<Eraser size={14} />}
-                  onClick={() => void ipc.clearFinishedConversions()}
-                >
-                  {t('downloads.clearFinished')}
-                </Button>
-              )
-            }
-          />
-        </div>
-      )}
+      <JobList smoothScroll={!settings.reduceMotion} />
     </div>
   );
 }
@@ -451,7 +456,7 @@ export function ConvertPage({ settings }: { settings: Settings }) {
 function StagedRow({ file, onRemove }: { file: StagedFile; onRemove: () => void }) {
   const { t } = useTranslation();
   const probe = file.probe;
-  const Icon = probe?.hasVideo ? FileVideo : FileAudio;
+  const Icon = probe != null && !probe.hasVideo ? FileAudio : FileVideo;
 
   const details: string[] = [];
   if (probe) {
@@ -465,78 +470,105 @@ function StagedRow({ file, onRemove }: { file: StagedFile; onRemove: () => void 
 
   return (
     <motion.div
-      layout="position"
+      layout={IS_MOBILE ? false : 'position'}
       variants={LIST_ITEM}
       initial="initial"
       animate="animate"
       exit="exit"
-      className={cn(
-        'group flex items-center gap-2.5 rounded-[8px] border border-[var(--border)] bg-surface px-3 py-2',
-        file.error != null && 'opacity-60',
-      )}
+      className={cn('group flex items-center gap-3 py-2.5 pl-4', IS_MOBILE ? 'pr-1.5' : 'pr-3')}
     >
-      <Icon size={15} className="shrink-0 text-fg-faint" />
+      <div
+        className={cn(
+          'flex size-11 shrink-0 items-center justify-center',
+          'rounded-[var(--radius-thumb)] bg-surface-sunken text-fg-muted',
+          file.error != null && 'opacity-60',
+        )}
+      >
+        <Icon size={19} aria-hidden="true" />
+      </div>
       <div className="min-w-0 flex-1">
-        <p className="truncate text-[12.5px] font-medium text-fg">{file.name}</p>
+        <p className="truncate text-[13.5px] font-medium leading-[18px] text-fg">{file.name}</p>
         {file.error != null ? (
-          <p className="truncate text-[11.5px] text-error">{file.error}</p>
+          <p className="mt-0.5 truncate text-[12.5px] leading-[18px] text-error">{file.error}</p>
         ) : file.probing ? (
-          <span className="flex items-center gap-1.5 text-[11.5px] text-fg-faint">
-            <Spinner size={10} />
+          <p className={cn(STAGED_LINE, 'items-center gap-x-1.5')}>
+            <Spinner size={11} />
             {t('convert.reading')}
-          </span>
+          </p>
         ) : (
-          <p className="metric truncate text-[11.5px] text-fg-faint">{details.join(' · ')}</p>
+          <p className={cn(STAGED_LINE, 'gap-x-3')}>
+            {details.map((detail, index) => (
+              <span key={index}>{detail}</span>
+            ))}
+          </p>
         )}
       </div>
-      {probe != null && !probe.hasVideo && <Badge tone="outline">{t('options.modeAudio')}</Badge>}
-      <button
-        type="button"
+      <IconButton
+        icon={<X size={15} />}
+        label={t('convert.removeFile')}
+        size={IS_MOBILE ? 'sm' : 'md'}
+        className="reveal-on-hover group-focus-within:opacity-100"
         onClick={onRemove}
-        aria-label={t('convert.removeFile')}
-        className="reveal-on-hover pressable-sm shrink-0 rounded-md p-1 text-fg-faint hover:bg-surface-hover hover:text-fg"
-      >
-        <X size={13} />
-      </button>
+      />
     </motion.div>
   );
 }
 
-interface JobHandlers {
-  onCancel: (id: string) => void;
-  onRetry: (id: string) => void;
-  onRemove: (id: string) => void;
-}
+/**
+ * Every conversion in one list, newest first. It subscribes to the jobs
+ * itself, so a progress tick renders this list and not the form above it.
+ */
+function JobList({ smoothScroll }: { smoothScroll: boolean }) {
+  const { t } = useTranslation();
+  const jobs = useConvertStore((state) => state.jobs);
+  const loaded = useConvertStore((state) => state.loaded);
 
-function JobGroup({
-  title,
-  jobs,
-  handlers,
-  action,
-}: {
-  title: string;
-  jobs: ConvertJob[];
-  handlers: JobHandlers;
-  action?: ReactNode;
-}) {
-  if (jobs.length === 0) return null;
+  const newestFirst = useMemo(() => [...jobs].sort((a, b) => b.createdAt - a.createdAt), [jobs]);
+  const hasFinished = useMemo(() => selectFinishedJobs(jobs).length > 0, [jobs]);
+
+  // The Convert button sits at the foot of a tall form, and the rows it
+  // produces land below it -- on a short window, out of sight. Bringing them
+  // into view is the confirmation that the press did something.
+  const sectionRef = useRef<HTMLElement>(null);
+  const previousCount = useRef<number | null>(null);
+  const count = jobs.length;
+  useEffect(() => {
+    if (!loaded) return;
+    const grew = previousCount.current != null && count > previousCount.current;
+    previousCount.current = count;
+    if (!grew) return;
+    sectionRef.current?.scrollIntoView({
+      block: 'nearest',
+      behavior: smoothScroll ? 'smooth' : 'auto',
+    });
+  }, [count, loaded, smoothScroll]);
+
+  if (count === 0) return null;
 
   return (
-    <motion.section layout={IS_MOBILE ? false : 'position'}>
-      <div className="mb-2 flex items-center px-1">
-        <h2 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-fg-faint">
-          {title}
-          <span className="tabular ml-1.5 font-normal text-fg-faint/70">{jobs.length}</span>
-        </h2>
-        {action && <div className="ml-auto">{action}</div>}
+    <section ref={sectionRef} className="mt-8 scroll-mb-6">
+      <div className="mb-1.5 flex min-h-8 items-center gap-1.5">
+        <ListGroupLabel className="min-w-0 flex-1 truncate">{t('convert.jobs')}</ListGroupLabel>
+        {hasFinished && (
+          <Button
+            size="sm"
+            variant="ghost"
+            aria-label={t('downloads.clearFinished')}
+            onClick={() => void ipc.clearFinishedConversions()}
+          >
+            {t('downloads.clear')}
+          </Button>
+        )}
       </div>
-      <div className="flex flex-col gap-2">
+      {/* `relative` gives a row that is leaving something to be positioned
+          against while the rows under it close the gap. */}
+      <ListGroup inset={TEXT_INSET} className="relative">
         <AnimatePresence initial={false} mode="popLayout">
-          {jobs.map((job) => (
-            <ConvertCard key={job.id} job={job} {...handlers} />
+          {newestFirst.map((job) => (
+            <ConvertCard key={job.id} job={job} {...JOB_HANDLERS} />
           ))}
         </AnimatePresence>
-      </div>
-    </motion.section>
+      </ListGroup>
+    </section>
   );
 }

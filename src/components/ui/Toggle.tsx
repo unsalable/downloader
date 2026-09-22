@@ -24,8 +24,7 @@ export function Toggle({ checked, onChange, disabled = false, label, id }: Toggl
       onClick={() => onChange(!checked)}
       // No `pressable` here, unlike every other control: the knob inside is a
       // layout animation, and Motion measures it against an ancestor it does
-      // not know is being scaled. The knob crossing the track is the feedback,
-      // and it is the most physical thing in the app already.
+      // not know is being scaled. The knob crossing the track is the feedback.
       className="shrink-0 rounded-full disabled:pointer-events-none disabled:opacity-40"
     >
       <ToggleTrack checked={checked} />
@@ -42,19 +41,21 @@ export function ToggleTrack({ checked }: { checked: boolean }) {
     <span
       aria-hidden="true"
       className={cn(
-        'relative flex shrink-0 items-center rounded-full px-[3px] transition-colors duration-250 ease-out-quint',
-        IS_MOBILE ? 'h-[28px] w-[48px]' : 'h-[22px] w-[38px]',
-        checked ? 'bg-accent' : 'bg-[var(--surface-active)]',
+        // The proportions of the system switch: a track a little over one and a
+        // half knobs wide, the knob filling it but for 2px all round.
+        'relative flex shrink-0 items-center rounded-full p-[2px] transition-colors duration-250 ease-out-quint',
+        IS_MOBILE ? 'h-[31px] w-[51px]' : 'h-[24px] w-[40px]',
+        checked ? 'bg-accent' : 'bg-fill-active',
       )}
     >
       <motion.span
         layout
-        // A spring here gives the knob a touch of overshoot, which is what makes
-        // the control feel physical rather than merely animated.
+        // A spring rather than a duration, so a knob thrown across the track
+        // comes to rest instead of stopping on a frame.
         transition={SPRING.snap}
         className={cn(
-          'block rounded-full bg-white shadow-sm',
-          IS_MOBILE ? 'size-[22px]' : 'size-4',
+          'block rounded-full bg-white shadow-[0_0_0_0.5px_rgb(0_0_0/0.06),0_2px_5px_rgb(0_0_0/0.2)]',
+          IS_MOBILE ? 'size-[27px]' : 'size-5',
           checked ? 'ml-auto' : 'mr-auto',
         )}
       />

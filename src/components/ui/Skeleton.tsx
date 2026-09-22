@@ -12,9 +12,9 @@ export function Skeleton({
       aria-hidden="true"
       className={cn(
         'skeleton',
-        rounded === 'sm' && 'rounded',
-        rounded === 'md' && 'rounded-lg',
-        rounded === 'lg' && 'rounded-xl',
+        rounded === 'sm' && 'rounded-[6px]',
+        rounded === 'md' && 'rounded-[var(--radius-thumb)]',
+        rounded === 'lg' && 'rounded-[var(--radius-card)]',
         rounded === 'full' && 'rounded-full',
         className,
       )}

@@ -1,31 +1,19 @@
 import { AnimatePresence, motion } from 'motion/react';
-import {
-  ArrowDown,
-  ArrowUp,
-  Check,
-  FolderOpen,
-  Pause,
-  Play,
-  RotateCw,
-  SquareArrowOutUpRight,
-  Trash2,
-  X,
-} from 'lucide-react';
+import { FolderOpen, Pause, Play, RotateCw, X } from 'lucide-react';
 import { memo, useState } from 'react';
 
-import { Badge } from '@/components/ui/Badge';
 import { IconButton } from '@/components/ui/IconButton';
+import { ROW_LINE } from '@/components/ui/ListGroup';
 import { PlatformBadge } from '@/components/ui/PlatformBadge';
 import { Progress } from '@/components/ui/Progress';
-import { Spinner } from '@/components/ui/Spinner';
 import { useThumbnail } from '@/hooks/useThumbnail';
 import { useTranslation } from '@/i18n';
 import type { TranslationKey } from '@/i18n';
 import { cn } from '@/lib/cn';
-import { basename, clampPercent, formatBytes, formatEta, formatSpeed } from '@/lib/format';
-import { COLLAPSE, LIST_ITEM, SPRING, T } from '@/lib/motion';
+import { clampPercent, formatBytes, formatEta, formatSpeed } from '@/lib/format';
+import { COLLAPSE, LIST_ITEM } from '@/lib/motion';
 import { IS_MOBILE, openFile, revealFile } from '@/lib/platform';
-import type { DownloadTask } from '@/types';
+import type { DownloadStage, DownloadTask } from '@/types';
 
 interface DownloadCardProps {
   task: DownloadTask;
@@ -34,33 +22,22 @@ interface DownloadCardProps {
   onCancel: (id: string) => void;
   onRetry: (id: string) => void;
   onRemove: (id: string) => void;
-  onMove: (id: string, delta: number) => void;
-  reorderable: boolean;
 }
 
-const STATUS_TONE = {
-  completed: 'success',
-  failed: 'error',
-  canceled: 'neutral',
-  paused: 'warning',
-} as const;
+/** Stages that are simply "downloading"; the bar already says that. */
+const TRANSFER_STAGES: ReadonlySet<DownloadStage> = new Set(['video', 'audio', 'image']);
 
-/** The colour of the rule down the left edge, which is how a row's state reads
- *  at a glance in a long queue. */
-const EDGE = {
-  completed: 'bg-[var(--success)]',
-  failed: 'bg-[var(--error)]',
-  canceled: 'bg-[var(--border-strong)]',
-  paused: 'bg-[var(--warning)]',
-  active: 'bg-[var(--accent)]',
-  idle: 'bg-transparent',
-} as const;
+/** 30px under a pointer, 36px under a fingertip. */
+const ACTION_SIZE = IS_MOBILE ? 'sm' : 'md';
+
+const LINE = cn(ROW_LINE, 'gap-x-3');
 
 /**
- * One queue row.
+ * One row of the downloads list: thumbnail, title, a single line saying what
+ * state it is in, and the actions that state allows.
  *
  * Memoised on the task object: progress events replace only the affected task,
- * so an active download re-renders its own card and leaves the rest alone.
+ * so an active download re-renders its own row and leaves the rest alone.
  */
 export const DownloadCard = memo(function DownloadCard({
   task,
@@ -69,301 +46,256 @@ export const DownloadCard = memo(function DownloadCard({
   onCancel,
   onRetry,
   onRemove,
-  onMove,
-  reorderable,
 }: DownloadCardProps) {
   const { t } = useTranslation();
   const { src } = useThumbnail(task.thumbnailUrl);
   const [showError, setShowError] = useState(false);
+  // A finished row is a button that opens its file, which is a big target to
+  // press for nothing when the file has since been moved or deleted. The
+  // attempt is what finds that out, so the row says so afterwards.
+  const [missing, setMissing] = useState(false);
 
   const { progress, status } = task;
   const percent = clampPercent(progress.percent);
   const isActive = status === 'downloading' || status === 'preparing' || status === 'processing';
   const isDone = status === 'completed';
-  const isTerminal = isDone || status === 'failed' || status === 'canceled';
-
-  const stageLabel = t(`stage.${progress.stage}` as TranslationKey);
-  const edge = isActive
-    ? EDGE.active
-    : status in EDGE
-      ? EDGE[status as keyof typeof EDGE]
-      : EDGE.idle;
+  const isAbandoned = status === 'failed' || status === 'canceled';
+  const outputPath = isDone ? task.outputPath : null;
 
   const errorTitle = task.error
     ? t(`error.${task.error.code}.title` as TranslationKey) === `error.${task.error.code}.title`
       ? task.error.title
       : t(`error.${task.error.code}.title` as TranslationKey)
-    : '';
+    : t('downloads.failed');
+  const technical = status === 'failed' ? task.error?.technical : null;
 
-  // Two clusters, placed differently on a pointer and on a screen. What a row
-  // *is* -- reorder it, forget it -- sits by the title on the desktop and is
-  // revealed by the pointer; what a row is *doing* -- pause, cancel, retry --
-  // sits in a column at the end, always visible. A phone has no pointer to
-  // reveal anything with and no width to spare, so both go to one bar under
-  // the row, the way a History entry's do.
-  const rowActions = (
+  // A finished row's thumbnail and text sit inside a button, which may only
+  // hold phrasing content; every other row is free to hold the bar and the
+  // error line, which are blocks.
+  const Box = outputPath ? 'span' : 'div';
+
+  const main = (
     <>
-      {reorderable && (
-        <>
-          <IconButton
-            icon={<ArrowUp size={13} />}
-            label={t('downloads.moveUp')}
-            size="sm"
-            onClick={() => onMove(task.id, -1)}
+      <Box
+        className={cn(
+          'flex h-11 w-[72px] shrink-0 items-center justify-center overflow-hidden',
+          'rounded-[var(--radius-thumb)] bg-surface-sunken',
+          isAbandoned && 'opacity-60',
+        )}
+      >
+        {src ? (
+          <img
+            src={src}
+            alt=""
+            aria-hidden="true"
+            draggable={false}
+            className="no-drag size-full object-cover"
           />
-          <IconButton
-            icon={<ArrowDown size={13} />}
-            label={t('downloads.moveDown')}
-            size="sm"
-            onClick={() => onMove(task.id, 1)}
-          />
-        </>
-      )}
-      <IconButton
-        icon={<Trash2 size={13} />}
-        label={t('downloads.remove')}
-        size="sm"
-        tone="danger"
-        onClick={() => onRemove(task.id)}
-      />
+        ) : (
+          <PlatformBadge platform={task.platform} size="md" />
+        )}
+      </Box>
+
+      <Box className="block min-w-0 flex-1">
+        <span className="block truncate text-[13.5px] font-medium leading-[18px] text-fg">
+          {task.title}
+        </span>
+
+        {isActive && (
+          <>
+            <Progress
+              value={progress.percent == null ? null : percent}
+              label={task.title}
+              className="mt-1.5"
+            />
+            <span className={cn(LINE, 'mt-1')}>
+              {/* Held to a width so the values after it do not shuffle sideways
+                  every time a digit is added. */}
+              {progress.percent != null && (
+                <span className="min-w-[34px]">{percent.toFixed(0)}%</span>
+              )}
+              {!TRANSFER_STAGES.has(progress.stage) && (
+                <span className="min-w-0 max-w-full truncate">
+                  {t(`stage.${progress.stage}` as TranslationKey)}
+                </span>
+              )}
+              {progress.speedBps > 0 && (
+                <>
+                  <span className={cn(!IS_MOBILE && 'min-w-[64px]')}>
+                    {formatSpeed(progress.speedBps)}
+                  </span>
+                  {progress.etaSec != null && (
+                    // A phone has room for the time but not for the word.
+                    <span>
+                      {IS_MOBILE
+                        ? formatEta(progress.etaSec)
+                        : t('downloads.eta', { time: formatEta(progress.etaSec) })}
+                    </span>
+                  )}
+                </>
+              )}
+            </span>
+          </>
+        )}
+
+        {status === 'queued' && <span className={cn(LINE, 'mt-0.5')}>{t('downloads.queued')}</span>}
+
+        {status === 'paused' && (
+          <span className={cn(LINE, 'mt-0.5')}>
+            <span>{t('downloads.paused')}</span>
+            {progress.percent != null && <span>{percent.toFixed(0)}%</span>}
+            {progress.receivedBytes > 0 && (
+              <span>
+                {formatBytes(progress.receivedBytes)}
+                {progress.totalBytes != null && ` / ${formatBytes(progress.totalBytes)}`}
+              </span>
+            )}
+          </span>
+        )}
+
+        {isDone && (
+          <span className={cn(LINE, 'mt-0.5')}>
+            {missing ? (
+              <span className="min-w-0 max-w-full truncate text-error">{t('file.missing')}</span>
+            ) : (
+              <>
+                <span className="min-w-0 max-w-full truncate">{task.formatLabel}</span>
+                {progress.totalBytes != null && progress.totalBytes > 0 && (
+                  <span>{formatBytes(progress.totalBytes)}</span>
+                )}
+              </>
+            )}
+          </span>
+        )}
+
+        {status === 'failed' && (
+          <div className="mt-0.5 flex items-baseline gap-2 text-[12.5px] leading-[18px]">
+            <p className="min-w-0 truncate text-error">{errorTitle}</p>
+            {technical && (
+              <button
+                type="button"
+                onClick={() => setShowError((value) => !value)}
+                aria-expanded={showError}
+                // The padding is only there to be pressed; the negative margin
+                // keeps it from making the row any taller.
+                className="-my-2 shrink-0 rounded-[6px] py-2 text-fg-muted transition-colors duration-150 ease-out-quint hover:text-fg"
+              >
+                {t('downloads.details')}
+              </button>
+            )}
+          </div>
+        )}
+
+        {status === 'canceled' && (
+          <span className={cn(LINE, 'mt-0.5')}>{t('downloads.canceled')}</span>
+        )}
+      </Box>
     </>
   );
 
-  const stateActions = (
-    <>
-      {isActive && (
-        <IconButton
-          icon={<Pause size={15} />}
-          label={t('downloads.pause')}
-          onClick={() => onPause(task.id)}
-        />
-      )}
-      {(status === 'paused' || status === 'queued') && (
-        <IconButton
-          icon={<Play size={15} />}
-          label={t('downloads.resume')}
-          tone="accent"
-          onClick={() => onResume(task.id)}
-        />
-      )}
-      {(status === 'failed' || status === 'canceled') && (
-        <IconButton
-          icon={<RotateCw size={15} />}
-          label={t('downloads.retry')}
-          tone="accent"
-          onClick={() => onRetry(task.id)}
-        />
-      )}
-      {!isTerminal && (
-        <IconButton
-          icon={<X size={15} />}
-          label={t('downloads.cancel')}
-          tone="danger"
-          onClick={() => onCancel(task.id)}
-        />
-      )}
-    </>
+  // The thumbnail and the text are one target, and the padding on the row's
+  // left is inside it, so the whole row up to the actions opens the file.
+  const mainClass = cn(
+    'flex min-w-0 flex-1 items-center py-2.5 pr-2',
+    IS_MOBILE ? 'gap-3 pl-3' : 'gap-4 pl-4',
   );
 
   return (
     <motion.article
-      // See `Group` in DownloadsPage: no per-tick layout measuring on a phone.
+      // Layout animation measures the row on every render, and progress renders
+      // it several times a second; a phone skips the glide.
       layout={IS_MOBILE ? false : 'position'}
       variants={LIST_ITEM}
       initial="initial"
       animate="animate"
       exit="exit"
+      aria-label={task.title}
       className={cn(
-        'group relative overflow-hidden rounded-[var(--radius-card)] border border-[var(--border)]',
-        'bg-surface transition-colors duration-150 ease-out-quint hover:border-[var(--border-strong)]',
+        'group',
+        outputPath &&
+          'transition-colors duration-150 ease-out-quint hover:bg-surface-hover has-[[data-open]:active]:bg-surface-active',
       )}
     >
-      {/* State rule. One pixel of colour carries what a coloured card would. */}
-      <span
-        aria-hidden="true"
-        className={cn(
-          'absolute inset-y-0 left-0 w-[3px] transition-colors duration-250 ease-out-quint',
-          edge,
+      <div className={cn('flex items-center', IS_MOBILE ? 'pr-1.5' : 'pr-3')}>
+        {outputPath ? (
+          <button
+            type="button"
+            data-open=""
+            onClick={() => void openFile(outputPath).catch(() => setMissing(true))}
+            aria-label={t('downloads.openFileNamed', { title: task.title })}
+            className={cn(mainClass, 'cursor-pointer rounded-[12px] text-left')}
+          >
+            {main}
+          </button>
+        ) : (
+          <div className={mainClass}>{main}</div>
         )}
-      />
 
-      {/* A phone's action bar is a full-width row under the thumbnail rather
-          than a third column, so it wraps. */}
-      <div className={cn('flex gap-3 p-3 pl-4', IS_MOBILE && 'flex-wrap gap-y-0')}>
-        <div className="relative aspect-video w-[100px] shrink-0 overflow-hidden rounded-[5px] bg-surface-sunken">
-          {src ? (
-            <img
-              src={src}
-              alt=""
-              aria-hidden="true"
-              draggable={false}
-              className={cn(
-                'no-drag size-full object-cover',
-                // A finished or abandoned row stops competing for attention.
-                isTerminal && !isDone && 'opacity-45 grayscale',
-              )}
+        <div
+          className={cn(
+            'flex shrink-0 items-center gap-0.5',
+            // A row that is still doing something keeps its controls in view:
+            // they belong to what is happening. A finished one is a record,
+            // and an icon parked at the far end of it reads as unattached --
+            // a short title leaves it stranded in the gap -- so those wait for
+            // the pointer that is going to use them. A touch screen has no
+            // pointer to wait for, so there they are always shown.
+            (isDone || isAbandoned) &&
+              'reveal-on-hover transition-opacity duration-150 ease-out-quint group-focus-within:opacity-100',
+          )}
+        >
+          {isActive && (
+            <IconButton
+              icon={<Pause size={15} />}
+              label={t('downloads.pause')}
+              size={ACTION_SIZE}
+              onClick={() => onPause(task.id)}
+            />
+          )}
+          {(status === 'paused' || status === 'queued') && (
+            <IconButton
+              icon={<Play size={15} />}
+              label={t('downloads.resume')}
+              size={ACTION_SIZE}
+              onClick={() => onResume(task.id)}
+            />
+          )}
+          {isAbandoned && (
+            <IconButton
+              icon={<RotateCw size={15} />}
+              label={t('downloads.retry')}
+              size={ACTION_SIZE}
+              onClick={() => onRetry(task.id)}
+            />
+          )}
+          {outputPath && (
+            <IconButton
+              icon={<FolderOpen size={15} />}
+              label={t('downloads.showInFolder')}
+              size={ACTION_SIZE}
+              onClick={() => void revealFile(outputPath).catch(() => setMissing(true))}
+            />
+          )}
+          {isDone || isAbandoned ? (
+            <IconButton
+              icon={<X size={15} />}
+              label={t('downloads.remove')}
+              size={ACTION_SIZE}
+              onClick={() => onRemove(task.id)}
             />
           ) : (
-            <div className="flex size-full items-center justify-center">
-              <PlatformBadge platform={task.platform} size="md" />
-            </div>
-          )}
-          {isDone && (
-            // Finishing is the one moment in a row's life worth marking. The
-            // scrim fades, the mark lands with a little weight, and then it is
-            // over -- long enough to be seen, short enough to not be waited on.
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              transition={T.component}
-              className="absolute inset-0 flex items-center justify-center bg-black/50"
-            >
-              <motion.span
-                initial={{ scale: 0.55, opacity: 0 }}
-                animate={{ scale: 1, opacity: 1 }}
-                transition={SPRING.snap}
-              >
-                <Check size={20} strokeWidth={2.5} className="text-white" />
-              </motion.span>
-            </motion.div>
+            <IconButton
+              icon={<X size={15} />}
+              label={t('downloads.cancel')}
+              size={ACTION_SIZE}
+              onClick={() => onCancel(task.id)}
+            />
           )}
         </div>
-
-        <div className="flex min-w-0 flex-1 flex-col gap-1.5">
-          <div className="flex items-start gap-2">
-            <h3 className="line-clamp-1 min-w-0 flex-1 text-[13.5px] font-medium leading-snug text-fg">
-              {task.title}
-            </h3>
-
-            {/* On a phone these live in the bar at the foot of the row. A
-                pointer can be waited for, so here they stay hidden until it
-                arrives and cost the title nothing; a fingertip has no hover,
-                so on touch they would be permanently parked on the title's
-                line -- and on a 375px screen that left the title two
-                characters wide. */}
-            {!IS_MOBILE && (
-              <div className="reveal-on-hover flex shrink-0 items-center gap-0.5 transition-opacity duration-150 ease-out-quint">
-                {rowActions}
-              </div>
-            )}
-          </div>
-
-          {/* One meta line: format, state, and the stage while it is running. */}
-          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-            <span className="metric text-[12px] text-fg-faint">{task.formatLabel}</span>
-            {status in STATUS_TONE && (
-              <Badge tone={STATUS_TONE[status as keyof typeof STATUS_TONE]}>
-                {t(`downloads.${status === 'completed' ? 'complete' : status}` as TranslationKey)}
-              </Badge>
-            )}
-            {status === 'queued' && <Badge tone="neutral">{t('downloads.waiting')}</Badge>}
-            {isActive && (
-              <span className="flex items-center gap-1.5 text-[11.5px] text-fg-muted">
-                <Spinner size={11} />
-                {stageLabel}
-                {progress.stageCount > 1 && (
-                  <span className="metric text-fg-faint">
-                    {progress.stageIndex}/{progress.stageCount}
-                  </span>
-                )}
-              </span>
-            )}
-          </div>
-
-          <div className="mt-auto pt-1">
-            {(isActive || status === 'paused') && (
-              <>
-                <div className="metric mb-1.5 flex items-center gap-3 text-[12px] text-fg-muted">
-                  <span className="w-[42px] text-[15px] font-semibold text-fg">
-                    {percent.toFixed(0)}%
-                  </span>
-                  <span>
-                    {formatBytes(progress.receivedBytes)}
-                    {progress.totalBytes != null && ` / ${formatBytes(progress.totalBytes)}`}
-                  </span>
-                  {status !== 'paused' && progress.speedBps > 0 && (
-                    <>
-                      <span className="ml-auto text-fg">{formatSpeed(progress.speedBps)}</span>
-                      {progress.etaSec != null && (
-                        <span className="w-[70px] text-right">
-                          {t('downloads.eta', { time: formatEta(progress.etaSec) })}
-                        </span>
-                      )}
-                    </>
-                  )}
-                </div>
-                <Progress
-                  value={progress.percent == null && isActive ? null : percent}
-                  tone={status === 'paused' ? 'muted' : 'accent'}
-                  label={task.title}
-                />
-              </>
-            )}
-
-            {isDone && task.outputPath && (
-              <div className="flex items-center gap-2">
-                {/* Beside two buttons a phone has room for a few letters of the
-                    name, which the title above already gives in full. */}
-                {!IS_MOBILE && (
-                  <span className="metric min-w-0 flex-1 truncate text-[11.5px] text-fg-faint">
-                    {basename(task.outputPath)}
-                  </span>
-                )}
-                <button
-                  type="button"
-                  onClick={() => void openFile(task.outputPath!)}
-                  className="pressable flex shrink-0 items-center gap-1 rounded-[5px] px-1.5 py-1 text-[12px] font-medium text-accent hover:bg-accent-soft"
-                >
-                  <SquareArrowOutUpRight size={12} />
-                  {t('downloads.openFile')}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => void revealFile(task.outputPath!)}
-                  className="pressable flex shrink-0 items-center gap-1 rounded-[5px] px-1.5 py-1 text-[12px] font-medium text-fg-muted hover:bg-surface-hover hover:text-fg"
-                >
-                  <FolderOpen size={12} />
-                  {t('downloads.openFolder')}
-                </button>
-              </div>
-            )}
-
-            {status === 'failed' && task.error && (
-              <div className="flex items-baseline gap-2">
-                <p className="min-w-0 flex-1 truncate text-[12.5px] leading-snug text-fg">
-                  {errorTitle}
-                </p>
-                {task.error.technical && (
-                  <button
-                    type="button"
-                    onClick={() => setShowError((value) => !value)}
-                    aria-expanded={showError}
-                    className="eyebrow pressable shrink-0 rounded font-mono text-fg-faint hover:text-fg-muted"
-                  >
-                    {showError ? t('analyze.hideDetails') : t('analyze.details')}
-                  </button>
-                )}
-              </div>
-            )}
-
-            {status === 'canceled' && (
-              <span className="text-[12px] text-fg-faint">{t('downloads.canceled')}</span>
-            )}
-          </div>
-        </div>
-
-        {IS_MOBILE ? (
-          <div className="mt-2.5 flex w-full items-center justify-end gap-0.5 border-t border-[var(--border)] pt-1">
-            {rowActions}
-            {stateActions}
-          </div>
-        ) : (
-          <div className="flex shrink-0 flex-col justify-center gap-1">{stateActions}</div>
-        )}
       </div>
 
-      <AnimatePresence>
-        {showError && task.error?.technical && (
+      <AnimatePresence initial={false}>
+        {showError && technical && (
           <motion.div
             variants={COLLAPSE}
             initial="initial"
@@ -371,8 +303,8 @@ export const DownloadCard = memo(function DownloadCard({
             exit="exit"
             className="overflow-hidden"
           >
-            <pre className="selectable max-h-32 overflow-auto whitespace-pre-wrap break-words border-t border-[var(--border)] bg-surface-sunken px-4 py-2.5 font-mono text-[11px] leading-relaxed text-fg-muted">
-              {task.error.technical}
+            <pre className="selectable max-h-32 overflow-auto whitespace-pre-wrap break-words bg-surface-sunken px-4 py-2.5 font-mono text-[12px] leading-relaxed text-fg-muted">
+              {technical}
             </pre>
           </motion.div>
         )}

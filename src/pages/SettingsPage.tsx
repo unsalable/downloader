@@ -2,6 +2,7 @@ import { motion } from 'motion/react';
 import { open } from '@tauri-apps/plugin-dialog';
 import { openPath } from '@tauri-apps/plugin-opener';
 import {
+  Check,
   ChevronLeft,
   ChevronRight,
   FolderOpen,
@@ -9,24 +10,27 @@ import {
   Keyboard,
   Link2,
   Palette,
-  ScrollText,
   SlidersHorizontal,
   Sparkles,
   Trash2,
 } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { BrowserLinkCard, useBridgeStatus } from '@/components/settings/BrowserLinkCard';
 import { HotkeyRecorder } from '@/components/settings/HotkeyRecorder';
 import { ToolCard } from '@/components/settings/ToolCard';
 import { Button } from '@/components/ui/Button';
 import { Dropdown } from '@/components/ui/Dropdown';
+import { InlineNotice } from '@/components/ui/InlineNotice';
+import { ListGroup } from '@/components/ui/ListGroup';
 import { Modal } from '@/components/ui/Modal';
+import { PageHeader } from '@/components/ui/PageHeader';
 import { Segmented } from '@/components/ui/Segmented';
 import { SettingGroup, SettingRow, ToggleRow } from '@/components/ui/SettingRow';
 import { Slider } from '@/components/ui/Slider';
 import { TextInput } from '@/components/ui/TextInput';
 import { Tooltip } from '@/components/ui/Tooltip';
+import { useMomentary } from '@/hooks/useMomentary';
 import { LANGUAGES, useTranslation } from '@/i18n';
 import type { TranslationKey } from '@/i18n';
 import { cn } from '@/lib/cn';
@@ -36,7 +40,6 @@ import { SPRING, T } from '@/lib/motion';
 import { IS_MOBILE } from '@/lib/platform';
 import * as ipc from '@/services/ipc';
 import { useSettingsStore } from '@/stores/useSettingsStore';
-import { useToastStore } from '@/stores/useToastStore';
 import { useToolsStore } from '@/stores/useToolsStore';
 import type {
   CacheStats,
@@ -64,6 +67,14 @@ const ALL_SECTIONS: {
   icon: typeof Sparkles;
 }[] = [
   { id: 'general', label: 'settings.general', summary: 'settings.generalSummary', icon: Sparkles },
+  // Second, not further down: this is the only place left to switch between
+  // light and dark, so it is kept where it is seen without looking for it.
+  {
+    id: 'appearance',
+    label: 'settings.appearance',
+    summary: 'settings.appearanceSummary',
+    icon: Palette,
+  },
   {
     id: 'downloads',
     label: 'settings.downloads',
@@ -75,12 +86,6 @@ const ALL_SECTIONS: {
     label: 'settings.connection',
     summary: 'settings.connectionSummary',
     icon: Link2,
-  },
-  {
-    id: 'appearance',
-    label: 'settings.appearance',
-    summary: 'settings.appearanceSummary',
-    icon: Palette,
   },
   {
     id: 'performance',
@@ -105,14 +110,6 @@ const DEFAULT_HOTKEYS: Record<HotkeyAction, string> = {
   openHistory: 'Ctrl+Shift+H',
   openSettings: 'Ctrl+,',
 };
-
-/**
- * The heading of a section's first group. On a phone the section's own page
- * title already says it, one line above.
- */
-function leadTitle(title: string): string | undefined {
-  return IS_MOBILE ? undefined : title;
-}
 
 /** A control's width beside its label on the desktop; a phone gives it the row. */
 function controlWidth(desktop: string): string {
@@ -163,10 +160,18 @@ export function SettingsPage({ settings, section: openSection, onSectionChange }
   const section = IS_MOBILE ? (openSection ?? null) : desktopSection;
   const entry = sections.find((candidate) => candidate.id === section);
 
+  // The screen change has already brought the page in; what is animated here is
+  // only a change of section after that, which the user asked for.
+  const opened = useRef(false);
+  useEffect(() => {
+    opened.current = true;
+  }, []);
+  const arrive = opened.current ? { opacity: 0, y: 6 } : false;
+
   const content = section && (
     <motion.div
       key={section}
-      initial={{ opacity: 0, y: 6 }}
+      initial={arrive}
       animate={{ opacity: 1, y: 0 }}
       transition={T.component}
       className="min-w-0 flex-1 space-y-6"
@@ -222,7 +227,9 @@ export function SettingsPage({ settings, section: openSection, onSectionChange }
       <div className="mx-auto flex w-full max-w-[880px] flex-col px-4 pb-12">
         {entry ? (
           <>
-            <div className="sticky top-0 z-10 -mx-4 mb-2 flex h-14 items-center gap-1 bg-bg px-1.5">
+            {/* Stands in for the screen's own bar, which the shell takes away
+                while a section is open: the same height, and the page's heading. */}
+            <div className="sticky top-0 z-10 -mx-4 mb-2 flex h-12 items-center gap-1 bg-bg px-1.5">
               <button
                 type="button"
                 onClick={() => onSectionChange?.(null)}
@@ -231,42 +238,45 @@ export function SettingsPage({ settings, section: openSection, onSectionChange }
               >
                 <ChevronLeft size={24} />
               </button>
-              <h2 className="truncate text-[17px] font-semibold text-fg">{t(entry.label)}</h2>
+              <h1 className="truncate text-[17px] font-semibold tracking-[-0.01em] text-fg">
+                {t(entry.label)}
+              </h1>
             </div>
             {content}
           </>
         ) : (
           <motion.nav
-            initial={{ opacity: 0, y: 6 }}
+            initial={arrive}
             animate={{ opacity: 1, y: 0 }}
             transition={T.component}
             aria-label={t('settings.title')}
-            className="mt-4 overflow-hidden rounded-[var(--radius-panel)] border border-[var(--border)] bg-surface divide-y divide-[var(--border)]"
+            className="mt-4"
           >
-            {sections.map((candidate) => {
-              const Icon = candidate.icon;
-              return (
-                <button
-                  key={candidate.id}
-                  type="button"
-                  onClick={() => onSectionChange?.(candidate.id)}
-                  className="flex min-h-[72px] w-full items-center gap-3.5 px-4 py-3 text-left transition-colors duration-150 ease-out-quint active:bg-surface-active"
-                >
-                  <span className="flex size-10 shrink-0 items-center justify-center rounded-[10px] bg-accent-soft text-accent">
-                    <Icon size={19} />
-                  </span>
-                  <span className="min-w-0 flex-1">
-                    <span className="block text-[15.5px] font-medium text-fg">
-                      {t(candidate.label)}
+            {/* 16 padding + 36 tile + 14 gap: the hairlines start under the text. */}
+            <ListGroup inset={66}>
+              {sections.map((candidate) => {
+                const Icon = candidate.icon;
+                return (
+                  <button
+                    key={candidate.id}
+                    type="button"
+                    onClick={() => onSectionChange?.(candidate.id)}
+                    className="flex min-h-[68px] w-full items-center gap-3.5 px-4 py-3 text-left transition-colors duration-150 ease-out-quint active:bg-fill"
+                  >
+                    <span className="flex size-9 shrink-0 items-center justify-center rounded-[9px] bg-fill text-fg-muted">
+                      <Icon size={18} />
                     </span>
-                    <span className="mt-0.5 block truncate text-[13px] text-fg-muted">
-                      {t(candidate.summary)}
+                    <span className="min-w-0 flex-1">
+                      <span className="block text-[15px] text-fg">{t(candidate.label)}</span>
+                      <span className="mt-0.5 block truncate text-[13px] text-fg-muted">
+                        {t(candidate.summary)}
+                      </span>
                     </span>
-                  </span>
-                  <ChevronRight size={19} className="shrink-0 text-fg-faint" />
-                </button>
-              );
-            })}
+                    <ChevronRight size={18} className="shrink-0 text-fg-faint" />
+                  </button>
+                );
+              })}
+            </ListGroup>
           </motion.nav>
         )}
         {resetModal}
@@ -275,37 +285,45 @@ export function SettingsPage({ settings, section: openSection, onSectionChange }
   }
 
   return (
-    <div className="mx-auto flex w-full max-w-[880px] gap-6 px-6 pb-12">
-      <nav className="sticky top-3 h-fit w-[168px] shrink-0 space-y-0.5" aria-label={t('settings.title')}>
-        {sections.map((candidate) => {
-          const Icon = candidate.icon;
-          const active = section === candidate.id;
-          return (
-            <button
-              key={candidate.id}
-              type="button"
-              onClick={() => setDesktopSection(candidate.id)}
-              className={cn(
-                'relative flex h-8.5 w-full items-center gap-2.5 rounded-lg px-2.5 text-[13px] font-medium',
-                'transition-colors duration-150 ease-out-quint',
-                active ? 'text-fg' : 'text-fg-muted hover:bg-surface-hover hover:text-fg',
-              )}
-            >
-              {active && (
-                <motion.span
-                  layoutId="settings-active"
-                  transition={SPRING.glide}
-                  className="absolute inset-0 rounded-lg bg-surface-active"
-                />
-              )}
-              <Icon size={15} className={cn('relative z-10', active && 'text-accent')} />
-              <span className="relative z-10">{t(candidate.label)}</span>
-            </button>
-          );
-        })}
-      </nav>
+    <div className="mx-auto w-full max-w-[840px] px-6 pb-12">
+      <PageHeader title={t('settings.title')} />
 
-      {content}
+      <div className="flex gap-7">
+        {/* Words only. The app's own sidebar stands right beside this list, and
+            a second column of icons next to the first is a lot to look at. */}
+        <nav
+          className="sticky top-6 flex h-fit w-[148px] shrink-0 flex-col gap-0.5"
+          aria-label={t('settings.title')}
+        >
+          {sections.map((candidate) => {
+            const active = section === candidate.id;
+            return (
+              <button
+                key={candidate.id}
+                type="button"
+                onClick={() => setDesktopSection(candidate.id)}
+                aria-current={active ? 'true' : undefined}
+                className={cn(
+                  'relative flex h-[34px] w-full items-center rounded-[8px] px-2.5 text-left text-[13px] font-medium',
+                  'transition-colors duration-150 ease-out-quint',
+                  active ? 'text-fg' : 'text-fg-muted hover:bg-fill hover:text-fg',
+                )}
+              >
+                {active && (
+                  <motion.span
+                    layoutId="settings-active"
+                    transition={SPRING.glide}
+                    className="absolute inset-0 rounded-[8px] bg-fill-active"
+                  />
+                )}
+                <span className="relative z-10 truncate">{t(candidate.label)}</span>
+              </button>
+            );
+          })}
+        </nav>
+
+        {content}
+      </div>
       {resetModal}
     </div>
   );
@@ -318,7 +336,7 @@ function GeneralSection({ settings, update }: { settings: Settings; update: Upda
 
   return (
     <>
-      <SettingGroup title={leadTitle(t('settings.general'))}>
+      <SettingGroup>
         {!IS_MOBILE && (
           <>
             <ToggleRow
@@ -403,22 +421,18 @@ function DownloadsSection({ settings, update }: { settings: Settings; update: Up
 
   return (
     <>
-      <SettingGroup title={leadTitle(t('settings.downloads'))}>
+      <SettingGroup>
         <SettingRow
           title={t('settings.downloadDir')}
           description={
             IS_MOBILE ? (
               <>
-                <span className="block font-mono text-[11.5px] [overflow-wrap:anywhere]">
-                  {settings.downloadDir}
-                </span>
+                <span className="block [overflow-wrap:anywhere]">{settings.downloadDir}</span>
                 <span className="mt-1 block">{t('settings.downloadDirMobileHint')}</span>
               </>
             ) : (
               <Tooltip label={settings.downloadDir}>
-                <span className="font-mono text-[11.5px]">
-                  {truncateMiddle(settings.downloadDir, 52)}
-                </span>
+                <span>{truncateMiddle(settings.downloadDir, 52)}</span>
               </Tooltip>
             )
           }
@@ -535,12 +549,11 @@ function DownloadsSection({ settings, update }: { settings: Settings; update: Up
             <div className="space-y-2">
               <TextInput
                 value={template}
-                monospace
                 onChange={(event) => setTemplate(event.target.value)}
                 onBlur={() => void update({ filenameTemplate: template })}
                 aria-label={t('settings.filenameTemplate')}
               />
-              <p className="truncate font-mono text-[11.5px] text-fg-faint">
+              <p className={cn('truncate text-fg-muted', IS_MOBILE ? 'text-[13px]' : 'text-[12.5px]')}>
                 {t('settings.filenamePreview')}: {preview}
               </p>
             </div>
@@ -555,18 +568,21 @@ function AppearanceSection({ settings, update }: { settings: Settings; update: U
   const { t } = useTranslation();
 
   return (
-    <SettingGroup title={leadTitle(t('settings.appearance'))}>
+    <SettingGroup>
+      {/* The only place the theme is switched, so it leads the section and
+          says in so many words that light and dark are what it chooses between. */}
       <SettingRow
         title={t('settings.theme')}
+        description={t('settings.themeHint')}
         stacked={IS_MOBILE}
         control={
-          <div className={controlWidth('w-[260px]')}>
+          <div className={controlWidth('w-[240px]')}>
             <Segmented
               value={settings.theme}
               options={[
-                { value: 'dark', label: t('topbar.themeDark') },
-                { value: 'light', label: t('topbar.themeLight') },
-                { value: 'system', label: t('topbar.themeSystem') },
+                { value: 'system', label: t('settings.themeSystem') },
+                { value: 'light', label: t('settings.themeLight') },
+                { value: 'dark', label: t('settings.themeDark') },
               ]}
               onChange={(theme) => void update({ theme: theme as ThemePreference })}
               size="sm"
@@ -593,8 +609,8 @@ function AppearanceSection({ settings, update }: { settings: Settings; update: U
         checked={settings.reduceMotion}
         onChange={(value) => void update({ reduceMotion: value })}
       />
-      {/* A phone's backdrop stands still (see Background), so there is no
-          animation there to turn off. */}
+      {/* On a phone only low resource mode takes the glow away (see App), so
+          the switch would have nothing to switch there. */}
       {!IS_MOBILE && (
         <ToggleRow
           title={t('settings.animatedBackground')}
@@ -609,8 +625,9 @@ function AppearanceSection({ settings, update }: { settings: Settings; update: U
 
 function PerformanceSection({ settings, update }: { settings: Settings; update: UpdateFn }) {
   const { t } = useTranslation();
-  const pushToast = useToastStore((state) => state.push);
   const [stats, setStats] = useState<CacheStats | null>(null);
+  const [cleared, markCleared] = useMomentary();
+  const [clearError, setClearError] = useState<string | null>(null);
 
   const refreshStats = useCallback(() => {
     ipc.cacheStats().then(setStats).catch(() => setStats(null));
@@ -618,8 +635,21 @@ function PerformanceSection({ settings, update }: { settings: Settings; update: 
 
   useEffect(refreshStats, [refreshStats]);
 
+  const clearCache = async () => {
+    setClearError(null);
+    try {
+      await ipc.clearCache();
+      refreshStats();
+      // The usage figure a row up drops as well, but that is easy to miss, so
+      // the button answers for itself.
+      markCleared();
+    } catch (caught) {
+      setClearError(ipc.toAppError(caught).message);
+    }
+  };
+
   return (
-    <SettingGroup title={leadTitle(t('settings.performance'))}>
+    <SettingGroup>
       <ToggleRow
         title={t('settings.lowResource')}
         description={t('settings.lowResourceHint')}
@@ -666,17 +696,25 @@ function PerformanceSection({ settings, update }: { settings: Settings; update: 
           <Button
             size="sm"
             variant="secondary"
-            icon={<Trash2 size={13} />}
-            onClick={async () => {
-              await ipc.clearCache();
-              refreshStats();
-              pushToast({ tone: 'success', title: t('settings.cacheCleared') });
-            }}
+            icon={cleared ? <Check size={13} /> : <Trash2 size={13} />}
+            onClick={() => void clearCache()}
           >
             {t('settings.clearCache')}
           </Button>
         }
-      />
+      >
+        {/* The check is for the eye; this is the same news for a screen reader. */}
+        {cleared && (
+          <span role="status" className="sr-only">
+            {t('settings.cacheCleared')}
+          </span>
+        )}
+        {clearError && (
+          <InlineNotice tone="error" className="-mt-2 w-full">
+            {clearError}
+          </InlineNotice>
+        )}
+      </SettingRow>
     </SettingGroup>
   );
 }
@@ -694,7 +732,7 @@ function ShortcutsSection({ settings, update }: { settings: Settings; update: Up
   );
 
   return (
-    <SettingGroup title={t('settings.hotkeys')}>
+    <SettingGroup>
       {actions.map((action) => (
         <SettingRow
           key={action}
@@ -728,7 +766,7 @@ function AdvancedSection({
   const tools = useToolsStore((state) => state.tools);
   const installing = useToolsStore((state) => state.installing);
   const install = useToolsStore((state) => state.install);
-  const pushToast = useToastStore((state) => state.push);
+  const [installErrors, setInstallErrors] = useState<Partial<Record<ToolKind, string>>>({});
 
   const [proxy, setProxy] = useState(settings.proxyUrl ?? '');
   const [userAgent, setUserAgent] = useState(settings.customUserAgent ?? '');
@@ -736,18 +774,13 @@ function AdvancedSection({
   useEffect(() => setProxy(settings.proxyUrl ?? ''), [settings.proxyUrl]);
   useEffect(() => setUserAgent(settings.customUserAgent ?? ''), [settings.customUserAgent]);
 
+  // A tool that installed says so itself: its row turns to the version it now
+  // has. Only a failure needs words, and it gets them in the row it belongs to.
   const runInstall = async (tool: ToolKind) => {
-    const ok = await install(tool);
-    pushToast(
-      ok
-        ? { tone: 'success', title: t('common.done') }
-        : {
-            tone: 'error',
-            title: t('settings.toolInstallFailed'),
-            body: useToolsStore.getState().error ?? t('error.network.message'),
-            durationMs: 9000,
-          },
-    );
+    setInstallErrors((current) => ({ ...current, [tool]: undefined }));
+    if (await install(tool)) return;
+    const message = useToolsStore.getState().error ?? t('error.network.message');
+    setInstallErrors((current) => ({ ...current, [tool]: message }));
   };
 
   const engine = tools?.engine ?? {
@@ -780,6 +813,7 @@ function AdvancedSection({
           titleKey="settings.engine"
           hintKey="settings.engineHint"
           installing={installing.engine}
+          installError={installErrors.engine}
           customPath={settings.enginePath}
           onInstall={() => void runInstall('engine')}
           onLocate={(path) => void update({ enginePath: path })}
@@ -790,6 +824,7 @@ function AdvancedSection({
           titleKey="settings.ffmpeg"
           hintKey="settings.ffmpegHint"
           installing={installing.ffmpeg}
+          installError={installErrors.ffmpeg}
           customPath={settings.ffmpegPath}
           optionalNoteKey="setup.ffmpegOptional"
           onInstall={() => void runInstall('ffmpeg')}
@@ -804,6 +839,7 @@ function AdvancedSection({
             titleKey="settings.jsRuntime"
             hintKey="settings.jsRuntimeHint"
             installing={installing.jsRuntime}
+            installError={installErrors.jsRuntime}
             optionalNoteKey="settings.jsRuntimeOptional"
             optional
             onInstall={() => void runInstall('jsRuntime')}
@@ -834,7 +870,6 @@ function AdvancedSection({
           control={
             <TextInput
               value={proxy}
-              monospace
               placeholder={t('settings.proxyPlaceholder')}
               onChange={(event) => setProxy(event.target.value)}
               onBlur={() => void update({ proxyUrl: proxy.trim() || null })}
@@ -848,7 +883,6 @@ function AdvancedSection({
           control={
             <TextInput
               value={userAgent}
-              monospace
               placeholder={t('settings.userAgentPlaceholder')}
               onChange={(event) => setUserAgent(event.target.value)}
               onBlur={() => void update({ customUserAgent: userAgent.trim() || null })}
@@ -870,7 +904,6 @@ function AdvancedSection({
               <Button
                 size="sm"
                 variant="secondary"
-                icon={<ScrollText size={13} />}
                 onClick={async () => {
                   const dir = await ipc.getLogDir();
                   await openPath(dir);

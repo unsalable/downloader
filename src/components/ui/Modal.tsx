@@ -100,7 +100,7 @@ export function Modal({
             exit={{ opacity: 0, transition: T.spatialOut }}
             transition={T.spatial}
             onClick={onClose}
-            className="absolute inset-0 bg-scrim backdrop-blur-[3px]"
+            className="absolute inset-0 bg-scrim"
           />
           <motion.div
             ref={panelRef}
@@ -117,20 +117,20 @@ export function Modal({
             style={{ width, maxWidth: '100%' }}
             className={cn(
               'relative max-h-[85vh] overflow-hidden rounded-[var(--radius-panel)]',
-              'border border-[var(--border-strong)] bg-surface shadow-floating edge-light',
+              'border border-[var(--border)] bg-surface shadow-floating dark:border-[var(--border-strong)]',
               'flex flex-col',
             )}
           >
             {(title || description) && (
-              <header className="flex items-start gap-3 px-5 pb-3 pt-5">
+              <header className="flex items-start gap-3 px-6 pb-3 pt-6">
                 <div className="min-w-0 flex-1">
                   {title && (
-                    <h2 id={titleId} className="text-[16px] font-semibold text-fg">
+                    <h2 id={titleId} className="text-[17px] font-semibold text-fg">
                       {title}
                     </h2>
                   )}
                   {description && (
-                    <p id={descriptionId} className="mt-1 text-[13px] leading-relaxed text-fg-muted">
+                    <p id={descriptionId} className="mt-1 text-[13.5px] leading-relaxed text-fg-muted">
                       {description}
                     </p>
                   )}
@@ -140,15 +140,15 @@ export function Modal({
                   label={closeLabel}
                   onClick={onClose}
                   showTooltip={false}
-                  className="-mr-1 -mt-1"
+                  className="-mr-1.5 -mt-1.5"
                 />
               </header>
             )}
 
-            {children && <div className="min-h-0 flex-1 overflow-y-auto px-5 py-1">{children}</div>}
+            {children && <div className="min-h-0 flex-1 overflow-y-auto px-6 py-1">{children}</div>}
 
             {footer && (
-              <footer className="flex items-center justify-end gap-2 border-t border-[var(--border)] px-5 py-3.5">
+              <footer className="flex items-center justify-end gap-2 px-6 pb-5 pt-4">
                 {footer}
               </footer>
             )}

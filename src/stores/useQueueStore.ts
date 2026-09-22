@@ -51,10 +51,6 @@ export function selectActive(tasks: DownloadTask[]): DownloadTask[] {
   return tasks.filter((task) => ACTIVE.has(task.status));
 }
 
-export function selectQueued(tasks: DownloadTask[]): DownloadTask[] {
-  return tasks.filter((task) => task.status === 'queued' || task.status === 'paused');
-}
-
 export function selectFinished(tasks: DownloadTask[]): DownloadTask[] {
   return tasks.filter(
     (task) =>

@@ -76,6 +76,13 @@ pub fn temp_dir() -> AppResult<PathBuf> {
     subdir("temp")
 }
 
+/// Where the desktop app stages the installer of a newer build. Not
+/// `temp_dir()`: the sweep there would take a verified installer away between
+/// the download and the moment the app is idle enough to run it.
+pub fn updates_dir() -> AppResult<PathBuf> {
+    subdir("updates")
+}
+
 pub fn database_path() -> AppResult<PathBuf> {
     Ok(root()?.join("library.db"))
 }
