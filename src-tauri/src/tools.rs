@@ -14,6 +14,7 @@
 //! -- it is a Python program, and the interpreter that runs it is the part the
 //! APK carries.
 
+use std::collections::HashMap;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -332,6 +333,94 @@ async fn prepare_android_runtime(force: bool) {
     }
 }
 
+// -- remembering what a version check answered ------------------------------
+
+/// What a version check saw, recorded against the file it saw it in.
+///
+/// Only the engine is remembered, and it is the reason this exists: yt-dlp on
+/// Windows is a 17.8 MB PyInstaller bundle that unpacks itself to a temporary
+/// directory every time it starts, so asking it its version costs the better
+/// part of a second. That second used to be spent on every launch, with the
+/// link field greyed out for the whole of it, to be told what the last launch
+/// was already told. FFmpeg is not cached: it answers in tens of milliseconds,
+/// and the shared build depends on DLLs beside it that an unchanged
+/// `ffmpeg.exe` would not notice the loss of.
+#[derive(serde::Serialize, serde::Deserialize, Clone, PartialEq)]
+struct ProbedVersion {
+    size: u64,
+    modified_ms: i64,
+    version: String,
+}
+
+fn probe_cache_path() -> AppResult<PathBuf> {
+    Ok(paths::cache_dir()?.join("engine-version.json"))
+}
+
+/// Size and modification time, which together are what make a file the same
+/// file. A path whose metadata will not be read is simply never remembered.
+fn fingerprint(path: &Path) -> Option<(u64, i64)> {
+    let metadata = std::fs::metadata(path).ok()?;
+    let modified = metadata
+        .modified()
+        .ok()?
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()?
+        .as_millis() as i64;
+    Some((metadata.len(), modified))
+}
+
+static PROBE_CACHE: Lazy<RwLock<HashMap<String, ProbedVersion>>> =
+    Lazy::new(|| RwLock::new(load_probe_cache()));
+
+fn load_probe_cache() -> HashMap<String, ProbedVersion> {
+    probe_cache_path()
+        .ok()
+        .and_then(|path| std::fs::read(path).ok())
+        .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+        .unwrap_or_default()
+}
+
+/// The version remembered for `path`, if that path still holds the file it was
+/// read from. An install, an update, or the user pointing the setting somewhere
+/// else all move the size or the modification time, and so all re-run the check.
+fn remembered_version(path: &Path) -> Option<String> {
+    let (size, modified_ms) = fingerprint(path)?;
+    let cache = PROBE_CACHE.read().ok()?;
+    let entry = cache.get(path.to_string_lossy().as_ref())?;
+    (entry.size == size && entry.modified_ms == modified_ms).then(|| entry.version.clone())
+}
+
+/// Remember what this file answered, on disk, so the next launch starts knowing
+/// it. A cache that cannot be written costs the check again and nothing else.
+fn remember_version(path: &Path, version: &str) {
+    let Some((size, modified_ms)) = fingerprint(path) else {
+        return;
+    };
+    let entry = ProbedVersion {
+        size,
+        modified_ms,
+        version: version.to_owned(),
+    };
+    let key = path.to_string_lossy().into_owned();
+
+    let snapshot = {
+        let Ok(mut cache) = PROBE_CACHE.write() else {
+            return;
+        };
+        if cache.get(&key) == Some(&entry) {
+            return;
+        }
+        // One tool, one entry: a path that moved leaves nothing behind.
+        cache.clear();
+        cache.insert(key, entry);
+        cache.clone()
+    };
+
+    if let (Ok(path), Ok(bytes)) = (probe_cache_path(), serde_json::to_vec(&snapshot)) {
+        let _ = std::fs::write(path, bytes);
+    }
+}
+
 async fn detect(
     kind: ToolKind,
     candidates: Vec<(PathBuf, ToolSource)>,
@@ -341,13 +430,30 @@ async fn detect(
         if !path.is_file() {
             continue;
         }
-        match process::run_with_timeout(&path, version_args, VERSION_CHECK_TIMEOUT).await {
-            Ok(output) if output.success() => {
+        // A binary that has not changed answers what it answered last time, and
+        // for the engine that answer is a second of the user's launch.
+        if kind == ToolKind::Engine {
+            if let Some(version) = remembered_version(&path) {
                 return ToolStatus {
                     name: kind,
                     available: true,
                     path: Some(path.to_string_lossy().into_owned()),
-                    version: Some(parse_version(kind, &output.stdout)),
+                    version: Some(version),
+                    source,
+                };
+            }
+        }
+        match process::run_with_timeout(&path, version_args, VERSION_CHECK_TIMEOUT).await {
+            Ok(output) if output.success() => {
+                let version = parse_version(kind, &output.stdout);
+                if kind == ToolKind::Engine {
+                    remember_version(&path, &version);
+                }
+                return ToolStatus {
+                    name: kind,
+                    available: true,
+                    path: Some(path.to_string_lossy().into_owned()),
+                    version: Some(version),
                     source,
                 };
             }

@@ -9,6 +9,7 @@ export const en = {
   'nav.home': 'Home',
   'nav.downloads': 'Downloads',
   'nav.convert': 'Convert',
+  'nav.trim': 'Trim',
   'nav.history': 'History',
   'nav.settings': 'Settings',
   'nav.about': 'About',
@@ -346,8 +347,6 @@ export const en = {
     'Universal Downloader uses two open-source tools to read media details and merge streams. They are downloaded once and run entirely on your machine.',
   'setup.bodyMobile':
     'Universal Downloader reads media details with yt-dlp, an open-source tool. It is downloaded once, about 3 MB, and runs entirely on your phone. FFmpeg is already built in.',
-  'setup.engineRequired': 'The download engine is not installed yet.',
-  'setup.checking': 'Checking the download engine…',
   'setup.installNow': 'Install now',
   'setup.ffmpegOptional':
     'FFmpeg is optional, but without it separate video and audio streams cannot be merged.',
@@ -355,8 +354,33 @@ export const en = {
   // Tray menu labels are not here: the menu is built in Rust before the
   // webview exists, so they live in src-tauri/src/tray.rs.
 
+
+  // -- trim ------------------------------------------------------------------
+  'trim.title': 'Trim',
+  'trim.close': 'Close',
+  'trim.videoFiles': 'Video files',
+  'trim.dropTitle': 'Drop a video here',
+  'trim.dropBody': 'Or choose one to cut a piece out of.',
+  'trim.chooseFile': 'Choose a video',
+  'trim.ffmpegRequiredBody': 'Cutting needs FFmpeg, the same tool conversions use.',
+  'trim.noPreview': 'No picture for this one',
+  'trim.noPreviewBody': 'The window cannot decode this format. The cut works exactly the same — set the marks below.',
+  'trim.startMark': 'Start',
+  'trim.endMark': 'End',
+  'trim.markHere': 'Set here',
+  'trim.length': 'Length',
+  'trim.precision': 'Cut',
+  'trim.precisionFast': 'Fast',
+  'trim.precisionExact': 'Exact',
+  'trim.precisionFastHint': 'Copies the picture untouched. Starts at the nearest keyframe.',
+  'trim.precisionExactHint': 'Starts exactly on the mark. Re-encodes, so it takes longer.',
+  'trim.cutting': 'Cutting…',
+  'trim.start': 'Cut',
+  'trim.done': 'Saved',
+
   'common.cancel': 'Cancel',
   'common.close': 'Close',
+  'common.open': 'Open',
   'common.enabled': 'On',
   'common.seconds': '{n}s',
   'common.copy': 'Copy',

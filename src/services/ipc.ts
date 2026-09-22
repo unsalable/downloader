@@ -22,6 +22,8 @@ import type {
   ToolInstallProgress,
   ToolKind,
   ToolsState,
+  TrimRequest,
+  TrimState,
   UpdateProgress,
 } from '@/types';
 
@@ -139,6 +141,20 @@ export const retryConversion = (id: string) => invoke<void>('retry_conversion', 
 export const removeConversion = (id: string) => invoke<void>('remove_conversion', { id });
 export const clearFinishedConversions = () => invoke<void>('clear_finished_conversions');
 
+// -- trimming --------------------------------------------------------------
+
+export const trimState = () => invoke<TrimState>('trim_state');
+export const startTrim = (request: TrimRequest) => invoke<void>('start_trim', { request });
+export const cancelTrim = () => invoke<void>('cancel_trim');
+
+/**
+ * Let the webview read one file so a `<video>` element can play it. The asset
+ * protocol starts with an empty scope, so nothing is readable until a file the
+ * user picked is named here.
+ */
+export const allowMediaPreview = (path: string) =>
+  invoke<void>('allow_media_preview', { path });
+
 // -- history ---------------------------------------------------------------
 
 export const listHistory = (query?: string, limit?: number, offset?: number) =>
@@ -204,6 +220,7 @@ export const EVENTS = {
   bridgeChanged: 'bridge://changed',
   convertChanged: 'convert://changed',
   convertProgress: 'convert://progress',
+  trimChanged: 'trim://changed',
   updateProgress: 'update://progress',
   navigate: 'navigate',
 } as const;
@@ -259,6 +276,10 @@ export interface ConvertProgressEvent {
 
 export function onConvertChanged(handler: (jobs: ConvertJob[]) => void): Promise<UnlistenFn> {
   return listen<ConvertJob[]>(EVENTS.convertChanged, (event) => handler(event.payload));
+}
+
+export function onTrimChanged(handler: (state: TrimState) => void): Promise<UnlistenFn> {
+  return listen<TrimState>(EVENTS.trimChanged, (event) => handler(event.payload));
 }
 
 export function onConvertProgress(

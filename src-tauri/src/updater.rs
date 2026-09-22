@@ -19,7 +19,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::{AppError, AppResult};
 use crate::settings::Settings;
-use crate::{log_info, net, tools};
+use crate::{log_info, log_warn, net, tools};
 
 const REPOSITORY: &str = "unsalable/downloader";
 const RELEASE_TAG: &str = "latest";
@@ -192,7 +192,16 @@ async fn release_is_ahead(client: &reqwest::Client, current: &str, tagged: &str)
     let path = format!("/repos/{REPOSITORY}/compare/{current}...{tagged}?per_page=1&page=2");
     match get_json::<Comparison>(client, &path).await {
         Ok(comparison) => Ok(comparison.head_is_ahead()),
-        Err(AppError::NotFound { .. }) => Ok(false),
+        // GitHub has never seen this build's commit. Both answers are "do not
+        // install", but only one of them is a build that can never update
+        // itself, and a support log that cannot tell them apart is no help.
+        Err(AppError::NotFound { .. }) => {
+            log_warn!(
+                "updater",
+                "github does not know commit {current}; this build cannot tell whether it is behind"
+            );
+            Ok(false)
+        }
         Err(err) => Err(err),
     }
 }

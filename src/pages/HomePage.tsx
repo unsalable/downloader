@@ -73,6 +73,10 @@ export function HomePage({
 
   const engineReady = tools?.engine.available ?? false;
   const engineMissing = !engineReady && tools != null && !checkingTools;
+  /** The first discovery pass has not answered yet, either way. */
+  const engineUnknown = tools == null || checkingTools;
+  /** A link submitted before that answer came, waiting for it. */
+  const [heldTarget, setHeldTarget] = useState<string | null>(null);
 
   // Platform detection is a pure function in Rust; debouncing keeps it off the
   // keystroke path without duplicating the host patterns in TypeScript.
@@ -93,7 +97,17 @@ export function HomePage({
 
   const startAnalysis = useCallback(
     (target: string) => {
-      if (!engineReady) return;
+      // Discovery runs a subprocess per tool and takes about a second, and
+      // refusing a link during it threw away the paste that prompted it. The
+      // link is kept instead, and analysed the moment the engine reports in.
+      if (engineUnknown) {
+        setHeldTarget(target);
+        return;
+      }
+      setHeldTarget(null);
+      // A missing engine is left to the analysis to report: that is the path
+      // that puts Install on screen, and that retries itself below once the
+      // engine is there.
       void analyze(target, {
         mode: settings.defaultMode,
         quality: settings.defaultQuality,
@@ -101,7 +115,7 @@ export function HomePage({
         outputDir: null,
       });
     },
-    [analyze, engineReady, settings.defaultContainer, settings.defaultMode, settings.defaultQuality],
+    [analyze, engineUnknown, settings.defaultContainer, settings.defaultMode, settings.defaultQuality],
   );
 
   // An analysis that failed only because the engine was missing is retried the
@@ -113,11 +127,23 @@ export function HomePage({
     wasEngineReady.current = engineReady;
     if (!appeared) return;
 
+    // Whatever was submitted while discovery was still running goes first.
+    if (heldTarget) {
+      startAnalysis(heldTarget);
+      return;
+    }
+
     const current = useAnalysisStore.getState();
     if (current.phase === 'error' && current.error?.code === 'engineMissing' && current.url.trim()) {
       startAnalysis(current.url);
     }
-  }, [engineReady, startAnalysis]);
+  }, [engineReady, heldTarget, startAnalysis]);
+
+  // A pass that ends with no engine hands the link to the card that offers to
+  // install one, rather than holding it for something that is not coming.
+  useEffect(() => {
+    if (engineMissing) setHeldTarget(null);
+  }, [engineMissing]);
 
   const pasteFromClipboard = useCallback(async () => {
     try {
@@ -276,11 +302,9 @@ export function HomePage({
           onSubmit={startAnalysis}
           onClear={reset}
           onPaste={pasteFromClipboard}
-          analyzing={phase === 'analyzing'}
-          disabled={!engineReady}
-          disabledHint={
-            engineReady ? undefined : engineMissing ? t('setup.engineRequired') : t('setup.checking')
-          }
+          // A held link is already on its way as far as the user is concerned,
+          // so the field says so rather than sitting there looking ignored.
+          analyzing={phase === 'analyzing' || heldTarget !== null}
         />
       </div>
 

@@ -15,8 +15,6 @@ interface UrlInputProps {
   onClear: () => void;
   onPaste: () => void;
   analyzing: boolean;
-  disabled?: boolean;
-  disabledHint?: string;
 }
 
 export interface UrlInputHandle {
@@ -25,7 +23,7 @@ export interface UrlInputHandle {
 }
 
 export const UrlInput = forwardRef<UrlInputHandle, UrlInputProps>(function UrlInput(
-  { value, onChange, onSubmit, onClear, onPaste, analyzing, disabled = false, disabledHint },
+  { value, onChange, onSubmit, onClear, onPaste, analyzing },
   ref,
 ) {
   const { t } = useTranslation();
@@ -46,7 +44,7 @@ export const UrlInput = forwardRef<UrlInputHandle, UrlInputProps>(function UrlIn
   }, [value]);
 
   const invalid = touched && value.trim().length > 0 && !isProbablyUrl(value);
-  const hint = invalid ? t('input.invalid') : disabledHint;
+  const hint = invalid ? t('input.invalid') : undefined;
 
   const submit = () => {
     const normalized = normalizeUrl(value);
@@ -66,7 +64,7 @@ export const UrlInput = forwardRef<UrlInputHandle, UrlInputProps>(function UrlIn
       <div
         className={cn(
           'rounded-[var(--radius-card)] bg-surface transition-shadow duration-150 ease-out-quint',
-          focused && !disabled
+          focused
             ? invalid
               ? 'shadow-[0_0_0_2px_var(--error)]'
               : 'shadow-[0_0_0_2px_var(--accent)]'
@@ -75,7 +73,7 @@ export const UrlInput = forwardRef<UrlInputHandle, UrlInputProps>(function UrlIn
               : 'shadow-[inset_0_0_0_1px_var(--card-edge)]',
         )}
       >
-        <div className={cn('flex h-[52px] items-center gap-2 pl-4 pr-2', disabled && 'opacity-60')}>
+        <div className="flex h-[52px] items-center gap-2 pl-4 pr-2">
           <input
             ref={inputRef}
             type="text"
@@ -83,7 +81,6 @@ export const UrlInput = forwardRef<UrlInputHandle, UrlInputProps>(function UrlIn
             spellCheck={false}
             autoComplete="off"
             autoCorrect="off"
-            disabled={disabled}
             value={value}
             placeholder={t('input.placeholder')}
             aria-label={t('input.placeholder')}
@@ -137,7 +134,6 @@ export const UrlInput = forwardRef<UrlInputHandle, UrlInputProps>(function UrlIn
             <button
               type="button"
               onClick={onPaste}
-              disabled={disabled}
               className={cn(
                 'pressable flex h-9 shrink-0 items-center gap-1.5 rounded-[var(--radius-control)] px-3',
                 'text-[13px] font-medium text-fg-muted',
@@ -151,7 +147,7 @@ export const UrlInput = forwardRef<UrlInputHandle, UrlInputProps>(function UrlIn
             <button
               type="button"
               onClick={submit}
-              disabled={disabled || analyzing}
+              disabled={analyzing}
               className={cn(
                 'pressable flex h-9 shrink-0 items-center gap-1.5 rounded-[var(--radius-control)] px-3.5',
                 'bg-accent text-[13px] font-medium text-accent-fg',

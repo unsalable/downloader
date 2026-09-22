@@ -24,12 +24,15 @@ path = "src/bin/ud-bridge.rs"
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = ["tray-icon", "image-png"] }
+tauri = { version = "2", features = ["tray-icon", "image-png", "protocol-asset"] }
 tauri-plugin-dialog = "2"
 tauri-plugin-opener = "2"
 tauri-plugin-notification = "2"
 tauri-plugin-clipboard-manager = "2"
 tauri-plugin-os = "2"
+# Already in the tree under the plugin above; named here for `edition()`,
+# which is the only thing that knows Windows 11 from Windows 10.
+os_info = "3"
 
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

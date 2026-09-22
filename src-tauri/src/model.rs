@@ -595,6 +595,55 @@ pub struct ConvertJob {
     pub options: ConvertOptions,
 }
 
+// -- trimming ---------------------------------------------------------------
+
+/// Where a cut is allowed to land, which is the whole of the choice the user
+/// makes on the Trim screen.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum TrimPrecision {
+    /// Copy the streams: seconds, and the picture untouched, at the cost of
+    /// starting from the nearest keyframe at or before the mark.
+    #[default]
+    Fast,
+    /// Re-encode, so the cut starts on the frame that was asked for.
+    Exact,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TrimRequest {
+    pub input_path: String,
+    pub start_sec: f64,
+    pub end_sec: f64,
+    pub precision: TrimPrecision,
+    /// Where the cut is written. `None` means "beside the source file".
+    pub output_dir: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum TrimStatus {
+    #[default]
+    Idle,
+    Running,
+    Completed,
+    Failed,
+    Canceled,
+}
+
+/// Everything the Trim screen knows about the cut it last asked for. There is
+/// only ever one, so this is a state rather than a list.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TrimState {
+    pub status: TrimStatus,
+    /// 0..100 while running. `None` once it is not.
+    pub percent: Option<f64>,
+    pub output_path: Option<String>,
+    pub error: Option<AppErrorInfo>,
+}
+
 /// Payload for the `convert://progress` event.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]

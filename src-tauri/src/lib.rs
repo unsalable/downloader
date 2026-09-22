@@ -25,6 +25,7 @@ pub mod providers;
 pub mod queue;
 pub mod settings;
 pub mod tools;
+pub mod trim;
 #[cfg(desktop)]
 pub mod tray;
 pub mod updater;
@@ -40,6 +41,7 @@ use commands::AppState;
 use converter::ConvertManager;
 use db::Database;
 use queue::QueueManager;
+use trim::TrimManager;
 
 /// Temp files older than a day are leftovers from a crash, not resumable state.
 const TEMP_SWEEP_AGE_SECS: u64 = 60 * 60 * 24;
@@ -97,11 +99,17 @@ pub fn run() {
             let converter = ConvertManager::new(handle.clone(), Arc::clone(&settings));
             converter.spawn_scheduler();
 
+            // A cut is one file at a time, started from a screen the user is
+            // looking at, so there is nothing to schedule and nothing to
+            // restore -- only somewhere for the running one to live.
+            let trimmer = TrimManager::new(handle.clone(), Arc::clone(&settings));
+
             app.manage(AppState {
                 db: Arc::clone(&database),
                 settings: Arc::clone(&settings),
                 queue: Arc::clone(&queue),
                 converter: Arc::clone(&converter),
+                trimmer: Arc::clone(&trimmer),
             });
 
             #[cfg(desktop)]
@@ -226,6 +234,11 @@ pub fn run() {
             commands::reorder_download,
             commands::set_download_order,
             commands::convert_formats,
+            commands::trim_state,
+            commands::start_trim,
+            commands::cancel_trim,
+            #[cfg(not(target_os = "android"))]
+            commands::allow_media_preview,
             commands::probe_media,
             commands::list_conversions,
             commands::enqueue_conversions,
@@ -279,6 +292,7 @@ fn handle_window_event(window: &tauri::Window, event: &WindowEvent) {
             } else if let Some(state) = window.app_handle().try_state::<AppState>() {
                 state.queue.shutdown();
                 state.converter.shutdown();
+                state.trimmer.shutdown();
             }
         }
         WindowEvent::Resized(_) => {

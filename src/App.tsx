@@ -20,12 +20,14 @@ import { DownloadsPage } from '@/pages/DownloadsPage';
 import { HistoryPage } from '@/pages/HistoryPage';
 import { HomePage } from '@/pages/HomePage';
 import { SettingsPage, type SettingsSection } from '@/pages/SettingsPage';
+import { TrimPage } from '@/pages/TrimPage';
 import * as ipc from '@/services/ipc';
 import { useAnalysisStore } from '@/stores/useAnalysisStore';
 import { selectConvertInFlight, useConvertStore } from '@/stores/useConvertStore';
 import { selectInFlightCount, useQueueStore } from '@/stores/useQueueStore';
 import { useSettingsStore } from '@/stores/useSettingsStore';
 import { useToolsStore } from '@/stores/useToolsStore';
+import { useTrimStore } from '@/stores/useTrimStore';
 import type { ToolsState } from '@/types';
 
 const SIDEBAR_COLLAPSED_KEY = 'ud.sidebar.collapsed';
@@ -58,6 +60,8 @@ export function App() {
   const loadConversions = useConvertStore((state) => state.load);
   const replaceConversions = useConvertStore((state) => state.replace);
   const applyConvertProgress = useConvertStore((state) => state.applyProgress);
+
+  const applyTrim = useTrimStore((state) => state.apply);
 
   const tools = useToolsStore((state) => state.tools);
   const loadTools = useToolsStore((state) => state.load);
@@ -164,8 +168,9 @@ export function App() {
       ipc.onSettingsChanged(applyExternalSettings),
       ipc.onConvertChanged(replaceConversions),
       ipc.onConvertProgress(applyConvertProgress),
+      ipc.onTrimChanged(applyTrim),
       ipc.onNavigate((target) => {
-        if (['home', 'downloads', 'convert', 'history', 'settings', 'about'].includes(target)) {
+        if (['home', 'downloads', 'convert', 'trim', 'history', 'settings', 'about'].includes(target)) {
           setRoute(target as Route);
         }
       }),
@@ -182,6 +187,7 @@ export function App() {
     applyExternalSettings,
     replaceConversions,
     applyConvertProgress,
+    applyTrim,
     setRoute,
   ]);
 
@@ -343,6 +349,7 @@ export function App() {
               )}
               {route === 'downloads' && <DownloadsPage onGoHome={() => setRoute('home')} />}
               {route === 'convert' && <ConvertPage settings={settings} />}
+              {route === 'trim' && <TrimPage settings={settings} />}
               {route === 'history' && <HistoryPage onGoHome={() => setRoute('home')} />}
               {route === 'settings' && (
                 <SettingsPage

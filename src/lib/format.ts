@@ -45,6 +45,33 @@ export function formatDuration(totalSeconds: number | null | undefined): string 
 }
 
 /**
+ * A position in a file, to a tenth of a second.
+ *
+ * `formatDuration` rounds to whole seconds, which is right for "how long is
+ * this" and wrong for a mark the user is placing: two marks a frame apart would
+ * read as the same number, and the readout would sit still while the handle
+ * moved. Minutes are always padded here, because this is read while it changes
+ * and a field that grows a digit shifts everything beside it.
+ */
+export function formatTimecode(totalSeconds: number | null | undefined): string {
+  if (totalSeconds == null || !Number.isFinite(totalSeconds) || totalSeconds < 0) return '--';
+
+  // Rounded once, up front: rounding the parts separately turns 59.97 into
+  // "0:60.0".
+  const tenths = Math.round(totalSeconds * 10);
+  const whole = Math.floor(tenths / 10);
+  const tenth = tenths % 10;
+
+  const seconds = whole % 60;
+  const minutes = Math.floor(whole / 60) % 60;
+  const hours = Math.floor(whole / 3600);
+
+  const mm = String(minutes).padStart(2, '0');
+  const ss = String(seconds).padStart(2, '0');
+  return hours > 0 ? `${hours}:${mm}:${ss}.${tenth}` : `${mm}:${ss}.${tenth}`;
+}
+
+/**
  * ETA gets its own formatter: past an hour the exact seconds are noise, and a
  * missing estimate should read as unknown rather than "00:00".
  */

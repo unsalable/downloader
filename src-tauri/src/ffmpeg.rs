@@ -281,6 +281,140 @@ fn conversion_args(
     args
 }
 
+/// How precisely a cut has to land. The one thing the user chooses, because it
+/// is the one thing that cannot be had both ways.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TrimPrecision {
+    /// Copy the streams through untouched. Seconds rather than minutes, and
+    /// the picture is bit-for-bit the original -- but a copied video stream can
+    /// only begin at a keyframe, so the cut lands on the last one at or before
+    /// the mark.
+    Keyframe,
+    /// Decode and re-encode, so the cut begins on the frame it was asked for.
+    /// Costs real time and one generation of quality.
+    Exact,
+}
+
+/// Cut `duration_sec` seconds, starting at `start_sec`, out of `input`.
+///
+/// `-ss` goes before `-i` either way. That lets FFmpeg seek straight to a
+/// keyframe instead of reading and discarding everything ahead of the mark,
+/// which on a long film is the difference between a second and a minute. It
+/// does not cost accuracy when re-encoding: FFmpeg decodes from that keyframe
+/// and throws away the frames before the mark, so an exact cut is still exact.
+///
+/// Only the first video track and the audio tracks come along, each optional.
+/// A trimmer that refused a file because it carried a subtitle track or an
+/// attached cover image would be refusing the ordinary case.
+#[allow(clippy::too_many_arguments)]
+pub async fn trim(
+    input: &Path,
+    output: &Path,
+    start_sec: f64,
+    duration_sec: f64,
+    precision: TrimPrecision,
+    hardware_acceleration: bool,
+    control: Arc<TaskControl>,
+    on_progress: &mut (dyn FnMut(FfmpegProgress) + Send),
+) -> AppResult<()> {
+    let target = output
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("mp4")
+        .to_ascii_lowercase();
+
+    let args = trim_args(
+        input,
+        output,
+        &target,
+        start_sec,
+        duration_sec,
+        precision,
+        hardware_acceleration,
+    );
+    log_info!(
+        "ffmpeg",
+        "cutting {duration_sec:.2}s from {start_sec:.2}s ({})",
+        match precision {
+            TrimPrecision::Keyframe => "stream copy",
+            TrimPrecision::Exact => "re-encode",
+        }
+    );
+
+    // What FFmpeg reports is how far into the *output* it has got, so the
+    // length of the cut is the whole job -- passing the source's duration here
+    // would leave a short cut out of a long film stuck near zero.
+    run_with_progress(&args, Some(duration_sec), control, on_progress).await
+}
+
+fn trim_args(
+    input: &Path,
+    output: &Path,
+    target: &str,
+    start_sec: f64,
+    duration_sec: f64,
+    precision: TrimPrecision,
+    hardware_acceleration: bool,
+) -> Vec<String> {
+    let mut args = base_args();
+    args.extend([
+        "-ss".into(),
+        format!("{start_sec:.3}"),
+        "-i".into(),
+        input.to_string_lossy().into_owned(),
+        "-t".into(),
+        format!("{duration_sec:.3}"),
+        "-map".into(),
+        "0:v:0?".into(),
+        "-map".into(),
+        "0:a?".into(),
+    ]);
+
+    match precision {
+        TrimPrecision::Keyframe => {
+            args.extend(["-c".into(), "copy".into()]);
+            // A cut that starts mid-stream carries timestamps that no longer
+            // begin at zero. Left alone they make players open the file at the
+            // wrong point, or refuse it.
+            args.extend(["-avoid_negative_ts".into(), "make_zero".into()]);
+        }
+        TrimPrecision::Exact => match target {
+            "webm" => args.extend([
+                "-c:v".into(),
+                "libvpx-vp9".into(),
+                "-crf".into(),
+                "31".into(),
+                "-b:v".into(),
+                "0".into(),
+                "-c:a".into(),
+                "libopus".into(),
+            ]),
+            _ => {
+                if hardware_acceleration {
+                    args.extend(["-c:v".into(), "h264_nvenc".into(), "-cq".into(), "23".into()]);
+                } else {
+                    args.extend([
+                        "-c:v".into(),
+                        "libx264".into(),
+                        "-crf".into(),
+                        "20".into(),
+                        "-preset".into(),
+                        "veryfast".into(),
+                    ]);
+                }
+                args.extend(["-c:a".into(), "aac".into(), "-b:a".into(), "192k".into()]);
+            }
+        },
+    }
+
+    if target == "mp4" {
+        args.extend(["-movflags".into(), "+faststart".into()]);
+    }
+
+    args.push(output.to_string_lossy().into_owned());
+    args
+}
+
 fn is_image_target(target: &str) -> bool {
     matches!(target, "jpg" | "jpeg" | "png" | "webp")
 }

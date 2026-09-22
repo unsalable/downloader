@@ -6,6 +6,7 @@ import {
   Info,
   PanelLeft,
   Repeat,
+  Scissors,
   Settings as SettingsIcon,
   type LucideIcon,
 } from 'lucide-react';
@@ -17,7 +18,7 @@ import { SPRING } from '@/lib/motion';
 import type { TranslationKey } from '@/i18n';
 import { Logo } from './Logo';
 
-export type Route = 'home' | 'downloads' | 'convert' | 'history' | 'settings' | 'about';
+export type Route = 'home' | 'downloads' | 'convert' | 'trim' | 'history' | 'settings' | 'about';
 
 interface NavEntry {
   route: Route;
@@ -29,6 +30,7 @@ const PRIMARY: NavEntry[] = [
   { route: 'home', label: 'nav.home', icon: House },
   { route: 'downloads', label: 'nav.downloads', icon: Download },
   { route: 'convert', label: 'nav.convert', icon: Repeat },
+  { route: 'trim', label: 'nav.trim', icon: Scissors },
   { route: 'history', label: 'nav.history', icon: Clock },
 ];
 

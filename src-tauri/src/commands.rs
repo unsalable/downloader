@@ -14,9 +14,10 @@ use crate::error::{AppError, AppResult};
 use crate::model::{
     BridgeStatus, CacheStats, ConvertFormatInfo, ConvertJob, ConvertRequest, DiagnosticsSnapshot,
     DownloadRequest, DownloadTask, HistoryEntry, MediaMetadata, MediaProbe, PlatformId,
-    ToolInstallProgress, ToolKind, ToolsState,
+    ToolInstallProgress, ToolKind, ToolsState, TrimRequest, TrimState,
 };
 use crate::queue::QueueManager;
+use crate::trim::TrimManager;
 use crate::settings::Settings;
 use crate::{
     bridge, cache, converter, downloader, filename, log_warn, logging, net, paths, providers, tools,
@@ -33,6 +34,7 @@ pub struct AppState {
     pub settings: Arc<Mutex<Settings>>,
     pub queue: Arc<QueueManager>,
     pub converter: Arc<ConvertManager>,
+    pub trimmer: Arc<TrimManager>,
 }
 
 impl AppState {
@@ -474,6 +476,45 @@ pub fn remove_conversion(state: State<'_, AppState>, id: String) {
     state.converter.remove(&id);
 }
 
+// -- trimming --------------------------------------------------------------
+
+#[tauri::command]
+pub fn trim_state(state: State<'_, AppState>) -> TrimState {
+    state.trimmer.state()
+}
+
+/// Cut the marked range out of the open file. Replaces a cut already running.
+#[tauri::command]
+pub async fn start_trim(state: State<'_, AppState>, request: TrimRequest) -> AppResult<()> {
+    state.trimmer.start(request).await
+}
+
+#[tauri::command]
+pub fn cancel_trim(state: State<'_, AppState>) {
+    state.trimmer.cancel();
+}
+
+/// Let the webview read one file, so a `<video>` element can play it.
+///
+/// The asset protocol is enabled with an empty scope: nothing on disk is
+/// readable until something here says so, and what says so is the user having
+/// picked that file in a dialog or dropped it on the window. Granting the
+/// whole file system once at build time would have been one line of config and
+/// a standing offer to every page the webview ever loads.
+#[cfg(not(target_os = "android"))]
+#[tauri::command]
+pub fn allow_media_preview(app: AppHandle, path: String) -> AppResult<()> {
+    use tauri::Manager;
+
+    let file = std::path::PathBuf::from(path.trim());
+    if !file.is_file() {
+        return Err(AppError::Io(format!("{} is not a file", file.display())));
+    }
+    app.asset_protocol_scope()
+        .allow_file(&file)
+        .map_err(|err| AppError::Other(format!("that file could not be opened for preview: {err}")))
+}
+
 #[tauri::command]
 pub fn clear_finished_conversions(state: State<'_, AppState>) {
     state.converter.clear_finished();
@@ -620,9 +661,20 @@ pub async fn check_app_update(state: State<'_, AppState>) -> AppResult<Option<up
     let settings = state.settings();
     // Offline or on a stalled network this runs while the app is in use, so it
     // is bounded rather than left to the transport timeouts.
-    tokio::time::timeout(std::time::Duration::from_secs(20), updater::check(&settings))
-        .await
-        .map_err(|_| AppError::Network("the update check timed out".into()))?
+    let outcome = tokio::time::timeout(
+        std::time::Duration::from_secs(20),
+        updater::check(&settings),
+    )
+    .await
+    .unwrap_or_else(|_| Err(AppError::Network("the update check timed out".into())));
+
+    // The automatic check says nothing on screen when it fails -- being
+    // offline is not worth interrupting anyone over -- so the log is the only
+    // place a check that never succeeds can be seen at all.
+    if let Err(err) = &outcome {
+        log_warn!("updater", "the update check failed: {err}");
+    }
+    outcome
 }
 
 /// The commit this build was made from. Releases carry no version number, so
@@ -702,6 +754,7 @@ pub async fn apply_app_update(
         // the installer needs gone would still be holding its files.
         state.queue.shutdown();
         state.converter.shutdown();
+        state.trimmer.shutdown();
         app.exit(0);
         Ok(())
     }
@@ -736,11 +789,7 @@ pub fn get_diagnostics(app: AppHandle, state: State<'_, AppState>) -> AppResult<
 
     Ok(DiagnosticsSnapshot {
         app_version: app.package_info().version.to_string(),
-        os: format!(
-            "{} {}",
-            std::env::consts::OS,
-            tauri_plugin_os::version()
-        ),
+        os: os_label(),
         engine: snapshot.engine,
         ffmpeg: snapshot.ffmpeg,
         // A support paste that does not say whether a JavaScript runtime was
@@ -753,6 +802,47 @@ pub fn get_diagnostics(app: AppHandle, state: State<'_, AppState>) -> AppResult<
         active_downloads: state.queue.active_count(),
         queued_downloads: state.queue.queued_count(),
     })
+}
+
+/// How the operating system calls itself, the way a person would write it.
+///
+/// `std::env::consts::OS` beside the raw version reads "windows 10.0.26200",
+/// which is wrong twice over: Windows 11 still reports major version 10, so
+/// that string names the wrong Windows, and nobody says their system in
+/// lowercase with a three-part number. `os_info` has already done both pieces
+/// of work -- it reads the edition out of the registry and checks the build
+/// against the 22000 that separates 11 from 10 -- so the name comes from
+/// there. The build number is kept, because it is the part of that string a
+/// support paste is actually for.
+fn os_label() -> String {
+    let info = os_info::get();
+    let name = info
+        .edition()
+        .map(str::to_owned)
+        .unwrap_or_else(|| info.os_type().to_string());
+
+    match info.version() {
+        os_info::Version::Unknown => name,
+        // The edition already names the release on Windows; all the version
+        // adds that the name does not is the build.
+        os_info::Version::Semantic(_, _, build) if cfg!(windows) => {
+            format!("{name} (build {build})")
+        }
+        // Everywhere else the version is the release. Android reports "16",
+        // which arrives here as 16.0.0, and trailing zeroes nobody typed are
+        // not information.
+        os_info::Version::Semantic(major, minor, patch) => {
+            let mut number = major.to_string();
+            if *minor != 0 || *patch != 0 {
+                number.push_str(&format!(".{minor}"));
+            }
+            if *patch != 0 {
+                number.push_str(&format!(".{patch}"));
+            }
+            format!("{name} {number}")
+        }
+        version => format!("{name} {version}"),
+    }
 }
 
 #[tauri::command]

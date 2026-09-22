@@ -269,6 +269,29 @@ export interface ConvertJob {
   options: ConvertOptions;
 }
 
+/** Where a cut is allowed to land: the whole of the choice on the Trim screen. */
+export type TrimPrecision = 'fast' | 'exact';
+
+export type TrimStatus = 'idle' | 'running' | 'completed' | 'failed' | 'canceled';
+
+export interface TrimRequest {
+  inputPath: string;
+  startSec: number;
+  endSec: number;
+  precision: TrimPrecision;
+  /** Null means "beside the source file". */
+  outputDir: string | null;
+}
+
+/** There is only ever one cut, so this is a state rather than a list. */
+export interface TrimState {
+  status: TrimStatus;
+  /** 0..100 while running; null once it is not. */
+  percent: number | null;
+  outputPath: string | null;
+  error: AppErrorInfo | null;
+}
+
 export type ThemePreference = 'dark' | 'light' | 'system';
 export type LanguageCode = 'en' | 'tr';
 

@@ -9,6 +9,7 @@ const TITLES: Record<Route, TranslationKey> = {
   home: 'app.name',
   downloads: 'downloads.title',
   convert: 'convert.title',
+  trim: 'trim.title',
   history: 'history.title',
   settings: 'settings.title',
   about: 'nav.about',
