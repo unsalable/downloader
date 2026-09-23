@@ -24,9 +24,16 @@ crops to. The Tauri CLI has an `android_fg_scale` for exactly this and it does
 nothing in the version this repository uses, measured rather than assumed, so
 the inset is drawn in instead.
 
+There is a third, for the Android status bar. Android draws a notification's
+small icon from its alpha alone and tints it itself, so anything with colour or
+a missing asset comes out as a white blob or the system's stand-in glyph. It is
+the mark in pure white, rasterised per density rather than as a vector drawable
+because a vector drawable has no masks and the seams are subtractions.
+
 Run:  python scripts/generate_icon.py
 Out:  src-tauri/icons/icon-source-flat.png  1024x1024 bare mark, transparent
       src-tauri/icons/icon-source-fg.png    the same, inset for Android
+      src-tauri/gen/android/.../drawable-*dpi/ic_stat_mark.png  status bar
 """
 from __future__ import annotations
 
@@ -55,6 +62,10 @@ MARK_FILL = 0.92
 # The same share for the Android adaptive foreground, chosen to sit inside the
 # 72dp of a 108dp canvas that a launcher mask cannot crop.
 ANDROID_FILL = 0.60
+
+# The status-bar icon is a 24dp square with a 1dp keyline around its live area.
+STATUS_FILL = 22 / 24
+STATUS_DENSITIES = {"mdpi": 24, "hdpi": 36, "xhdpi": 48, "xxhdpi": 72, "xxxhdpi": 96}
 
 
 def lerp(a, b, t):
@@ -137,6 +148,18 @@ def build_icon(fill: float = MARK_FILL) -> Image.Image:
     return img.resize((SIZE, SIZE), Image.Resampling.LANCZOS)
 
 
+def build_status_icon(px: int) -> Image.Image:
+    """White mark on transparency at `px` square, for a notification."""
+    big = px * 16
+    mark = int(big * STATUS_FILL)
+    alpha = Image.new("L", (big, big), 0)
+    off = (big - mark) // 2
+    alpha.paste(aperture_mask(mark), (off, off))
+    img = Image.new("RGBA", (big, big), (255, 255, 255, 0))
+    img.putalpha(alpha)
+    return img.resize((px, px), Image.Resampling.LANCZOS)
+
+
 def write_preview(src: Image.Image, path: str):
     """A strip at the sizes that actually decide the shape, on both grounds.
 
@@ -173,7 +196,14 @@ def main():
     icon.save(os.path.join(out_dir, "icon-source-flat.png"))
     build_icon(ANDROID_FILL).save(os.path.join(out_dir, "icon-source-fg.png"))
     write_preview(icon, os.path.join(here, "icon-preview.png"))
-    print("wrote icon-source-flat.png, icon-source-fg.png, scripts/icon-preview.png")
+
+    res = os.path.join(here, "..", "src-tauri", "gen", "android", "app", "src", "main", "res")
+    for density, px in STATUS_DENSITIES.items():
+        folder = os.path.join(res, f"drawable-{density}")
+        os.makedirs(folder, exist_ok=True)
+        build_status_icon(px).save(os.path.join(folder, "ic_stat_mark.png"))
+
+    print("wrote icon-source-flat.png, icon-source-fg.png, scripts/icon-preview.png, ic_stat_mark.png")
 
 
 if __name__ == "__main__":
