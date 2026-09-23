@@ -34,7 +34,7 @@ use tokio::sync::watch;
 
 use crate::commands::AppState;
 use crate::error::{AppError, AppResult};
-use crate::{converter, log_info, log_warn, paths, queue};
+use crate::{converter, export, log_info, log_warn, paths, queue, range};
 
 const PLUGIN_PACKAGE: &str = "io.universaldownloader.app";
 const PLUGIN_CLASS: &str = "BridgePlugin";
@@ -322,23 +322,47 @@ struct BackgroundWork {
 /// off. The service only exists while there is work, so an idle app leaves
 /// no notification behind.
 ///
+/// The editor's two jobs are work in the same sense and are counted in the
+/// same two numbers, so that the notification needs no words of its own: a
+/// link brought into the editor is a download, and an export is a conversion
+/// of the file that is open. Both count from the moment they start until the
+/// state they publish says they ended, finished or failed or cancelled.
+///
 /// State changes are funnelled through a watch channel to one task: the queue
 /// can change state from any thread, including the one Android would need to
-/// run the call on, and only the latest state matters anyway.
+/// run the call on, and only the latest state matters anyway. An export and a
+/// fetch publish their progress through the same event as their state, several
+/// times a second, so a count that has not changed is dropped before it wakes
+/// anything.
 pub fn keep_alive_while_busy(app: &AppHandle) {
     let (tx, mut rx) = watch::channel((0u32, 0u32));
     let tx = Arc::new(tx);
 
-    for event in [queue::EVENT_CHANGED, converter::EVENT_CHANGED] {
+    for event in [
+        queue::EVENT_CHANGED,
+        converter::EVENT_CHANGED,
+        export::EVENT_CHANGED,
+        range::EVENT_CHANGED,
+    ] {
         let app_handle = app.clone();
         let tx = Arc::clone(&tx);
         app.listen(event, move |_| {
             let Some(state) = app_handle.try_state::<AppState>() else {
                 return;
             };
-            let downloads = state.queue.active_count() + state.queue.queued_count();
-            let conversions = state.converter.active_count();
-            let _ = tx.send((downloads, conversions));
+            // Counted inside the channel's lock rather than before taking it.
+            // Four sources report here from their own threads, and a count
+            // read first and sent second can land after a newer one: a
+            // download's last event read while an export was still running,
+            // sent just after the export's own "finished", would leave the
+            // notification saying it is running with nothing left to correct
+            // it.
+            tx.send_if_modified(|current| {
+                let counts = work_counts(&state);
+                let changed = *current != counts;
+                *current = counts;
+                changed
+            });
         });
     }
 
@@ -348,8 +372,7 @@ pub fn keep_alive_while_busy(app: &AppHandle) {
         while rx.changed().await.is_ok() {
             let (downloads, conversions) = *rx.borrow_and_update();
             let active = downloads + conversions > 0;
-            // Counts are only shown in the notification, so an unchanged
-            // count on a running service is not worth a round trip.
+            // Nothing running and nothing to stop.
             if !active && !running {
                 continue;
             }
@@ -379,6 +402,14 @@ pub fn keep_alive_while_busy(app: &AppHandle) {
     });
 }
 
+/// What the notification counts, as `(downloads, conversions)`.
+fn work_counts(state: &AppState) -> (u32, u32) {
+    let downloads =
+        state.queue.active_count() + state.queue.queued_count() + state.fetcher.active_count();
+    let conversions = state.converter.active_count() + state.exporter.active_count();
+    (downloads, conversions)
+}
+
 /// Tell the media index about a finished file.
 ///
 /// A file written by path into shared storage is on disk but not in the index
@@ -396,6 +427,18 @@ pub fn announce_media(app: &AppHandle, path: &str) {
             log_warn!("android", "{path} could not be added to the media index: {err}");
         }
     });
+}
+
+/// Let the WebView stream one file to the editor's picture.
+///
+/// The asset protocol's answers cannot be played from on a phone past the first
+/// of them (see `MediaStreamClient.kt`), so the Kotlin side answers for the
+/// files allowed here, and only for those. Called straight from the command,
+/// as `init` is: the answer must be in place before the `<video>` asks.
+pub fn allow_media(app: &AppHandle, path: &Path) -> AppResult<()> {
+    app.state::<Bridge>()
+        .call::<serde_json::Value>("allowMedia", PathArgs { path: path.to_string_lossy().into_owned() })
+        .map(|_| ())
 }
 
 // -- commands -----------------------------------------------------------------

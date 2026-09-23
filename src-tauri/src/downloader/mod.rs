@@ -388,6 +388,10 @@ async fn run_via_engine(
             format_selector: &selector,
             target: &staged,
             merge_container: plan.needs_merge.then_some(plan.container.as_str()),
+            // A queued download is always the whole thing. Fetching a piece of
+            // a link is the editor's, and goes through its own manager.
+            section: None,
+            force_keyframes: false,
         },
         settings,
         Arc::clone(control),

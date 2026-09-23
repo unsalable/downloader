@@ -2,7 +2,9 @@
  * The application mark: a six-blade aperture.
  *
  * Same geometry as the generated app icon (`scripts/generate_icon.py`), drawn
- * here as vectors so it stays crisp at any size and follows the theme.
+ * here as vectors so it stays crisp at any size and follows the theme. The two
+ * are one shape written twice, so a change to either has to be made to both:
+ * the opening's radius is 13.4 of the disc's 20, and the seams are 3.4 wide.
  */
 export function Logo({ size = 24, className }: { size?: number; className?: string }) {
   const gradientId = 'ud-logo-gradient';
@@ -28,8 +30,11 @@ export function Logo({ size = 24, className }: { size?: number; className?: stri
           <path d="M24 10.6 35.6 17.3 35.6 30.7 24 37.4 12.4 30.7 12.4 17.3Z" fill="black" />
           {/* Blade seams. Each runs outward from an opening vertex along that
               edge's direction -- the tangential offset is what reads as an iris
-              rather than a plain segmented ring. */}
-          <g stroke="black" strokeWidth="2.6" strokeLinecap="round">
+              rather than a plain segmented ring. The stroke is wide for its
+              radius because the same shape is rasterised down to a 16px title
+              bar icon, where a narrower seam lands under one pixel and fades
+              into a grey wash instead of cutting. */}
+          <g stroke="black" strokeWidth="3.4" strokeLinecap="round">
             <path d="M24 10.6 50 25.6" />
             <path d="M35.6 17.3 35.6 47.3" />
             <path d="M35.6 30.7 9.6 45.7" />

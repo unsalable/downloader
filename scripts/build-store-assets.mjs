@@ -32,6 +32,24 @@ const REPLIES = {
   },
 };
 
+// The application's six-blade aperture, the same shape extension/popup.html
+// carries and half the size of the 48-unit box src/components/layout/Logo.tsx
+// draws it in. It goes into two documents below, never twice into the same
+// one, so a single mask id is enough.
+const MARK = `<svg viewBox="0 0 24 24" aria-hidden="true">
+    <mask id="markMask">
+      <rect width="24" height="24" fill="black"/>
+      <circle cx="12" cy="12" r="10" fill="white"/>
+      <path d="M12 5.3 17.8 8.65 17.8 15.35 12 18.7 6.2 15.35 6.2 8.65Z" fill="black"/>
+      <g stroke="black" stroke-width="1.7" stroke-linecap="round">
+        <path d="M12 5.3 25 12.8"/><path d="M17.8 8.65 17.8 23.65"/>
+        <path d="M17.8 15.35 4.8 22.85"/><path d="M12 18.7 -1 11.2"/>
+        <path d="M6.2 15.35 6.2 0.35"/><path d="M6.2 8.65 19.2 1.15"/>
+      </g>
+    </mask>
+    <circle cx="12" cy="12" r="10" fill="currentColor" mask="url(#markMask)"/>
+  </svg>`;
+
 const COPY = {
   en: {
     connected: ['Your YouTube sign-in, lent to your own computer', 'The app can now download what your membership already gives you access to.'],
@@ -141,7 +159,7 @@ window.chrome = {
 </style></head><body>
 <div>
   <div class="brand">
-    <svg viewBox="0 0 24 24"><path d="M12 2.5 20.2 7.25v9.5L12 21.5 3.8 16.75v-9.5Z" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linejoin="round"/></svg>
+    ${MARK}
     <span>Universal Downloader</span>
   </div>
   <h1>${frame.copy[0]}</h1>
@@ -182,7 +200,7 @@ window.chrome = {
   strong { color: #f6efe6; font-size: 25px; font-weight: 600; letter-spacing: -0.01em; }
   span { color: #9c8f7f; font-size: 16px; letter-spacing: 0.16em; text-transform: uppercase; }
 </style></head><body>
-  <svg viewBox="0 0 24 24"><path d="M12 2.5 20.2 7.25v9.5L12 21.5 3.8 16.75v-9.5Z" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linejoin="round"/></svg>
+  ${MARK}
   <strong>${COPY[locale].tile[0]}</strong>
   <span>${COPY[locale].tile[1]}</span>
 </body></html>`;

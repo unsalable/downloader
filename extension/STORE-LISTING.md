@@ -9,7 +9,7 @@ out `key.pem`, the icon generator and the developer notes. Bump `version` in
 increased.
 
 **Images:** `store-assets/`, from `node scripts/build-store-assets.mjs` (rerun it whenever the
-popup changes). They are photographs of the real popup, rendered with its own HTML, CSS and
+popup or the mark changes). They are photographs of the real popup, rendered with its own HTML, CSS and
 JavaScript — not mock-ups.
 
 **Language.** The dashboard localizes the **listing** — name, summary, description, images —

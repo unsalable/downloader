@@ -141,6 +141,10 @@ impl DirectProvider {
             platform_label: PlatformId::Direct.label().to_string(),
             provider_id: PROVIDER_ID.to_string(),
             media_kind,
+            // A plain file over HTTP does support byte ranges, but nothing here
+            // knows where a second lands in it: that would mean reading the
+            // file's index first, which is the download this would have saved.
+            range_fetchable: false,
             title,
             creator: Some(info.host),
             description: None,

@@ -10,6 +10,25 @@ use crate::model::{
     DownloadMode, FormatKind, MediaFormat, MediaMetadata, QualityPreference, WatermarkPreference,
     WatermarkSupport,
 };
+use crate::providers::engine;
+
+/// The slice of a source a fetch keeps, in seconds from its start.
+///
+/// Not [`crate::model::EditSegment`], although the two hold the same two
+/// numbers: a segment is a mark the user is still moving on a file they have
+/// open, and this is a decision already taken about a file that does not exist
+/// yet. Nothing here is ever edited.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct KeptRange {
+    pub start_sec: f64,
+    pub end_sec: f64,
+}
+
+impl KeptRange {
+    pub fn length(self) -> f64 {
+        self.end_sec - self.start_sec
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct DownloadPlan {
@@ -30,6 +49,9 @@ pub struct DownloadPlan {
     pub label: String,
     pub quality_label: String,
     pub estimated_bytes: Option<u64>,
+    /// The piece of the source that is actually wanted. `None` is the ordinary
+    /// download: all of it.
+    pub kept_range: Option<KeptRange>,
 }
 
 impl DownloadPlan {
@@ -54,6 +76,58 @@ impl DownloadPlan {
             (None, None, Some(image)) => image.id.clone(),
             (None, None, None) => "best".to_string(),
         }
+    }
+
+    /// Whether the streams this plan actually chose can be handed over a piece
+    /// at a time.
+    ///
+    /// Asked of the choice rather than of the link, because the link's own
+    /// answer cannot know it: a source can publish a progressive MP4 and a DASH
+    /// rendition of the same film, and which of them is fetched is settled
+    /// here. Every chosen stream has to be seekable, not merely one of them --
+    /// a rendition whose picture and sound arrive separately is cut in one pass
+    /// over both, and one unseekable half sinks it.
+    ///
+    /// Deliberately not [`engine::is_segmented`], which answers this question
+    /// backwards: a plain progressive file over https is the best case there
+    /// is, and that function calls it a refusal. A picture is not a refusal
+    /// either -- it is simply not something a length can be taken out of.
+    pub fn supports_range(&self) -> bool {
+        if self.image.is_some() {
+            return false;
+        }
+        let chosen: Vec<&MediaFormat> = [self.video.as_ref(), self.audio.as_ref()]
+            .into_iter()
+            .flatten()
+            .collect();
+        !chosen.is_empty()
+            && chosen.iter().all(|format| {
+                format.kind != FormatKind::Image && engine::is_seekable(&format.protocol)
+            })
+    }
+
+    /// Keep only `range`, and say what that costs rather than what the whole
+    /// stream would.
+    ///
+    /// Every size a source reports is the size of all of it. Left alone, a ten
+    /// second cut out of a ten minute video announces itself at fifty times its
+    /// weight, which on a metered connection is the difference between a figure
+    /// someone acts on and one they learn to ignore. The scaled figure is a
+    /// floor rather than a promise: a cut that has to begin on a keyframe
+    /// carries the run-up to it as well.
+    pub fn keep_range(&mut self, range: KeptRange, duration_sec: Option<f64>) {
+        self.kept_range = Some(range);
+
+        let Some(duration) = duration_sec.filter(|value| value.is_finite() && *value > 0.0) else {
+            // Nothing to take a fraction of. The whole-stream figure stands as
+            // the ceiling it has always been, which is worth more than one
+            // invented from a duration the source never gave.
+            return;
+        };
+        let share = (range.length() / duration).clamp(0.0, 1.0);
+        self.estimated_bytes = self
+            .estimated_bytes
+            .map(|bytes| ((bytes as f64) * share).round() as u64);
     }
 
     /// Number of steps the progress readout will walk through.
@@ -265,6 +339,7 @@ fn build_image(allowed: &[&MediaFormat], requested_container: Option<&str>) -> A
         needs_merge: false,
         container,
         convert_to,
+        kept_range: None,
     })
 }
 
@@ -320,6 +395,7 @@ fn build_audio(
         needs_merge: false,
         container,
         convert_to,
+        kept_range: None,
     })
 }
 
@@ -443,6 +519,7 @@ fn build_explicit(
                 needs_merge: false,
                 container,
                 convert_to,
+                kept_range: None,
             })
         }
         (None, None) => Err(AppError::Unsupported("no stream was selected".into())),
@@ -488,6 +565,7 @@ fn assemble(
         engine_selector,
         container,
         convert_to,
+        kept_range: None,
     }
 }
 
@@ -651,6 +729,7 @@ mod tests {
             formats,
             entry_count: None,
             watermark_support: WatermarkSupport::NotApplicable,
+            range_fetchable: false,
             warnings: Vec::new(),
             entries: Vec::new(),
         }
@@ -1135,6 +1214,112 @@ mod tests {
         let result = build_with(&meta, DownloadMode::Image, Some("png"));
         assert_eq!(result.container, "png");
         assert_eq!(result.convert_to.as_deref(), Some("png"));
+    }
+
+    fn with_protocol(id: &str, kind: FormatKind, protocol: &str) -> MediaFormat {
+        let mut chosen = format(id, kind, Some(1080), Some(128.0), "mp4");
+        chosen.protocol = protocol.into();
+        chosen
+    }
+
+    #[test]
+    fn a_progressive_file_is_the_best_case_for_a_range_not_a_refusal() {
+        let meta = metadata(vec![with_protocol("18", FormatKind::Muxed, "https")]);
+        assert!(plan(&meta, QualityPreference::Best).supports_range());
+    }
+
+    #[test]
+    fn an_hls_rendition_can_still_be_cut_into() {
+        // Only the segments covering the marks come down, and the cut lands on
+        // a segment edge unless the keyframes are forced. Coarse is not the
+        // same as impossible.
+        let meta = metadata(vec![with_protocol("hls-1080", FormatKind::Muxed, "m3u8_native")]);
+        assert!(plan(&meta, QualityPreference::Best).supports_range());
+    }
+
+    #[test]
+    fn a_stream_handed_out_in_numbered_pieces_cannot_be() {
+        let meta = metadata(vec![with_protocol(
+            "dash-1080",
+            FormatKind::Muxed,
+            "http_dash_segments",
+        )]);
+        assert!(!plan(&meta, QualityPreference::Best).supports_range());
+    }
+
+    #[test]
+    fn one_unseekable_half_of_a_pair_sinks_the_whole_range() {
+        // The two streams are cut in one pass over both, so this is not a
+        // question that can be answered for each of them separately.
+        let mut audio = with_protocol("140", FormatKind::Audio, "http_dash_segments");
+        audio.height = None;
+        let meta = metadata(vec![with_protocol("137", FormatKind::Video, "https"), audio]);
+        let result = plan(&meta, QualityPreference::Best);
+        assert!(result.needs_merge);
+        assert!(!result.supports_range());
+    }
+
+    #[test]
+    fn a_picture_has_no_length_to_take_a_piece_of() {
+        let meta = metadata(vec![image("full", 1080, 1350, "jpg")]);
+        let result = build_with(&meta, DownloadMode::Image, None);
+        assert!(!result.supports_range());
+    }
+
+    #[test]
+    fn the_estimate_is_of_the_piece_that_is_kept_not_of_the_whole_stream() {
+        let meta = metadata(vec![format("18", FormatKind::Muxed, Some(1080), Some(128.0), "mp4")]);
+        let mut result = plan(&meta, QualityPreference::Best);
+        assert_eq!(result.estimated_bytes, Some(1_000_000));
+
+        result.keep_range(
+            KeptRange {
+                start_sec: 30.0,
+                end_sec: 40.0,
+            },
+            Some(100.0),
+        );
+        assert_eq!(result.estimated_bytes, Some(100_000));
+        assert_eq!(
+            result.kept_range,
+            Some(KeptRange {
+                start_sec: 30.0,
+                end_sec: 40.0
+            })
+        );
+    }
+
+    #[test]
+    fn a_range_as_long_as_the_video_costs_what_the_video_costs() {
+        let meta = metadata(vec![format("18", FormatKind::Muxed, Some(1080), Some(128.0), "mp4")]);
+        let mut result = plan(&meta, QualityPreference::Best);
+        result.keep_range(
+            KeptRange {
+                start_sec: 0.0,
+                end_sec: 200.0,
+            },
+            Some(100.0),
+        );
+        assert_eq!(result.estimated_bytes, Some(1_000_000));
+    }
+
+    #[test]
+    fn an_unknown_duration_leaves_the_estimate_where_it_was() {
+        // There is nothing to take a fraction of, and a figure invented here
+        // would be a smaller number with no more truth in it.
+        let meta = metadata(vec![format("18", FormatKind::Muxed, Some(1080), Some(128.0), "mp4")]);
+        for duration in [None, Some(0.0), Some(f64::NAN)] {
+            let mut result = plan(&meta, QualityPreference::Best);
+            result.keep_range(
+                KeptRange {
+                    start_sec: 30.0,
+                    end_sec: 40.0,
+                },
+                duration,
+            );
+            assert_eq!(result.estimated_bytes, Some(1_000_000));
+            assert!(result.kept_range.is_some());
+        }
     }
 
     #[test]

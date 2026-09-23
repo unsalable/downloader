@@ -31,7 +31,10 @@ is in it.
    this `extension` directory.
 5. The welcome tab opens by itself. Press Connect in the popup.
 
-`node extension/make-icons.mjs` regenerates `icons/` if the mark changes.
+The toolbar icons are the application's own six-blade aperture, drawn from the
+same proportions as `scripts/generate_icon.py`. `node extension/make-icons.mjs`
+regenerates `icons/` when the mark changes; `popup.html` and `welcome.html`
+carry the same shape inline and have to be changed with it.
 
 ### Why the manifest carries a key
 

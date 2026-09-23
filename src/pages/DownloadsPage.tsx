@@ -1,18 +1,27 @@
-import { AnimatePresence } from 'motion/react';
+import { AnimatePresence, motion, useReducedMotionConfig } from 'motion/react';
 import { Download, Pause, Play } from 'lucide-react';
-import { useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { create } from 'zustand';
 
 import { DownloadCard } from '@/components/downloads/DownloadCard';
+import { HistoryList } from '@/components/history/HistoryList';
 import { Button } from '@/components/ui/Button';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { IconButton } from '@/components/ui/IconButton';
 import { ListGroup } from '@/components/ui/ListGroup';
 import { PageHeader } from '@/components/ui/PageHeader';
+import { Segmented } from '@/components/ui/Segmented';
 import { useTranslation } from '@/i18n';
-import { cn } from '@/lib/cn';
+import { SIDEWAYS } from '@/lib/motion';
 import { IS_MOBILE } from '@/lib/platform';
 import * as ipc from '@/services/ipc';
-import { selectActive, selectFinished, useQueueStore } from '@/stores/useQueueStore';
+import {
+  selectActive,
+  selectFinished,
+  selectInFlightCount,
+  useQueueStore,
+} from '@/stores/useQueueStore';
+import type { DownloadTask } from '@/types';
 
 /**
  * Defined once, outside the component. The rows are memoised, and handlers
@@ -31,7 +40,113 @@ const HANDLERS = {
 /** Where a row's text starts: its padding, the 72px thumbnail, the gap. */
 const TEXT_INSET = IS_MOBILE ? 96 : 104;
 
+/** How a removed row leaves; see the same choice in `HistoryList`. */
+const LEAVING = IS_MOBILE ? 'sync' : 'popLayout';
+
 export function DownloadsPage({ onGoHome }: { onGoHome: () => void }) {
+  if (IS_MOBILE) return <PhoneDownloads onGoHome={onGoHome} />;
+
+  return (
+    <div className="mx-auto w-full max-w-[760px] px-6 pb-12">
+      <CurrentDownloads onGoHome={onGoHome} />
+    </div>
+  );
+}
+
+// -- the phone's two halves ---------------------------------------------------
+
+export type DownloadsSegment = 'active' | 'history';
+
+/**
+ * Which half of Downloads the phone shows, once it has shown one. Kept outside
+ * the screen, which is unmounted whenever another tab is
+ * open, so coming back finds the half that was left -- and in a store rather
+ * than a plain variable, so a request for History that arrives while Downloads
+ * is already on screen switches it there.
+ */
+const useSegmentStore = create<{ chosen: DownloadsSegment | null }>(() => ({ chosen: null }));
+
+/**
+ * Settle which half Downloads opens at on the phone: the user's own pick, or a
+ * request the app makes for them -- History asked for by name, or the list of
+ * current downloads just after one was started.
+ */
+export function showDownloadsSegment(segment: DownloadsSegment) {
+  useSegmentStore.setState({ chosen: segment });
+}
+
+/** Anything still to finish, including what is waiting or paused. */
+function hasWork(tasks: DownloadTask[]): boolean {
+  return selectInFlightCount(tasks) > 0 || tasks.some((task) => task.status === 'paused');
+}
+
+/**
+ * A phone has no room for a History tab, so History is the second half of
+ * this screen, behind a two-way switch at its top.
+ */
+function PhoneDownloads({ onGoHome }: { onGoHome: () => void }) {
+  const { t } = useTranslation();
+  const chosen = useSegmentStore((state) => state.chosen);
+
+  // The first time, the screen opens where something is to be seen: the
+  // running downloads if there are any, the finished ones if not. Read once
+  // rather than subscribed to, so a download finishing while the screen is open
+  // does not pull the list away from under the user -- and kept once shown, so
+  // it does not either between one visit and the next.
+  const [fallback] = useState<DownloadsSegment>(() =>
+    hasWork(useQueueStore.getState().tasks) ? 'active' : 'history',
+  );
+  const segment = chosen ?? fallback;
+  useEffect(() => {
+    if (chosen == null) showDownloadsSegment(fallback);
+  }, [chosen, fallback]);
+
+  // The new list comes in from the side of the half that was picked, and
+  // under the system's reduced motion only fades: a transform string is beyond
+  // the reach of `MotionConfig` (see App).
+  const still = useReducedMotionConfig() ?? false;
+  const direction = still ? 0 : segment === 'history' ? 1 : -1;
+
+  return (
+    <div className="mx-auto w-full max-w-[760px] px-4 pb-12 pt-2">
+      <Segmented
+        value={segment}
+        onChange={showDownloadsSegment}
+        options={[
+          { value: 'active', label: t('downloads.active') },
+          { value: 'history', label: t('nav.history') },
+        ]}
+      />
+
+      <AnimatePresence mode="wait" initial={false} custom={direction}>
+        <motion.div
+          key={segment}
+          custom={direction}
+          variants={SIDEWAYS}
+          initial="initial"
+          animate="animate"
+          exit="exit"
+          className="mt-3"
+        >
+          {segment === 'active' ? (
+            <CurrentDownloads onGoHome={onGoHome} />
+          ) : (
+            <HistoryList onGoHome={onGoHome} />
+          )}
+        </motion.div>
+      </AnimatePresence>
+    </div>
+  );
+}
+
+// -- the downloads themselves ---------------------------------------------------
+
+/**
+ * What is downloading, waiting, or finished and not yet cleared away, with the
+ * actions that apply to all of it. On the desktop this is the whole screen; on
+ * a phone, its first half.
+ */
+function CurrentDownloads({ onGoHome }: { onGoHome: () => void }) {
   const { t } = useTranslation();
   const tasks = useQueueStore((state) => state.tasks);
 
@@ -82,8 +197,14 @@ export function DownloadsPage({ onGoHome }: { onGoHome: () => void }) {
     ) : undefined;
 
   return (
-    <div className={cn('mx-auto w-full max-w-[760px] pb-12', IS_MOBILE ? 'px-4 pt-2' : 'px-6')}>
-      <PageHeader title={t('downloads.title')} actions={actions} />
+    <>
+      <PageHeader
+        title={t('downloads.title')}
+        actions={actions}
+        // Under the switch, the actions start the half, so they take no room
+        // above them.
+        className={IS_MOBILE ? 'pt-0' : undefined}
+      />
 
       {rows.length === 0 ? (
         <EmptyState
@@ -100,13 +221,13 @@ export function DownloadsPage({ onGoHome }: { onGoHome: () => void }) {
         // `relative` gives a row that is leaving something to be positioned
         // against while the rows under it close the gap.
         <ListGroup inset={TEXT_INSET} className="relative">
-          <AnimatePresence initial={false} mode="popLayout">
+          <AnimatePresence initial={false} mode={LEAVING}>
             {rows.map((task) => (
               <DownloadCard key={task.id} task={task} {...HANDLERS} />
             ))}
           </AnimatePresence>
         </ListGroup>
       )}
-    </div>
+    </>
   );
 }

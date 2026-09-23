@@ -21,10 +21,15 @@ import type {
   Settings,
   ToolInstallProgress,
   ToolKind,
+  ToolUpdateCheck,
   ToolsState,
-  TrimRequest,
-  TrimState,
   UpdateProgress,
+  ExportRequest,
+  ExportState,
+  FetchState,
+  RangeFetchRequest,
+  TimelineRequest,
+  TimelineState,
 } from '@/types';
 
 /**
@@ -69,6 +74,9 @@ export const resetSettings = () => invoke<Settings>('reset_settings');
 export const getTools = () => invoke<ToolsState>('get_tools');
 export const refreshTools = () => invoke<ToolsState>('refresh_tools');
 export const installTool = (tool: ToolKind) => invoke<ToolsState>('install_tool', { tool });
+/** Asks the tool's release page; downloads nothing. */
+export const checkToolUpdate = (tool: ToolKind) =>
+  invoke<ToolUpdateCheck>('check_tool_update', { tool });
 
 // -- browser link ----------------------------------------------------------
 //
@@ -141,11 +149,50 @@ export const retryConversion = (id: string) => invoke<void>('retry_conversion', 
 export const removeConversion = (id: string) => invoke<void>('remove_conversion', { id });
 export const clearFinishedConversions = () => invoke<void>('clear_finished_conversions');
 
-// -- trimming --------------------------------------------------------------
+// -- the editor ------------------------------------------------------------
+//
+// Three managers rather than one, because the three things the editor waits for
+// are unrelated: a fetch and an export can be asked for in either order, and a
+// timeline redraw happens constantly while both of them are idle. One shared
+// state would have had cancelling either one clear the other.
 
-export const trimState = () => invoke<TrimState>('trim_state');
-export const startTrim = (request: TrimRequest) => invoke<void>('start_trim', { request });
-export const cancelTrim = () => invoke<void>('cancel_trim');
+export const exportState = () => invoke<ExportState>('export_state');
+export const startExport = (request: ExportRequest) => invoke<void>('start_export', { request });
+export const cancelExport = () => invoke<void>('cancel_export');
+/**
+ * The folder an export of `path` lands in when none is chosen, or null when
+ * that is beside it. Only the backend knows which folders are the app's own.
+ */
+export const exportDefaultDir = (path: string) =>
+  invoke<string | null>('export_default_dir', { path });
+
+/**
+ * Where a copied stream is actually allowed to begin, in seconds.
+ *
+ * Read once per opened file and only when it matters -- a lossless export is
+ * the one thing that cannot land between two of these, and the timeline shows
+ * the user where the cut will really fall rather than letting them find out
+ * afterwards.
+ */
+export const mediaKeyframes = (path: string) => invoke<number[]>('media_keyframes', { path });
+
+export const fetchState = () => invoke<FetchState>('fetch_state');
+export const startRangeFetch = (request: RangeFetchRequest) =>
+  invoke<void>('start_range_fetch', { request });
+export const cancelRangeFetch = () => invoke<void>('cancel_range_fetch');
+
+export const timelineState = () => invoke<TimelineState>('timeline_state');
+export const requestTimeline = (request: TimelineRequest) =>
+  invoke<void>('request_timeline', { request });
+export const cancelTimeline = () => invoke<void>('cancel_timeline');
+
+/**
+ * One frame, as a data URI. For the files the window cannot decode: the strip
+ * and the marks still work, so the editor loses the moving picture and nothing
+ * else rather than becoming a lesser screen.
+ */
+export const frameAt = (path: string, seconds: number, height: number) =>
+  invoke<string>('frame_at', { path, seconds, height });
 
 /**
  * Let the webview read one file so a `<video>` element can play it. The asset
@@ -220,7 +267,9 @@ export const EVENTS = {
   bridgeChanged: 'bridge://changed',
   convertChanged: 'convert://changed',
   convertProgress: 'convert://progress',
-  trimChanged: 'trim://changed',
+  exportChanged: 'editor://export',
+  fetchChanged: 'editor://fetch',
+  timelineChanged: 'editor://timeline',
   updateProgress: 'update://progress',
   navigate: 'navigate',
 } as const;
@@ -278,8 +327,18 @@ export function onConvertChanged(handler: (jobs: ConvertJob[]) => void): Promise
   return listen<ConvertJob[]>(EVENTS.convertChanged, (event) => handler(event.payload));
 }
 
-export function onTrimChanged(handler: (state: TrimState) => void): Promise<UnlistenFn> {
-  return listen<TrimState>(EVENTS.trimChanged, (event) => handler(event.payload));
+export function onExportChanged(handler: (state: ExportState) => void): Promise<UnlistenFn> {
+  return listen<ExportState>(EVENTS.exportChanged, (event) => handler(event.payload));
+}
+
+export function onFetchChanged(handler: (state: FetchState) => void): Promise<UnlistenFn> {
+  return listen<FetchState>(EVENTS.fetchChanged, (event) => handler(event.payload));
+}
+
+export function onTimelineChanged(
+  handler: (state: TimelineState) => void,
+): Promise<UnlistenFn> {
+  return listen<TimelineState>(EVENTS.timelineChanged, (event) => handler(event.payload));
 }
 
 export function onConvertProgress(

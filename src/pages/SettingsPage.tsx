@@ -766,6 +766,8 @@ function AdvancedSection({
   const tools = useToolsStore((state) => state.tools);
   const installing = useToolsStore((state) => state.installing);
   const install = useToolsStore((state) => state.install);
+  const checks = useToolsStore((state) => state.checks);
+  const checkUpdate = useToolsStore((state) => state.checkUpdate);
   const [installErrors, setInstallErrors] = useState<Partial<Record<ToolKind, string>>>({});
 
   const [proxy, setProxy] = useState(settings.proxyUrl ?? '');
@@ -778,9 +780,19 @@ function AdvancedSection({
   // has. Only a failure needs words, and it gets them in the row it belongs to.
   const runInstall = async (tool: ToolKind) => {
     setInstallErrors((current) => ({ ...current, [tool]: undefined }));
-    if (await install(tool)) return;
+    if (await install(tool)) return true;
     const message = useToolsStore.getState().error ?? t('error.network.message');
     setInstallErrors((current) => ({ ...current, [tool]: message }));
+    return false;
+  };
+
+  // Asked first, fetched only when there is something newer. Once the new copy
+  // is in, it is asked about again without a spinner, so the row can say it is
+  // current rather than leave the user to trust that it is.
+  const runUpdate = async (tool: ToolKind) => {
+    setInstallErrors((current) => ({ ...current, [tool]: undefined }));
+    if (!(await checkUpdate(tool))) return;
+    if (await runInstall(tool)) void checkUpdate(tool, { quiet: true });
   };
 
   const engine = tools?.engine ?? {
@@ -814,8 +826,10 @@ function AdvancedSection({
           hintKey="settings.engineHint"
           installing={installing.engine}
           installError={installErrors.engine}
+          check={checks.engine}
           customPath={settings.enginePath}
           onInstall={() => void runInstall('engine')}
+          onCheck={() => void runUpdate('engine')}
           onLocate={(path) => void update({ enginePath: path })}
           onResetPath={() => void update({ enginePath: null })}
         />
@@ -825,9 +839,11 @@ function AdvancedSection({
           hintKey="settings.ffmpegHint"
           installing={installing.ffmpeg}
           installError={installErrors.ffmpeg}
+          check={checks.ffmpeg}
           customPath={settings.ffmpegPath}
           optionalNoteKey="setup.ffmpegOptional"
           onInstall={() => void runInstall('ffmpeg')}
+          onCheck={() => void runUpdate('ffmpeg')}
           onLocate={(path) => void update({ ffmpegPath: path })}
           onResetPath={() => void update({ ffmpegPath: null })}
         />
@@ -840,9 +856,11 @@ function AdvancedSection({
             hintKey="settings.jsRuntimeHint"
             installing={installing.jsRuntime}
             installError={installErrors.jsRuntime}
+            check={checks.jsRuntime}
             optionalNoteKey="settings.jsRuntimeOptional"
             optional
             onInstall={() => void runInstall('jsRuntime')}
+            onCheck={() => void runUpdate('jsRuntime')}
           />
         )}
       </SettingGroup>

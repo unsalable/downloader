@@ -73,7 +73,7 @@ pub fn catalogue() -> Vec<ConvertFormatInfo> {
 
 // -- probing ---------------------------------------------------------------
 
-fn ffprobe_path() -> Option<PathBuf> {
+pub(crate) fn ffprobe_path() -> Option<PathBuf> {
     // The managed FFmpeg install puts ffprobe next to ffmpeg, and a system
     // install almost always does too.
     if let Some(ffmpeg) = tools::ffmpeg_path() {
@@ -121,6 +121,8 @@ pub async fn probe(path: &str) -> AppResult<MediaProbe> {
         width: None,
         height: None,
         fps: None,
+        pixel_aspect: None,
+        video_duration_sec: None,
         video_codec: None,
         audio_codec: None,
         audio_bitrate_kbps: None,
@@ -197,6 +199,23 @@ async fn probe_with_ffprobe(binary: &Path, path: &str, out: &mut MediaProbe) -> 
                     .get("r_frame_rate")
                     .and_then(|value| value.as_str())
                     .and_then(parse_rational);
+                // ffprobe leaves this out entirely for a stream that never
+                // said, and prints "0:1" for one that said nothing useful;
+                // both mean square pixels as far as anything downstream cares.
+                out.pixel_aspect = stream
+                    .get("sample_aspect_ratio")
+                    .and_then(|value| value.as_str())
+                    .and_then(parse_rational)
+                    .filter(|value| *value > 0.0);
+                // The container's duration is the longest of its streams. A
+                // filmstrip laid out against it on a file whose audio outlasts
+                // its picture ends in black cells, so the picture's own length
+                // is kept separately rather than assumed to be the same.
+                out.video_duration_sec = stream
+                    .get("duration")
+                    .and_then(|value| value.as_str())
+                    .and_then(|value| value.parse::<f64>().ok())
+                    .filter(|value| *value > 0.0);
             }
             Some("audio") => {
                 if out.has_audio {
@@ -234,8 +253,12 @@ fn is_cover_art(stream: &serde_json::Value) -> bool {
 
 /// "30000/1001" -> 29.97. Returns None for the "0/0" FFmpeg reports when a
 /// stream has no meaningful frame rate.
+///
+/// Both separators are accepted because ffprobe prints a frame rate with a
+/// slash and a sample aspect ratio with a colon, and they are the same kind of
+/// number.
 fn parse_rational(value: &str) -> Option<f64> {
-    let (num, den) = value.split_once('/')?;
+    let (num, den) = value.split_once(['/', ':'])?;
     let num: f64 = num.parse().ok()?;
     let den: f64 = den.parse().ok()?;
     if den == 0.0 || num == 0.0 {
@@ -1031,6 +1054,8 @@ mod tests {
             width: Some(1920),
             height: Some(1080),
             fps: Some(30.0),
+            pixel_aspect: Some(1.0),
+            video_duration_sec: Some(60.0),
             video_codec: Some("h264".into()),
             audio_codec: Some("aac".into()),
             audio_bitrate_kbps: Some(192.0),
@@ -1248,6 +1273,19 @@ mod tests {
         );
         assert_eq!(parse_rational("0/0"), None);
         assert_eq!(parse_rational("nonsense"), None);
+    }
+
+    #[test]
+    fn a_pixel_aspect_is_read_from_the_colon_form_ffprobe_prints() {
+        // ffprobe writes a sample aspect ratio as "64:45" rather than "64/45",
+        // and a 720x576 frame with that pixel is a 16:9 picture.
+        assert_eq!(
+            parse_rational("64:45").map(|value| (value * 1000.0).round()),
+            Some(1422.0)
+        );
+        assert_eq!(parse_rational("1:1"), Some(1.0));
+        // What ffprobe prints for a stream that never said.
+        assert_eq!(parse_rational("0:1"), None);
     }
 
     #[test]

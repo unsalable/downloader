@@ -326,11 +326,25 @@ with `PW_RENDERFULLCONTENT`, which a plain screen copy would render black).
 ### Generated assets
 
 ```bash
-python scripts/generate_icon.py       # app icon (six-blade aperture mark)
-python scripts/generate_tray.py       # notification-area icons
-npx tauri icon src-tauri/icons/icon-source.png -o src-tauri/icons
+python scripts/generate_icon.py       # the mark, flat on transparency, at 1024
+npx tauri icon src-tauri/icons/app-icon.json -o src-tauri/icons
 python scripts/generate_licenses.py   # third-party licence list for About
 ```
+
+The mark is a six-blade aperture and nothing else: no tile, no plate, no
+backing. It is the same shape in three hands — `scripts/generate_icon.py`,
+`src/components/layout/Logo.tsx` and `extension/make-icons.mjs` — which have to
+be changed together.
+
+The Tauri CLI is pointed at `app-icon.json` rather than straight at a PNG for
+two reasons. A bare-PNG run writes its own default background into
+`gen/android/app/src/main/res/values/ic_launcher_background.xml`, losing the
+colour the adaptive icon sits on; and Android's launcher mask crops a
+foreground that reaches the canvas edge, so the manifest points at the inset
+`icon-source-fg.png` instead. Every run also drops a `src-tauri/icons/ios/`
+directory this project has no target for; delete it afterwards. There is nothing
+separate to generate for the notification area — the tray takes the window icon
+the bundle already carries.
 
 ---
 
@@ -367,6 +381,8 @@ URLs, so the content-security policy can forbid remote image origins outright
 and re-opening History contacts nobody.
 
 ## Licences
+
+Universal Downloader is released under the [MIT License](LICENSE).
 
 Third-party licences are listed in the app's About screen, generated into
 `src-tauri/resources/licenses.json`. Inter is used under the SIL Open Font

@@ -364,6 +364,7 @@ mod tests {
             formats: Vec::new(),
             entry_count: None,
             watermark_support: WatermarkSupport::NotApplicable,
+            range_fetchable: false,
             warnings: Vec::new(),
             entries: Vec::new(),
         }

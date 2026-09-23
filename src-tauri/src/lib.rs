@@ -12,7 +12,9 @@ pub mod commands;
 pub mod converter;
 pub mod db;
 pub mod downloader;
+pub mod editor_media;
 pub mod error;
+pub mod export;
 pub mod ffmpeg;
 pub mod filename;
 pub mod logging;
@@ -23,9 +25,9 @@ pub mod paths;
 pub mod process;
 pub mod providers;
 pub mod queue;
+pub mod range;
 pub mod settings;
 pub mod tools;
-pub mod trim;
 #[cfg(desktop)]
 pub mod tray;
 pub mod updater;
@@ -40,8 +42,10 @@ use tauri::{Listener, WindowEvent};
 use commands::AppState;
 use converter::ConvertManager;
 use db::Database;
+use editor_media::TimelineManager;
+use export::ExportManager;
 use queue::QueueManager;
-use trim::TrimManager;
+use range::RangeFetchManager;
 
 /// Temp files older than a day are leftovers from a crash, not resumable state.
 const TEMP_SWEEP_AGE_SECS: u64 = 60 * 60 * 24;
@@ -99,17 +103,31 @@ pub fn run() {
             let converter = ConvertManager::new(handle.clone(), Arc::clone(&settings));
             converter.spawn_scheduler();
 
-            // A cut is one file at a time, started from a screen the user is
-            // looking at, so there is nothing to schedule and nothing to
+            // An export is one file at a time, started from a screen the user
+            // is looking at, so there is nothing to schedule and nothing to
             // restore -- only somewhere for the running one to live.
-            let trimmer = TrimManager::new(handle.clone(), Arc::clone(&settings));
+            let exporter = ExportManager::new(handle.clone(), Arc::clone(&settings));
+
+            // The timeline is a third manager rather than part of the export,
+            // because the two wait for unrelated things: a redraw happens
+            // constantly while nothing is being exported, and cancelling one
+            // must not be cancelling the other.
+            let timeline = TimelineManager::new(handle.clone(), Arc::clone(&settings));
+
+            // Bringing a link in is a fourth, because it waits on the network
+            // rather than on a processor and is the only one of them that can
+            // be running while the user is still deciding what to do with what
+            // it brings.
+            let fetcher = RangeFetchManager::new(handle.clone(), Arc::clone(&settings));
 
             app.manage(AppState {
                 db: Arc::clone(&database),
                 settings: Arc::clone(&settings),
                 queue: Arc::clone(&queue),
                 converter: Arc::clone(&converter),
-                trimmer: Arc::clone(&trimmer),
+                exporter: Arc::clone(&exporter),
+                timeline: Arc::clone(&timeline),
+                fetcher: Arc::clone(&fetcher),
             });
 
             #[cfg(desktop)]
@@ -216,6 +234,7 @@ pub fn run() {
             commands::get_tools,
             commands::refresh_tools,
             commands::install_tool,
+            commands::check_tool_update,
             commands::detect_platform,
             commands::analyze_url,
             commands::get_thumbnail,
@@ -234,10 +253,18 @@ pub fn run() {
             commands::reorder_download,
             commands::set_download_order,
             commands::convert_formats,
-            commands::trim_state,
-            commands::start_trim,
-            commands::cancel_trim,
-            #[cfg(not(target_os = "android"))]
+            commands::export_state,
+            commands::start_export,
+            commands::cancel_export,
+            commands::export_default_dir,
+            commands::media_keyframes,
+            commands::fetch_state,
+            commands::start_range_fetch,
+            commands::cancel_range_fetch,
+            commands::timeline_state,
+            commands::request_timeline,
+            commands::cancel_timeline,
+            commands::frame_at,
             commands::allow_media_preview,
             commands::probe_media,
             commands::list_conversions,
@@ -292,7 +319,9 @@ fn handle_window_event(window: &tauri::Window, event: &WindowEvent) {
             } else if let Some(state) = window.app_handle().try_state::<AppState>() {
                 state.queue.shutdown();
                 state.converter.shutdown();
-                state.trimmer.shutdown();
+                state.exporter.shutdown();
+                state.timeline.shutdown();
+                state.fetcher.shutdown();
             }
         }
         WindowEvent::Resized(_) => {

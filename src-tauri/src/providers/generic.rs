@@ -145,6 +145,9 @@ impl GenericProvider {
             platform,
             platform_label: platform.label().to_string(),
             provider_id: PROVIDER_ID.to_string(),
+            // What this provider finds is whatever the page had lying in its
+            // markup. Nothing here can promise a seekable stream.
+            range_fetchable: false,
             media_kind,
             title: decode_entities(&title),
             creator: meta

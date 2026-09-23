@@ -1,16 +1,19 @@
 import { open } from '@tauri-apps/plugin-dialog';
 import { Check } from 'lucide-react';
+import { AnimatePresence, motion } from 'motion/react';
 
 import { Button } from '@/components/ui/Button';
 import { InlineNotice } from '@/components/ui/InlineNotice';
 import { Progress } from '@/components/ui/Progress';
 import { Tooltip } from '@/components/ui/Tooltip';
-import { useTranslation } from '@/i18n';
+import { errorMessage, useTranslation } from '@/i18n';
 import type { TranslationKey } from '@/i18n';
 import { cn } from '@/lib/cn';
 import { formatBytes, truncateMiddle } from '@/lib/format';
+import { FADE } from '@/lib/motion';
 import { IS_MOBILE } from '@/lib/platform';
-import type { ToolInstallProgress, ToolStatus } from '@/types';
+import type { ToolCheckState } from '@/stores/useToolsStore';
+import type { AppErrorInfo, ToolInstallProgress, ToolStatus } from '@/types';
 
 interface ToolCardProps {
   status: ToolStatus;
@@ -19,7 +22,12 @@ interface ToolCardProps {
   installing: ToolInstallProgress | undefined;
   /** Why the last install failed, shown in the row until the next attempt. */
   installError?: string | null;
+  /** Installs a missing tool. */
   onInstall: () => void;
+  /** Asks whether an installed tool has a newer release, and fetches it if so. */
+  onCheck: () => void;
+  /** What that last asking found. */
+  check?: ToolCheckState;
   optionalNoteKey?: TranslationKey;
   /**
    * A tool the app can point at a copy of its own. Left out for one the app
@@ -87,6 +95,14 @@ const SOURCE_LABEL = {
   missing: 'settings.toolMissing',
 } as const satisfies Record<ToolStatus['source'], TranslationKey>;
 
+/** Why a check failed, in as few words as there are for it. */
+function checkFailureReason(error: AppErrorInfo, t: (key: TranslationKey) => string): string {
+  // Only a connection problem has something the user can do about it; what
+  // else can go wrong -- GitHub rate-limiting or unwell -- passes by itself.
+  const connection = ['network', 'offline', 'networkBlocked'].includes(error.code);
+  return connection ? errorMessage(error) : t('settings.toolCheckLater');
+}
+
 /** One tool as a row of a `ListGroup`: what it is, its state, what can be done. */
 export function ToolCard({
   status,
@@ -96,6 +112,8 @@ export function ToolCard({
   installError,
   customPath,
   onInstall,
+  onCheck,
+  check,
   onLocate,
   onResetPath,
   optionalNoteKey,
@@ -103,6 +121,13 @@ export function ToolCard({
 }: ToolCardProps) {
   const { t } = useTranslation();
   const quietlyMissing = !status.available && optional === true;
+  const checking = status.available && check?.checking === true;
+  // Said only of the copy that was asked about. A different version since --
+  // installed from another screen, or a file chosen by hand -- was not.
+  const upToDate =
+    status.available &&
+    check?.result?.upToDate === true &&
+    check.result.installed === status.version;
   // The sizes a `SettingRow` sets its two lines in, so the rows of a group agree.
   const titleSize = IS_MOBILE ? 'text-[15px]' : 'text-[13.5px]';
   const bodySize = IS_MOBILE ? 'text-[13px]' : 'text-[12.5px]';
@@ -125,6 +150,23 @@ export function ToolCard({
           <span className={cn('tabular flex min-w-0 max-w-[55%] items-center gap-1.5 text-fg-muted', bodySize)}>
             <Check size={14} aria-hidden="true" className="shrink-0 text-success" />
             {status.version && <span className="truncate">{status.version}</span>}
+            {/* The answer to "check for update" when there was nothing to
+                fetch. It stays for the session: the question was answered. */}
+            <AnimatePresence initial={false}>
+              {upToDate && (
+                <motion.span
+                  key="current"
+                  variants={FADE}
+                  initial="initial"
+                  animate="animate"
+                  exit="exit"
+                  className="flex shrink-0 items-center gap-1.5"
+                >
+                  <span aria-hidden="true">·</span>
+                  {t('settings.toolUpToDate')}
+                </motion.span>
+              )}
+            </AnimatePresence>
           </span>
         ) : (
           <span className={cn('shrink-0', bodySize, quietlyMissing ? 'text-fg-muted' : 'text-warning')}>
@@ -169,16 +211,28 @@ export function ToolCard({
         </InlineNotice>
       )}
 
+      {check?.error && status.available && !installing && !checking && (
+        <InlineNotice tone="error" className="mt-2.5">
+          <span className="block font-medium">{t('settings.toolCheckFailed')}</span>
+          {checkFailureReason(check.error, t)}
+        </InlineNotice>
+      )}
+
       {/* A tool that ships inside the app has nothing to install, and on a
           phone a file the user points at would not be allowed to run. */}
       {!installing && !(status.source === 'bundled' && status.available) && (
         <div className="mt-3 flex flex-wrap items-center gap-2">
+          {/* An installed tool is asked about before anything is fetched; a
+              missing one has nothing to compare and is simply installed. */}
           <Button
             size="sm"
             variant={status.available || quietlyMissing ? 'secondary' : 'primary'}
-            onClick={onInstall}
+            loading={checking}
+            onClick={status.available ? onCheck : onInstall}
           >
-            {status.available ? t('settings.toolUpdate') : t('settings.toolInstall')}
+            {status.available
+              ? t(checking ? 'settings.toolChecking' : 'settings.toolUpdate')
+              : t('settings.toolInstall')}
           </Button>
           {onLocate && !IS_MOBILE && (
             <Button size="sm" variant="ghost" onClick={pickFile}>

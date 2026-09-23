@@ -150,6 +150,140 @@ export const SCREEN: Variants = {
 };
 
 /**
+ * How a screen on the phone relates to the one it replaces, which decides the
+ * way both of them move.
+ *
+ *   next, previous   a tab further right or further left along the bottom bar
+ *   push, pop        a page opened over the tab that is showing -- About, a
+ *                    section of Settings -- and Back closing it again
+ *   none             no relation: the first screen the app shows -- and any
+ *                    change under the system's reduced motion, which fades
+ */
+export type PhoneMove = 'next' | 'previous' | 'push' | 'pop' | 'none';
+
+/** How far a tab's screen travels: enough to say which way, not a slide show. */
+const AXIS = 28;
+/** A page opened over a tab comes further, so it reads as arriving on top... */
+const PUSH = 40;
+/** ...and the screen it covers only gives way beneath it. */
+const BENEATH = 12;
+
+/**
+ * The incoming screen waits this long before it starts to show, so the two do
+ * not sit on top of each other at half strength. Its travel does not wait: the
+ * movement is one continuous gesture, and only the fade is handed over.
+ */
+const HANDOVER = DURATION.micro * 0.4;
+
+/**
+ * Sideways travel, written as a whole `transform` rather than as Motion's `x`.
+ * Motion hands a transform (and opacity) to the browser to run on the
+ * compositor, where `x` is stepped from JavaScript every frame -- and the
+ * frames of a screen change are exactly when the main thread is busiest,
+ * mounting the screen that arrives. On a phone that difference is the one
+ * between a slide and a stutter.
+ */
+const shift = (px: number) => `translateX(${px}px)`;
+
+/**
+ * A screen replacing another on the phone, where the bottom bar and the Back
+ * gesture give every change a direction the screens can follow.
+ *
+ * A tab further along the bar arrives from that side and the old one leaves
+ * toward the other, so the row of tabs reads as a strip being moved along. A
+ * page opened over a tab comes in from the right on top of it, and Back sends
+ * it out the same way. Both screens move at once -- the new one is under way
+ * the moment the finger lifts -- while the old one fades out faster than the
+ * new one fades in, which keeps the overlap to a moment.
+ *
+ * Takes the move through AnimatePresence's `custom`, so a screen that is
+ * already leaving learns which way the next one went.
+ */
+export const PHONE_SCREEN: Variants = {
+  initial: (move: PhoneMove) => {
+    if (move === 'next') return { opacity: 0, transform: shift(AXIS) };
+    if (move === 'previous') return { opacity: 0, transform: shift(-AXIS) };
+    if (move === 'push') return { opacity: 0, transform: shift(PUSH) };
+    if (move === 'pop') return { opacity: 0, transform: shift(-BENEATH) };
+    return { opacity: 0, transform: shift(0) };
+  },
+  animate: {
+    opacity: 1,
+    transform: shift(0),
+    transition: { ...T.spatial, opacity: { ...T.component, delay: HANDOVER } },
+  },
+  exit: (move: PhoneMove) => {
+    const transition = { ...T.spatialOut, opacity: T.microOut };
+    if (move === 'next') return { opacity: 0, transform: shift(-AXIS), transition };
+    if (move === 'previous') return { opacity: 0, transform: shift(AXIS), transition };
+    if (move === 'push') return { opacity: 0, transform: shift(-BENEATH), transition };
+    if (move === 'pop') return { opacity: 0, transform: shift(PUSH), transition };
+    return { opacity: 0, transition };
+  },
+};
+
+/**
+ * Content trading places inside a screen, under a control that moved sideways
+ * to ask for it -- the two halves of a segmented control. The same idea as the
+ * tabs, at half the distance: it is a part of the page changing, not the page.
+ * `custom` is 1 when the selection moved right, -1 when it moved left, and 0
+ * for a fade alone.
+ */
+export const SIDEWAYS: Variants = {
+  initial: (direction: number) => ({ opacity: 0, transform: shift((AXIS / 2) * direction) }),
+  animate: { opacity: 1, transform: shift(0), transition: T.component },
+  exit: (direction: number) => ({
+    opacity: 0,
+    transform: shift((-AXIS / 4) * direction),
+    transition: T.microOut,
+  }),
+};
+
+/**
+ * The phone's tab bar stepping out of the way while the editor has the whole
+ * screen, and coming back when it lets go.
+ *
+ * It goes down, the way a thumb would push it, and fades as it goes; it comes
+ * back up the same way at the pace of a screen change. Named states rather
+ * than presence: the bar stays mounted throughout, so the pill marking the
+ * selected tab keeps its place instead of flying in from wherever it was last
+ * measured. `custom` is true under the system's reduced motion, where the
+ * transform string is beyond `MotionConfig` (see App) and the bar only fades.
+ */
+export const PHONE_TAB_BAR: Variants = {
+  shown: { opacity: 1, transform: 'translateY(0%)', transition: T.spatial },
+  away: (still: boolean) => ({
+    opacity: 0,
+    transform: still ? 'translateY(0%)' : 'translateY(100%)',
+    transition: T.spatialOut,
+  }),
+};
+
+/**
+ * The phone's title bar doing the same. Opacity alone: the editor's own bar
+ * takes its place, and anything that travelled would cross it on the way.
+ */
+export const PHONE_TITLE_BAR: Variants = {
+  shown: { opacity: 1, transition: T.component },
+  away: { opacity: 0, transition: T.microOut },
+};
+
+/**
+ * The editor taking the whole screen, and giving it back.
+ *
+ * The only move in the app that is neither a screen change nor a panel: the
+ * same route redraws itself from a centred column into a full-bleed workspace.
+ * It is opacity and the faintest scale, with no travel at all -- the two
+ * layouts put their regions in different places, so anything that slid would
+ * read as a shove rather than as a change of shape.
+ */
+export const EDITOR: Variants = {
+  initial: { opacity: 0, scale: 0.995 },
+  animate: { opacity: 1, scale: 1, transition: T.spatial },
+  exit: { opacity: 0, transition: T.spatialOut },
+};
+
+/**
  * A dialog. It arrives from slightly below and slightly small, which reads as
  * coming toward the viewer, and leaves back the way it came at half the
  * distance -- the reverse of the entrance, not a different animation.

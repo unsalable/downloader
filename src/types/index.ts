@@ -82,6 +82,12 @@ export interface MediaMetadata {
   /** Populated for carousels, galleries and playlists. */
   entryCount: number | null;
   watermarkSupport: WatermarkSupport;
+  /**
+   * Whether this link can hand over just a slice of itself. Decided by the
+   * backend from the protocol of the streams it would actually fetch, never by
+   * a list of site names written down a second time over here.
+   */
+  rangeFetchable: boolean;
   /** Non-fatal notes worth surfacing, already localised keys where possible. */
   warnings: string[];
 }
@@ -221,6 +227,18 @@ export interface MediaProbe {
   width: number | null;
   height: number | null;
   fps: number | null;
+  /**
+   * The video stream's own duration, which is not always the container's: a
+   * file can carry 26 seconds of audio over 20 seconds of picture, and a
+   * filmstrip cut to the container's length ends in black cells.
+   */
+  videoDurationSec: number | null;
+  /**
+   * The pixel's own shape, when the source does not use square ones. A 720x576
+   * frame with a 64:45 pixel is a 16:9 picture, and anything that measures it
+   * by its stored size alone is measuring the wrong rectangle.
+   */
+  pixelAspect: number | null;
   videoCodec: string | null;
   audioCodec: string | null;
   audioBitrateKbps: number | null;
@@ -269,26 +287,193 @@ export interface ConvertJob {
   options: ConvertOptions;
 }
 
-/** Where a cut is allowed to land: the whole of the choice on the Trim screen. */
-export type TrimPrecision = 'fast' | 'exact';
+// -- the editor ------------------------------------------------------------
 
-export type TrimStatus = 'idle' | 'running' | 'completed' | 'failed' | 'canceled';
-
-export interface TrimRequest {
-  inputPath: string;
+/** One kept piece of the source, in seconds from its start. */
+export interface EditSegment {
   startSec: number;
   endSec: number;
-  precision: TrimPrecision;
-  /** Null means "beside the source file". */
+}
+
+/**
+ * The shape of the exported frame. `source` is not a ratio but the absence of
+ * one: the frame is left exactly as it was found, which is the only setting a
+ * lossless export can hold.
+ */
+export type AspectRatio = 'source' | '16:9' | '9:16' | '16:10' | '4:3' | '1:1';
+
+/** What happens to a frame that is not the shape it is being poured into. */
+export type FrameFit = 'fill' | 'fit';
+
+/**
+ * The root of every other export decision.
+ *
+ * `lossless` copies the streams through untouched -- seconds rather than
+ * minutes, and the picture bit-for-bit the original -- but a copied video
+ * stream can only begin at a keyframe, and nothing about the frame can change.
+ * `reencode` decodes and encodes again, which is what buys a different shape,
+ * rate, size or codec, and what makes a cut land on the frame it was asked for.
+ */
+export type ExportMode = 'lossless' | 'reencode';
+
+export type VideoCodec = 'h264' | 'h265' | 'vp9' | 'av1';
+export type AudioCodec = 'aac' | 'opus' | 'mp3' | 'flac';
+export type ExportQuality = 'maximum' | 'high' | 'balanced' | 'small';
+
+export interface ExportOptions {
+  mode: ExportMode;
+  /** Target container, lowercased and without the dot: mp4, mkv, webm, mov. */
+  container: string;
+  videoCodec: VideoCodec;
+  quality: ExportQuality;
+  /**
+   * Target average video bitrate in kbps. Null encodes to the quality preset
+   * (constant quality) instead. Re-encode only; a lossless copy ignores it.
+   */
+  videoBitrateKbps: number | null;
+  /** Null keeps the source's rate. */
+  fps: number | null;
+  /** Cap in pixels of height. Null keeps the source's resolution. */
+  maxHeight: number | null;
+  aspect: AspectRatio;
+  fit: FrameFit;
+  /** Drop the audio entirely rather than encode it. */
+  mute: boolean;
+  /** Linear gain on the audio: 1 leaves it as it is, 0 to 2 is 0 to 200 %. */
+  volume: number;
+  audioCodec: AudioCodec;
+  audioBitrateKbps: number | null;
+  /** Map an HDR source down to Rec. 709 instead of letting it wash out. */
+  toneMapSdr: boolean;
+  hardware: boolean;
+}
+
+export interface ExportRequest {
+  inputPath: string;
+  /** In order, and non-overlapping. They are joined into one file. */
+  segments: EditSegment[];
+  options: ExportOptions;
+  /**
+   * Null means beside the source file -- unless the source is one of the app's
+   * own files, which is every source on a phone and, on the desktop, a clip
+   * fetched from a link into the app's temporary folder. Those go to the
+   * download folder instead; `exportDefaultDir` says which, for the inspector.
+   */
   outputDir: string | null;
 }
 
-/** There is only ever one cut, so this is a state rather than a list. */
-export interface TrimState {
-  status: TrimStatus;
+export type ExportStatus = 'idle' | 'running' | 'completed' | 'failed' | 'canceled';
+
+/** There is only ever one export, so this is a state rather than a list. */
+export interface ExportState {
+  status: ExportStatus;
   /** 0..100 while running; null once it is not. */
   percent: number | null;
   outputPath: string | null;
+  error: AppErrorInfo | null;
+}
+
+// -- fetching a range off a link -------------------------------------------
+
+export interface RangeFetchRequest {
+  url: string;
+  /** Null for the whole video; both are set together or not at all. */
+  startSec: number | null;
+  endSec: number | null;
+  /** Cap the rendition's height, so a 4K source does not land as a 4K file. */
+  maxHeight: number | null;
+  /**
+   * Re-encode at the cuts so the fetch begins on the frame that was asked for.
+   * Costs roughly twice the time; without it the fetch starts at the keyframe
+   * at or before the mark, which the editor can tidy up afterwards anyway.
+   */
+  exact: boolean;
+  /** Null means the app's own temporary folder, which the editor then opens. */
+  outputDir: string | null;
+}
+
+export type FetchStatus =
+  | 'idle'
+  | 'resolving'
+  | 'fetching'
+  | 'completed'
+  | 'failed'
+  | 'canceled';
+
+export interface FetchState {
+  status: FetchStatus;
+  /**
+   * 0..100 when the source reports enough to say. Null is not zero: a ranged
+   * fetch through the engine reports nothing until it is over, and a bar that
+   * sits at 0 for a minute is a lie a spinner would not tell.
+   */
+  percent: number | null;
+  receivedBytes: number;
+  title: string | null;
+  outputPath: string | null;
+  error: AppErrorInfo | null;
+}
+
+// -- what the timeline draws -----------------------------------------------
+
+export type TimelineKind = 'waveform' | 'filmstrip';
+
+export interface TimelineRequest {
+  path: string;
+  kind: TimelineKind;
+  /** The window to read. Null start and length mean the whole file. */
+  startSec: number | null;
+  lengthSec: number | null;
+  /** Buckets for a waveform, cells for a filmstrip. */
+  count: number;
+  /** Filmstrip only: the height of one cell, in device pixels. */
+  cellHeight: number | null;
+  /**
+   * Echoed back untouched in the state. A zoom gesture supersedes the one
+   * before it, and without this the slower answer would paint over the newer.
+   */
+  token: number;
+}
+
+export interface WaveformData {
+  buckets: number;
+  startSec: number;
+  lengthSec: number;
+  /**
+   * Base64 of `2 * buckets` bytes: the minimum and maximum sample of each
+   * bucket, interleaved, with 128 as silence. A JSON array of floats carries
+   * the same information at nine times the size.
+   */
+  peaks: string;
+}
+
+export interface FilmstripData {
+  /** Cells in the whole strip, which is `chunkFrames * chunks.length`. */
+  frames: number;
+  chunkFrames: number;
+  cellWidth: number;
+  cellHeight: number;
+  startSec: number;
+  lengthSec: number;
+  /**
+   * Tiled sprites, in order, each holding `chunkFrames` cells. They arrive one
+   * at a time so the strip fills from the left rather than appearing at once.
+   */
+  chunks: string[];
+}
+
+/**
+ * What the backend has drawn for the file the editor currently has open.
+ *
+ * `token` is echoed from the request: a zoom gesture supersedes the one before
+ * it, and without this the slower answer would paint over the newer one.
+ */
+export interface TimelineState {
+  path: string | null;
+  token: number;
+  working: boolean;
+  waveform: WaveformData | null;
+  filmstrip: FilmstripData | null;
   error: AppErrorInfo | null;
 }
 
@@ -377,6 +562,16 @@ export interface ToolInstallProgress {
   receivedBytes: number;
   totalBytes: number | null;
   stage: 'downloading' | 'extracting' | 'verifying' | 'done';
+}
+
+/** What asking for a newer release of a tool found. Asking downloads nothing. */
+export interface ToolUpdateCheck {
+  tool: ToolKind;
+  installed: string | null;
+  /** The newest release's version; for FFmpeg, the day its build went up. */
+  latest: string | null;
+  /** True only when the backend knows it. Anything it cannot compare is false. */
+  upToDate: boolean;
 }
 
 /** A newer build of the phone app, found on the release page. */

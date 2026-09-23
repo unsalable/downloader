@@ -141,6 +141,8 @@ impl Post {
             platform: self.platform,
             platform_label: self.platform.label().to_string(),
             provider_id: PROVIDER_ID.to_string(),
+            // A picture has no seconds to ask for a range of.
+            range_fetchable: false,
             media_kind: MediaKind::Image,
             title: self.title.clone(),
             creator: self.creator.clone(),

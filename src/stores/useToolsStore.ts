@@ -1,7 +1,20 @@
 import { create } from 'zustand';
 
 import * as ipc from '@/services/ipc';
-import type { ToolInstallProgress, ToolKind, ToolsState } from '@/types';
+import type {
+  AppErrorInfo,
+  ToolInstallProgress,
+  ToolKind,
+  ToolsState,
+  ToolUpdateCheck,
+} from '@/types';
+
+/** The last "check for update" on one tool, kept for the rest of the session. */
+export interface ToolCheckState {
+  checking: boolean;
+  result: ToolUpdateCheck | null;
+  error: AppErrorInfo | null;
+}
 
 interface ToolsStoreState {
   tools: ToolsState | null;
@@ -9,10 +22,17 @@ interface ToolsStoreState {
   checking: boolean;
   installing: Partial<Record<ToolKind, ToolInstallProgress>>;
   error: string | null;
+  checks: Partial<Record<ToolKind, ToolCheckState>>;
   load: () => Promise<void>;
   refresh: () => Promise<void>;
   apply: (tools: ToolsState) => void;
   install: (tool: ToolKind) => Promise<boolean>;
+  /**
+   * Ask whether a newer release than the copy in use exists. Resolves true
+   * only when one does, so the caller installs exactly then. A quiet check
+   * shows no spinner and keeps a failure to itself.
+   */
+  checkUpdate: (tool: ToolKind, options?: { quiet?: boolean }) => Promise<boolean>;
   setInstallProgress: (progress: ToolInstallProgress) => void;
 }
 
@@ -21,6 +41,7 @@ export const useToolsStore = create<ToolsStoreState>((set, get) => ({
   checking: true,
   installing: {},
   error: null,
+  checks: {},
 
   load: async () => {
     // The backend answers once its first discovery pass has finished, so this
@@ -74,6 +95,30 @@ export const useToolsStore = create<ToolsStoreState>((set, get) => ({
         delete next[tool];
         return { installing: next };
       });
+    }
+  },
+
+  checkUpdate: async (tool, { quiet = false } = {}) => {
+    const { installing, checks } = get();
+    if (installing[tool] || checks[tool]?.checking) return false;
+
+    const record = (next: ToolCheckState) =>
+      set((state) => ({ checks: { ...state.checks, [tool]: next } }));
+
+    // The previous answer goes while the new one is asked for, so an answer
+    // that comes back the same still reads as having been given again.
+    if (!quiet) record({ checking: true, result: null, error: null });
+    try {
+      const result = await ipc.checkToolUpdate(tool);
+      // A press while a quiet check was out is its own question. Answering it
+      // from here would end its spinner early and let a second press through.
+      if (!(quiet && get().checks[tool]?.checking)) {
+        record({ checking: false, result, error: null });
+      }
+      return !result.upToDate;
+    } catch (error) {
+      if (!quiet) record({ checking: false, result: null, error: ipc.toAppError(error) });
+      return false;
     }
   },
 

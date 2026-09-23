@@ -12,6 +12,7 @@ import {
 } from 'react';
 import { createPortal } from 'react-dom';
 
+import { useBackLayer } from '@/hooks/useBackLayer';
 import { cn } from '@/lib/cn';
 import { T } from '@/lib/motion';
 import { IS_MOBILE } from '@/lib/platform';
@@ -86,6 +87,10 @@ export function Dropdown<T extends string>({
     setActiveIndex(-1);
     triggerRef.current?.focus();
   }, []);
+
+  // On a phone the Back gesture takes an open menu down before anything under
+  // it -- the dialog it was opened in, or the screen.
+  useBackLayer(open, closeMenu);
 
   const commit = useCallback(
     (option: DropdownOption<T>) => {

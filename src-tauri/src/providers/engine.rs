@@ -279,6 +279,15 @@ pub fn classify_engine_error(stderr: &str) -> AppError {
         return AppError::Unsupported(first_error_line(stderr));
     }
 
+    // "You have requested downloading the video partially, but ffmpeg is not
+    // installed. Aborting." A ranged fetch checks for FFmpeg before it spawns
+    // anything, so this should never arrive from there; it is here for the
+    // paths that did not check, where the alternative is the engine's own
+    // sentence in a card offering to try again.
+    if has(&["downloading the video partially, but ffmpeg is not installed"]) {
+        return AppError::FfmpegMissing;
+    }
+
     // A request that never reached the source says nothing about the media.
     // It goes ahead of the checks below, which look for words such as "geo" or
     // "paid" that the id quoted in the same line could happen to contain.
@@ -581,6 +590,7 @@ pub fn parse_metadata(node: &Value, requested_url: &str) -> AppResult<MediaMetad
             .and_then(Value::as_str)
             .map(str::to_string),
         is_live,
+        range_fetchable: range_fetchable(&formats, is_live, node),
         formats,
         entry_count: None,
         watermark_support,
@@ -844,6 +854,56 @@ fn parse_format(node: &Value) -> Option<MediaFormat> {
         url: Some(url),
         http_headers,
     })
+}
+
+/// Whether FFmpeg can be pointed at the middle of this stream.
+///
+/// Deliberately not [`is_segmented`], which asks a different question and
+/// answers this one backwards: a plain progressive file on `https` is the best
+/// case there is -- one ranged GET, and a ten-second cut out of a half-hour
+/// video moves half a megabyte instead of twenty-eight. What cannot be seeked
+/// into is the genuinely segmented and the genuinely live: `http_dash_segments`
+/// hands out numbered pieces rather than a file, and `ism`, `rtmp` and the
+/// websocket protocols have no addressable middle at all. HLS sits between the
+/// two: only the covering segments come down, but the cut lands on a segment
+/// edge unless it is re-encoded.
+pub fn is_seekable(protocol: &str) -> bool {
+    let protocol = protocol.trim().to_ascii_lowercase();
+    if protocol.contains("dash_segments") || protocol.contains("ism") {
+        return false;
+    }
+    if protocol.starts_with("rtmp") || protocol.starts_with("rtsp") || protocol.contains("websocket")
+    {
+        return false;
+    }
+    protocol == "https" || protocol == "http" || protocol.contains("m3u8")
+}
+
+/// Whether the editor may offer to fetch just a slice of this link.
+///
+/// This is the question the interface asks before the user has chosen a
+/// quality, so it can only answer for the link as a whole: is there a timed
+/// rendition here that FFmpeg could be pointed into the middle of. The strict
+/// test -- that every stream the plan actually picks is seekable, because a
+/// rendition whose picture and sound arrive separately is cut in one pass over
+/// both and one unseekable half sinks it -- belongs to the fetch itself, which
+/// knows which formats it chose. A live stream has no fixed timeline to cut
+/// against, and a link with no duration has nothing to cut at all.
+fn range_fetchable(formats: &[MediaFormat], is_live: bool, node: &Value) -> bool {
+    if is_live {
+        return false;
+    }
+    let duration = node.get("duration").and_then(Value::as_f64).unwrap_or(0.0);
+    // A duration that is not a number is not a duration: a link reporting one
+    // has nothing for a mark to be measured against.
+    if !duration.is_finite() || duration <= 0.0 {
+        return false;
+    }
+    let timed: Vec<&MediaFormat> = formats
+        .iter()
+        .filter(|format| format.kind != FormatKind::Image)
+        .collect();
+    !timed.is_empty() && timed.iter().any(|format| is_seekable(&format.protocol))
 }
 
 pub fn is_segmented(protocol: &str) -> bool {
@@ -1139,6 +1199,20 @@ mod tests {
         // the user is told the real reason rather than "something went wrong".
         assert_eq!(err.code(), "forbidden");
         assert!(err.technical().is_some_and(|t| t.contains("logged-in")));
+    }
+
+    #[test]
+    fn a_partial_fetch_without_ffmpeg_asks_for_ffmpeg() {
+        // Verbatim from this engine, 2026.08.19, asked for a range with
+        // `--ffmpeg-location` pointing at a directory that holds none.
+        let err = classify_engine_error(
+            "ERROR: You have requested downloading the video partially, but ffmpeg is not installed. Aborting",
+        );
+        assert_eq!(err.code(), "ffmpegMissing");
+        // The word "installed" sits inside the broad refusal check below this
+        // one; landing there would offer to try again for something that will
+        // never work until a tool is installed.
+        assert!(!err.retryable());
     }
 
     #[test]

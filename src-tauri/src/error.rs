@@ -43,6 +43,19 @@ pub enum AppError {
     #[error("not found ({status})")]
     NotFound { status: u16, detail: String },
 
+    /// A link that will hand over all of itself and no part of it.
+    ///
+    /// Kept apart from `Forbidden`, which it would otherwise arrive as, because
+    /// it is not the same refusal and does not have the same answer. Measured:
+    /// a partial fetch is carried out by an FFmpeg the engine starts, and the
+    /// session the engine was given never reaches it -- only the user agent and
+    /// the accept headers are passed on. A host that gates the media request
+    /// itself on a cookie therefore refuses the piece while still serving the
+    /// whole, and telling the user to sign in again would send them after
+    /// something that cannot help.
+    #[error("only the whole of this link can be fetched: {0}")]
+    RangeUnavailable(String),
+
     #[error("download engine is not installed")]
     EngineMissing,
 
@@ -85,6 +98,7 @@ impl AppError {
             Self::Forbidden { .. } => "forbidden",
             Self::MembershipRequired { .. } => "membershipRequired",
             Self::NotFound { .. } => "notFound",
+            Self::RangeUnavailable(_) => "rangeUnavailable",
             Self::EngineMissing => "engineMissing",
             Self::FfmpegMissing => "ffmpegMissing",
             Self::Engine(_) => "unknown",
@@ -150,6 +164,13 @@ impl AppError {
             "notFound" => (
                 "This media no longer exists",
                 "The post may have been deleted or made private.",
+            ),
+            // Deliberately not phrased as something to fix. There is no
+            // setting and no sign-in that changes this answer, and the one
+            // thing that does work is the button beside it.
+            "rangeUnavailable" => (
+                "This source only hands over the whole video",
+                "Fetching part of a video is done by a separate step that this source will not answer. Fetch all of it and trim it here instead.",
             ),
             "engineMissing" => (
                 "The download engine is missing",

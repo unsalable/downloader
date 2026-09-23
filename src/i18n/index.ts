@@ -1,6 +1,6 @@
 import { useSyncExternalStore } from 'react';
 
-import type { LanguageCode } from '@/types';
+import type { AppErrorInfo, LanguageCode } from '@/types';
 import { en, type TranslationKey } from './en';
 import { tr } from './tr';
 
@@ -56,6 +56,20 @@ export function translate(key: TranslationKey, values?: TranslateValues): string
   return template.replace(/\{(\w+)\}/g, (match, name: string) =>
     name in values ? String(values[name]) : match,
   );
+}
+
+/**
+ * What to say about a failure the backend reported.
+ *
+ * The backend writes in English and knows nothing of the chosen language, so
+ * its sentence is the fallback rather than the answer: the code is looked up
+ * first, and only a code no dictionary answers to falls through to what came
+ * back over the wire.
+ */
+export function errorMessage(error: AppErrorInfo): string {
+  const key = `error.${error.code}.message` as TranslationKey;
+  const text = translate(key);
+  return text === key ? error.message : text;
 }
 
 /**

@@ -5,16 +5,35 @@ Mark concept: a six-blade aperture. It says "capture, from any source" without
 falling back on the download-arrow cliche, stays purely geometric, and still
 resolves into a recognisable silhouette at 16px.
 
+The mark is drawn flat on transparency and nothing else. It used to come in a
+second flavour, sunk into a dark rounded-square tile, and that tile is gone:
+the mark now has to carry itself in a Windows title bar at 16px and in the
+notification area at 20px, where there is no tile to hold its shape. That is
+what set the proportions below — seams narrower than a pixel at 16px read as a
+grey wash rather than a cut, which turns the blades back into a plain ring.
+
+The same proportions are written twice more — as vectors in
+src/components/layout/Logo.tsx, and as a pixel test in
+extension/make-icons.mjs. Change one and you have to change all three.
+
+There is a second output, and it is the same mark with more air around it.
+Android composes a launcher icon from a foreground drawn on a 108dp canvas of
+which only the middle 72dp is guaranteed to survive the launcher's mask, so a
+foreground that reaches the edge loses its rim to whatever shape the phone
+crops to. The Tauri CLI has an `android_fg_scale` for exactly this and it does
+nothing in the version this repository uses, measured rather than assumed, so
+the inset is drawn in instead.
+
 Run:  python scripts/generate_icon.py
-Out:  src-tauri/icons/icon-source.png       1024x1024 app tile
-      src-tauri/icons/icon-source-flat.png  1024x1024 bare mark, transparent
+Out:  src-tauri/icons/icon-source-flat.png  1024x1024 bare mark, transparent
+      src-tauri/icons/icon-source-fg.png    the same, inset for Android
 """
 from __future__ import annotations
 
 import math
 import os
 
-from PIL import Image, ImageDraw, ImageFilter
+from PIL import Image, ImageDraw
 
 SIZE = 1024
 SS = 4  # supersample factor; downsampled with LANCZOS for clean edges
@@ -22,22 +41,24 @@ S = SIZE * SS
 
 ACCENT_A = (255, 122, 61)    # --accent, dark theme
 ACCENT_B = (255, 144, 89)     # --accent-hover, dark theme
-TILE_TOP = (38, 33, 25)
-TILE_BOTTOM = (12, 11, 9)
 
 BLADES = 6
+
+# Both as a fraction of the disc's diameter, so the shape is resolution-free.
+INNER_R = 0.335
+SEAM_W = 0.085
+
+# The disc's share of the square it is drawn into. The margin is what keeps the
+# rim off the edge of a title-bar icon, which otherwise looks wedged in.
+MARK_FILL = 0.92
+
+# The same share for the Android adaptive foreground, chosen to sit inside the
+# 72dp of a 108dp canvas that a launcher mask cannot crop.
+ANDROID_FILL = 0.60
 
 
 def lerp(a, b, t):
     return tuple(round(a[i] + (b[i] - a[i]) * t) for i in range(3))
-
-
-def vertical_gradient(size, top, bottom):
-    grad = Image.new("RGB", (1, size))
-    px = grad.load()
-    for y in range(size):
-        px[0, y] = lerp(top, bottom, y / max(size - 1, 1))
-    return grad.resize((size, size), Image.Resampling.BILINEAR)
 
 
 def diagonal_gradient(size, a, b):
@@ -65,8 +86,8 @@ def aperture_mask(size: int) -> Image.Image:
     """Filled disc minus a central polygon opening minus the blade seams."""
     c = size / 2
     outer_r = size * 0.5
-    inner_r = size * 0.285
-    seam_w = size * 0.062
+    inner_r = size * INNER_R
+    seam_w = size * SEAM_W
 
     mask = Image.new("L", (size, size), 0)
     d = ImageDraw.Draw(mask)
@@ -108,69 +129,52 @@ def build_mark(size: int) -> Image.Image:
     return layer
 
 
-def build_icon(with_tile: bool) -> Image.Image:
+def build_icon(fill: float = MARK_FILL) -> Image.Image:
     img = Image.new("RGBA", (S, S), (0, 0, 0, 0))
-
-    if with_tile:
-        radius = int(S * 0.2237)
-        tile_mask = Image.new("L", (S, S), 0)
-        ImageDraw.Draw(tile_mask).rounded_rectangle(
-            (0, 0, S - 1, S - 1), radius=radius, fill=255
-        )
-        img.paste(vertical_gradient(S, TILE_TOP, TILE_BOTTOM).convert("RGBA"), (0, 0), tile_mask)
-
-        # Light source at the top-left, clipped to the tile.
-        glow = Image.new("RGBA", (S, S), (0, 0, 0, 0))
-        gr = S * 0.46
-        ImageDraw.Draw(glow).ellipse(
-            (S * 0.30 - gr, S * 0.24 - gr, S * 0.30 + gr, S * 0.24 + gr),
-            fill=(99, 102, 241, 46),
-        )
-        glow = glow.filter(ImageFilter.GaussianBlur(S * 0.11))
-        img.alpha_composite(
-            Image.composite(glow, Image.new("RGBA", (S, S), (0, 0, 0, 0)), tile_mask)
-        )
-
-        mark = build_mark(int(S * 0.545))
-        off = (S - mark.width) // 2
-        img.alpha_composite(mark, (off, off))
-
-        # Hairline rim so the tile keeps an edge on light backgrounds.
-        rim = Image.new("RGBA", (S, S), (0, 0, 0, 0))
-        ImageDraw.Draw(rim).rounded_rectangle(
-            (0, 0, S - 1, S - 1), radius=radius, outline=(255, 255, 255, 26), width=SS * 2
-        )
-        img.alpha_composite(rim)
-    else:
-        mark = build_mark(int(S * 0.92))
-        off = (S - mark.width) // 2
-        img.alpha_composite(mark, (off, off))
-
+    mark = build_mark(int(S * fill))
+    off = (S - mark.width) // 2
+    img.alpha_composite(mark, (off, off))
     return img.resize((SIZE, SIZE), Image.Resampling.LANCZOS)
 
 
-def main():
-    out_dir = os.path.join(os.path.dirname(__file__), "..", "src-tauri", "icons")
-    os.makedirs(out_dir, exist_ok=True)
-    build_icon(with_tile=True).save(os.path.join(out_dir, "icon-source.png"))
-    build_icon(with_tile=False).save(os.path.join(out_dir, "icon-source-flat.png"))
+def write_preview(src: Image.Image, path: str):
+    """A strip at the sizes that actually decide the shape, on both grounds.
 
-    # Small-size legibility check.
-    src = Image.open(os.path.join(out_dir, "icon-source.png"))
-    strip = Image.new("RGBA", (16 + 32 + 48 + 64 + 40, 64), (18, 18, 26, 255))
-    x = 0
-    for s in (16, 32, 48, 64):
-        strip.alpha_composite(src.resize((s, s), Image.Resampling.LANCZOS), (x, (64 - s) // 2))
-        x += s + 10
-    strip.resize((strip.width * 4, strip.height * 4), Image.Resampling.NEAREST).save(
-        os.path.join(out_dir, "..", "..", "scripts", "icon-preview.png")
-    )
-    print("wrote icon-source.png, icon-source-flat.png, scripts/icon-preview.png")
+    Over one ground only it is easy to believe the mark still reads when what
+    the eye is really following is the contrast, so the same row is laid over
+    the dark title bar and a light one.
+    """
+    sizes = (16, 20, 24, 32, 48)
+    zoom, pad = 6, 8
+    row = 48 * zoom + pad * 2
+    width = pad + sum(s * zoom + pad for s in sizes)
+
+    strip = Image.new("RGB", (width, row * 2))
+    for index, ground in enumerate(((0x20, 0x20, 0x20), (0xF3, 0xF3, 0xF3))):
+        band = Image.new("RGB", (width, row), ground)
+        x = pad
+        for s in sizes:
+            tile = src.resize((s, s), Image.Resampling.LANCZOS)
+            big = tile.resize((s * zoom, s * zoom), Image.Resampling.NEAREST)
+            under = Image.new("RGBA", big.size, ground + (255,))
+            under.alpha_composite(big)
+            band.paste(under.convert("RGB"), (x, (row - s * zoom) // 2))
+            x += s * zoom + pad
+        strip.paste(band, (0, row * index))
+    strip.save(path)
+
+
+def main():
+    here = os.path.dirname(__file__)
+    out_dir = os.path.join(here, "..", "src-tauri", "icons")
+    os.makedirs(out_dir, exist_ok=True)
+
+    icon = build_icon()
+    icon.save(os.path.join(out_dir, "icon-source-flat.png"))
+    build_icon(ANDROID_FILL).save(os.path.join(out_dir, "icon-source-fg.png"))
+    write_preview(icon, os.path.join(here, "icon-preview.png"))
+    print("wrote icon-source-flat.png, icon-source-fg.png, scripts/icon-preview.png")
 
 
 if __name__ == "__main__":
     main()
-
-# Tray icons are produced by scripts/generate_tray.py, which reuses build_icon()
-# from this module. Run both after changing the mark:
-#   python scripts/generate_icon.py && python scripts/generate_tray.py

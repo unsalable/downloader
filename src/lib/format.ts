@@ -72,6 +72,47 @@ export function formatTimecode(totalSeconds: number | null | undefined): string 
 }
 
 /**
+ * A position, to the frame.
+ *
+ * `formatTimecode` resolves to tenths, which is finer than a person can place
+ * a mark by hand and coarser than a frame: at 30 fps a tenth is three frames,
+ * so stepping one frame at a time would leave the readout sitting still twice
+ * out of three. This is the form an editor is read in -- mm:ss:ff, with the
+ * frame counted from zero within its second.
+ *
+ * A file whose rate could not be read falls back to tenths rather than
+ * inventing a rate, because a frame number computed from a guess is worse than
+ * no frame number.
+ *
+ * The hour is always written, even at zero. Without it a twenty-second clip
+ * reads "00:20:00", which is a perfectly good way of writing twenty minutes;
+ * four groups can only be one thing.
+ */
+export function formatFrameTimecode(
+  totalSeconds: number | null | undefined,
+  fps: number | null | undefined,
+): string {
+  if (totalSeconds == null || !Number.isFinite(totalSeconds) || totalSeconds < 0) return '--';
+  if (fps == null || !Number.isFinite(fps) || fps <= 0) return formatTimecode(totalSeconds);
+
+  // Rounded to the frame first: rounding the seconds and the frame separately
+  // turns the last frame of a second into frame 30 of that second.
+  const frames = Math.round(totalSeconds * fps);
+  const perSecond = Math.round(fps);
+  const whole = Math.floor(frames / perSecond);
+  const frame = frames % perSecond;
+
+  const seconds = whole % 60;
+  const minutes = Math.floor(whole / 60) % 60;
+  const hours = Math.floor(whole / 3600);
+
+  const mm = String(minutes).padStart(2, '0');
+  const ss = String(seconds).padStart(2, '0');
+  const ff = String(frame).padStart(2, '0');
+  return `${hours}:${mm}:${ss}:${ff}`;
+}
+
+/**
  * ETA gets its own formatter: past an hour the exact seconds are noise, and a
  * missing estimate should read as unknown rather than "00:00".
  */

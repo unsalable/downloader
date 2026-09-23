@@ -11,17 +11,20 @@ use tauri::{AppHandle, Emitter, State};
 use crate::converter::ConvertManager;
 use crate::db::Database;
 use crate::error::{AppError, AppResult};
+use crate::editor_media::TimelineManager;
+use crate::export::ExportManager;
+use crate::range::RangeFetchManager;
 use crate::model::{
     BridgeStatus, CacheStats, ConvertFormatInfo, ConvertJob, ConvertRequest, DiagnosticsSnapshot,
-    DownloadRequest, DownloadTask, HistoryEntry, MediaMetadata, MediaProbe, PlatformId,
-    ToolInstallProgress, ToolKind, ToolsState, TrimRequest, TrimState,
+    DownloadRequest, DownloadTask, ExportRequest, ExportState, FetchState, HistoryEntry,
+    MediaMetadata, MediaProbe, PlatformId, RangeFetchRequest, TimelineRequest, TimelineState,
+    ToolInstallProgress, ToolKind, ToolUpdateCheck, ToolsState,
 };
 use crate::queue::QueueManager;
-use crate::trim::TrimManager;
 use crate::settings::Settings;
 use crate::{
-    bridge, cache, converter, downloader, filename, log_warn, logging, net, paths, providers, tools,
-    updater, util,
+    bridge, cache, converter, downloader, editor_media, export, filename, log_warn, logging, net,
+    paths, providers, tools, updater, util,
 };
 
 pub const EVENT_TOOL_PROGRESS: &str = "tools://progress";
@@ -34,7 +37,9 @@ pub struct AppState {
     pub settings: Arc<Mutex<Settings>>,
     pub queue: Arc<QueueManager>,
     pub converter: Arc<ConvertManager>,
-    pub trimmer: Arc<TrimManager>,
+    pub exporter: Arc<ExportManager>,
+    pub timeline: Arc<TimelineManager>,
+    pub fetcher: Arc<RangeFetchManager>,
 }
 
 impl AppState {
@@ -236,6 +241,24 @@ pub async fn install_tool(
 
     result?;
     Ok(tools)
+}
+
+/// Whether a newer release of a tool than the one in use has been published.
+/// Nothing is downloaded: the interface installs only when the answer is yes,
+/// which is what keeps "check for update" from fetching a current tool again.
+#[tauri::command]
+pub async fn check_tool_update(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    tool: ToolKind,
+) -> AppResult<ToolUpdateCheck> {
+    match tools::check_update(tool, &state.settings()).await {
+        Ok(check) => Ok(check),
+        Err(err) => {
+            log_warn!("tools", "the {} update check failed: {err}", tool.as_str());
+            Err(net::explain_failure(&app, err).await)
+        }
+    }
 }
 
 // -- analysis --------------------------------------------------------------
@@ -476,22 +499,97 @@ pub fn remove_conversion(state: State<'_, AppState>, id: String) {
     state.converter.remove(&id);
 }
 
-// -- trimming --------------------------------------------------------------
+// -- the editor ------------------------------------------------------------
 
 #[tauri::command]
-pub fn trim_state(state: State<'_, AppState>) -> TrimState {
-    state.trimmer.state()
+pub fn export_state(state: State<'_, AppState>) -> ExportState {
+    state.exporter.state()
 }
 
-/// Cut the marked range out of the open file. Replaces a cut already running.
+/// Keep the marked ranges of the open file and join them into one result.
+/// Replaces an export already running.
 #[tauri::command]
-pub async fn start_trim(state: State<'_, AppState>, request: TrimRequest) -> AppResult<()> {
-    state.trimmer.start(request).await
+pub async fn start_export(state: State<'_, AppState>, request: ExportRequest) -> AppResult<()> {
+    state.exporter.start(request).await
 }
 
 #[tauri::command]
-pub fn cancel_trim(state: State<'_, AppState>) {
-    state.trimmer.cancel();
+pub fn cancel_export(state: State<'_, AppState>) {
+    state.exporter.cancel();
+}
+
+/// Where an export of `path` lands when no folder is chosen, if that is not
+/// beside it; `None` when it is. The inspector's location row asks, because
+/// only this side knows which folders are the app's own -- a clip brought in
+/// from a link sits in one, and its export goes to the download folder instead.
+#[tauri::command]
+pub fn export_default_dir(state: State<'_, AppState>, path: String) -> Option<String> {
+    state.exporter.default_dir(std::path::Path::new(path.trim()))
+}
+
+/// Where a copied cut is allowed to begin, in seconds from the start.
+///
+/// The editor asks once per file it opens and draws the marks on the timeline,
+/// so that a cut which is about to land earlier than the handle says it will is
+/// something the user can see rather than something they discover afterwards.
+#[tauri::command]
+pub async fn media_keyframes(path: String) -> AppResult<Vec<f64>> {
+    export::keyframes(path.trim()).await
+}
+
+#[tauri::command]
+pub fn fetch_state(state: State<'_, AppState>) -> FetchState {
+    state.fetcher.state()
+}
+
+/// Bring a link, or the marked piece of one, into the editor as a local file.
+/// Replaces a fetch already running.
+///
+/// A source that cannot hand over a piece of itself is fetched whole rather
+/// than refused, and the published state says which of the two happened: the
+/// user wanted a file to edit, and the long way round still produces one.
+#[tauri::command]
+pub async fn start_range_fetch(
+    state: State<'_, AppState>,
+    request: RangeFetchRequest,
+) -> AppResult<()> {
+    state.fetcher.start(request).await
+}
+
+#[tauri::command]
+pub fn cancel_range_fetch(state: State<'_, AppState>) {
+    state.fetcher.cancel();
+}
+
+#[tauri::command]
+pub fn timeline_state(state: State<'_, AppState>) -> TimelineState {
+    state.timeline.state()
+}
+
+/// Draw one of the two things the timeline is made of.
+///
+/// Asked for twice per view, once for each kind, and answered in the order the
+/// two arrive. A request naming a new token supersedes whatever is still being
+/// drawn, which is what a zoom is: the window on screen has changed, and the
+/// picture being drawn is of the window it replaced.
+#[tauri::command]
+pub fn request_timeline(state: State<'_, AppState>, request: TimelineRequest) {
+    state.timeline.request(request);
+}
+
+#[tauri::command]
+pub fn cancel_timeline(state: State<'_, AppState>) {
+    state.timeline.cancel();
+}
+
+/// One frame of a file, as a data URI.
+///
+/// For the files the window will not decode: the strip, the peaks and the marks
+/// all still work, so a file the webview cannot play loses its moving picture
+/// rather than its place in the editor.
+#[tauri::command]
+pub async fn frame_at(path: String, seconds: f64, height: u32) -> AppResult<String> {
+    editor_media::frame_at(path.trim(), seconds, height).await
 }
 
 /// Let the webview read one file, so a `<video>` element can play it.
@@ -501,7 +599,10 @@ pub fn cancel_trim(state: State<'_, AppState>) {
 /// picked that file in a dialog or dropped it on the window. Granting the
 /// whole file system once at build time would have been one line of config and
 /// a standing offer to every page the webview ever loads.
-#[cfg(not(target_os = "android"))]
+///
+/// A phone needs it as much as the desktop: the editor there plays the copy
+/// that the system picker's choice was written to. It is streamed by the
+/// Kotlin side, which is told about the file as well (see `android::allow_media`).
 #[tauri::command]
 pub fn allow_media_preview(app: AppHandle, path: String) -> AppResult<()> {
     use tauri::Manager;
@@ -512,7 +613,10 @@ pub fn allow_media_preview(app: AppHandle, path: String) -> AppResult<()> {
     }
     app.asset_protocol_scope()
         .allow_file(&file)
-        .map_err(|err| AppError::Other(format!("that file could not be opened for preview: {err}")))
+        .map_err(|err| AppError::Other(format!("that file could not be opened for preview: {err}")))?;
+    #[cfg(target_os = "android")]
+    crate::android::allow_media(&app, &file)?;
+    Ok(())
 }
 
 #[tauri::command]
@@ -754,7 +858,8 @@ pub async fn apply_app_update(
         // the installer needs gone would still be holding its files.
         state.queue.shutdown();
         state.converter.shutdown();
-        state.trimmer.shutdown();
+        state.exporter.shutdown();
+        state.timeline.shutdown();
         app.exit(0);
         Ok(())
     }

@@ -19,7 +19,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::{AppError, AppResult};
 use crate::settings::Settings;
-use crate::{log_info, log_warn, net, tools};
+use crate::{log_info, net, tools};
 
 const REPOSITORY: &str = "unsalable/downloader";
 const RELEASE_TAG: &str = "latest";
@@ -196,7 +196,10 @@ async fn release_is_ahead(client: &reqwest::Client, current: &str, tagged: &str)
         // install", but only one of them is a build that can never update
         // itself, and a support log that cannot tell them apart is no help.
         Err(AppError::NotFound { .. }) => {
-            log_warn!(
+            // Named by path rather than imported: this is the module's only
+            // warning, and a phone does not build this function, so the import
+            // would sit unused there and fail its lints.
+            crate::log_warn!(
                 "updater",
                 "github does not know commit {current}; this build cannot tell whether it is behind"
             );

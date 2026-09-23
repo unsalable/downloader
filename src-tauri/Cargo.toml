@@ -3,6 +3,7 @@ name = "universal-downloader"
 version = "1.0.0"
 description = "Fast, private and ad-free media downloading."
 authors = ["Universal Downloader"]
+license = "MIT"
 edition = "2021"
 rust-version = "1.82"
 default-run = "universal-downloader"
@@ -64,6 +65,11 @@ winreg = "0.10"
 windows-sys = { version = "0.59", features = [
     "Win32_Foundation",
     "Win32_Security_Cryptography",
+    # A job object is what makes killing a tool actually kill the tools it
+    # started: yt-dlp fetching a range of a link runs FFmpeg under itself, and
+    # killing the parent alone leaves that grandchild downloading.
+    "Win32_System_JobObjects",
+    "Win32_System_Threading",
 ] }
 
 [profile.release]

@@ -66,6 +66,7 @@ class BridgePlugin(private val activity: Activity) : Plugin(activity) {
 
     override fun load(webView: WebView) {
         this.webView = webView
+        MediaStreamClient.install(webView)
         receive(activity.intent)
         requestLegacyStorage()
     }
@@ -110,6 +111,18 @@ class BridgePlugin(private val activity: Activity) : Plugin(activity) {
         result.put("cacheDir", activity.cacheDir.absolutePath)
         result.put("downloadsDir", downloads.absolutePath)
         invoke.resolve(result)
+    }
+
+    /** The editor's picture may be streamed from this file (see MediaStreamClient). */
+    @Command
+    fun allowMedia(invoke: Invoke) {
+        val args = invoke.parseArgs(PathArgs::class.java)
+        try {
+            MediaStreamClient.allow(args.path)
+            invoke.resolve()
+        } catch (ex: Exception) {
+            invoke.reject(ex.message ?: "the file could not be opened for preview")
+        }
     }
 
     @Command

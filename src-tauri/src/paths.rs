@@ -65,6 +65,20 @@ pub fn metadata_cache_dir() -> AppResult<PathBuf> {
     Ok(dir)
 }
 
+/// What the editor's timeline is drawn from: tiled sprites of frames and the
+/// audio peaks beside them.
+///
+/// Kept apart from the thumbnails because the two are nothing like the same
+/// size -- one sprite is worth about fifty thumbnails -- and sharing a
+/// directory would let an afternoon's editing quietly evict every thumbnail in
+/// History. The two are still weighed together against one budget; see
+/// [`crate::cache::enforce_limit`].
+pub fn editor_cache_dir() -> AppResult<PathBuf> {
+    let dir = cache_dir()?.join("editor");
+    std::fs::create_dir_all(&dir)?;
+    Ok(dir)
+}
+
 pub fn logs_dir() -> AppResult<PathBuf> {
     subdir("logs")
 }
