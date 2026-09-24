@@ -47,6 +47,37 @@ export function displayHost(raw: string): string | null {
 }
 
 /**
+ * A link as a row shows it: without the scheme, the "www." or a trailing
+ * slash, which every link has and none is told apart by. The rest -- the path
+ * and the query, where a video's id lives -- is kept, and the row cuts off
+ * what does not fit.
+ *
+ * Read the way it was written rather than the way it travels: a stored link
+ * has been through `normalizeUrl`, so a Turkish title in a Reddit address
+ * arrives as `%C3%BC` escapes, which nobody reads. The clipboard still gets the
+ * link exactly as stored. Anything that does not parse is shown as given.
+ */
+export function displayLink(raw: string): string {
+  const trimmed = raw.trim();
+  let parsed: URL;
+  try {
+    parsed = new URL(trimmed);
+  } catch {
+    return trimmed;
+  }
+
+  const host = parsed.host.replace(/^www\./, '');
+  const path = parsed.pathname.replace(/\/$/, '');
+  const rest = `${path}${parsed.search}`;
+  try {
+    return `${host}${decodeURI(rest)}`;
+  } catch {
+    // A lone "%" or a cut-off sequence: shown escaped rather than not at all.
+    return `${host}${rest}`;
+  }
+}
+
+/**
  * Pulls the first URL out of arbitrary text. Clipboard and drag payloads often
  * carry a title or surrounding prose alongside the link.
  */

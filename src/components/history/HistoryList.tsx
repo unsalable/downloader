@@ -10,6 +10,7 @@ import { ListGroup, ROW_LINE } from '@/components/ui/ListGroup';
 import { Modal } from '@/components/ui/Modal';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { PlatformBadge } from '@/components/ui/PlatformBadge';
+import { SourceLink } from '@/components/ui/SourceLink';
 import { TextInput } from '@/components/ui/TextInput';
 import { useDebouncedValue } from '@/hooks/useDebouncedValue';
 import { useMomentary } from '@/hooks/useMomentary';
@@ -256,12 +257,9 @@ const HistoryRow = memo(function HistoryRow({
   // to open it moves the row to the state it should already have been in.
   const exists = entry.fileExists && !gone;
 
-  // Inside a button only phrasing content is allowed.
-  const Box = exists ? 'span' : 'div';
-
   const main = (
     <>
-      <Box
+      <div
         className={cn(
           'flex h-11 w-[72px] shrink-0 items-center justify-center overflow-hidden',
           'rounded-[var(--radius-thumb)] bg-surface-sunken',
@@ -273,9 +271,9 @@ const HistoryRow = memo(function HistoryRow({
         ) : (
           <PlatformBadge platform={entry.platform} size="md" />
         )}
-      </Box>
+      </div>
 
-      <Box className="block min-w-0 flex-1">
+      <div className="min-w-0 flex-1">
         <span className="block truncate text-[13.5px] font-medium leading-[18px] text-fg">
           {entry.title}
         </span>
@@ -296,12 +294,17 @@ const HistoryRow = memo(function HistoryRow({
             <span className="min-w-0 max-w-full truncate">{t('file.missing')}</span>
           </span>
         )}
-      </Box>
+        {/* Kept when the file is gone too, when it is all there is to go back
+            to. */}
+        {entry.url && <SourceLink url={entry.url} className="mt-0.5" />}
+      </div>
     </>
   );
 
+  // The button that opens the file lies over the row rather than around it,
+  // because the link under the title is a button of its own; see DownloadCard.
   const mainClass = cn(
-    'flex min-w-0 flex-1 items-center py-2.5 pr-2',
+    'relative flex min-w-0 flex-1 items-center py-2.5 pr-2',
     IS_MOBILE ? 'gap-3 pl-3' : 'gap-4 pl-4',
   );
 
@@ -355,19 +358,18 @@ const HistoryRow = memo(function HistoryRow({
       )}
     >
       <div className={cn('flex items-center', IS_MOBILE ? 'pr-1.5' : 'pr-3')}>
-        {exists ? (
-          <button
-            type="button"
-            data-open=""
-            onClick={() => void openFile(entry.filePath).catch(() => setGone(true))}
-            aria-label={t('downloads.openFileNamed', { title: entry.title })}
-            className={cn(mainClass, 'cursor-pointer rounded-[12px] text-left')}
-          >
-            {main}
-          </button>
-        ) : (
-          <div className={mainClass}>{main}</div>
-        )}
+        <div className={mainClass}>
+          {exists && (
+            <button
+              type="button"
+              data-open=""
+              onClick={() => void openFile(entry.filePath).catch(() => setGone(true))}
+              aria-label={t('downloads.openFileNamed', { title: entry.title })}
+              className="absolute inset-0 cursor-pointer rounded-[12px]"
+            />
+          )}
+          {main}
+        </div>
 
         <div className={quiet}>
           {/* On a phone this only opens the system's Downloads view, and

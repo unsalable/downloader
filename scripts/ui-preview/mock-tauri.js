@@ -9,16 +9,27 @@
  *   ?empty=1            no downloads, conversions or history
  *   ?welcome=1          show the first-run screen
  *   ?update=1           pretend a newer build has been released
+ *   ?raf=timers         run animation frames off timers (see below)
  *
  * From the console, `__UD_MOCK__.emit(event, payload)` delivers a backend
  * event and `__UD_MOCK__.calls` lists every command the app has invoked.
- * `__UD_MOCK__.picked` is what the phone's file picker returns next.
+ * `__UD_MOCK__.picked` is what the phone's file picker returns next, and
+ * `__UD_MOCK__.clipboard` the last text the app wrote to the clipboard.
  */
 (() => {
   const params = new URLSearchParams(location.search);
   const platform = params.get('platform') ?? 'windows';
   const empty = params.has('empty');
   const now = Date.now();
+
+  // A hidden Browser pane stops requestAnimationFrame, and Motion's frame loop
+  // with it: no exit ever starts, and nothing can be measured mid-transition.
+  // Timers keep running, so frames can be driven by them instead. Set before
+  // the app's modules load, which is when Motion takes its reference.
+  if (params.get('raf') === 'timers') {
+    window.requestAnimationFrame = (callback) => setTimeout(() => callback(performance.now()), 16);
+    window.cancelAnimationFrame = (id) => clearTimeout(id);
+  }
 
   // -- fixtures --------------------------------------------------------------
 
@@ -103,10 +114,21 @@
     platform: platformId,
   });
 
+  // Links shaped like the real ones, so the rows show what a user would see.
+  const LINKS = {
+    youtube: (n) => `https://www.youtube.com/watch?v=dQw4w9WgXc${n}`,
+    tiktok: (n) => `https://www.tiktok.com/@codymillers/video/741208855190${n}`,
+    instagram: (n) => `https://www.instagram.com/p/C9xYz${n}AbCd/`,
+    twitter: (n) => `https://x.com/okulhaber/status/18342218829${n}`,
+    reddit: (n) => `https://www.reddit.com/r/Turkey/comments/1f${n}xk2/bu_sirketin_oyunlarina/`,
+    soundcloud: (n) => `https://soundcloud.com/late-night/mix-vol-${n}`,
+    vimeo: (n) => `https://vimeo.com/90412${n}`,
+  };
+
   let seq = 0;
   const task = (platformId, title, status, over = {}) => {
     seq += 1;
-    const url = `https://example.com/${platformId}/${seq}`;
+    const url = (LINKS[platformId] ?? ((n) => `https://example.com/${platformId}/${n}`))(seq);
     return {
       id: `task-${seq}`,
       url,
@@ -179,13 +201,38 @@
           thumbnailUrl: entry.thumbnailUrl,
           filePath: entry.outputPath ?? `${settings.downloadDir}\\missing.mp4`,
           fileExists: entry.status === 'completed' && index !== 2,
-          container: 'mp4',
+          // What the row's format label says it is, so the editor's list of
+          // recent videos has a picture and a song to pass over.
+          container: /JPG/.test(entry.formatLabel) ? 'jpg' : /MP3/.test(entry.formatLabel) ? 'mp3' : 'mp4',
           qualityLabel: '1080p',
           fileSize: 24_000_000 + index * 9_100_000,
           createdAt: entry.createdAt,
           status: entry.status,
           request: entry.request,
-        }));
+        }))
+        // Older downloads the queue has since let go of, which only the history
+        // still knows about.
+        .concat(
+          [
+            ['youtube', 'Evangelion 3.0+1.01 - Final trailer', 'https://www.youtube.com/watch?v=0bD4kP9aQ2M', 26],
+            ['instagram', 'Kadıköy sahilinde gün batımı', 'https://www.instagram.com/reel/C8kLm2NoPqR/', 30],
+            ['tiktok', 'Fiel al anime 👌 #evangelion #anime', 'https://www.tiktok.com/@animefiel/video/7408812276541', 52],
+          ].map(([platformId, title, url, hours], index) => ({
+            id: 100 + index,
+            url,
+            title,
+            platform: platformId,
+            thumbnailUrl: `thumb:${index + 1}`,
+            filePath: `${settings.downloadDir}\\${title.slice(0, 40)}.mp4`,
+            fileExists: true,
+            container: 'mp4',
+            qualityLabel: index === 2 ? '1920p' : '1080p',
+            fileSize: [58_400_000, 14_900_000, 1_170_000][index],
+            createdAt: now - hours * 3_600_000,
+            status: 'completed',
+            request: request(url, platformId),
+          })),
+        );
 
   const conversions = empty
     ? []
@@ -861,6 +908,10 @@
       return picked[0];
     }
     if (cmd === 'plugin:clipboard-manager|read_text') return '';
+    if (cmd === 'plugin:clipboard-manager|write_text') {
+      window.__UD_MOCK__.clipboard = args.text;
+      return null;
+    }
     if (cmd === 'plugin:autostart|is_enabled') return false;
     if (cmd === 'plugin:app|version') return '1.0.0';
     if (cmd === 'plugin:notification|is_permission_granted') return true;

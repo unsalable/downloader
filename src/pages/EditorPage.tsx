@@ -1,4 +1,4 @@
-import { AnimatePresence, motion, useIsPresent } from 'motion/react';
+import { AnimatePresence, motion, useIsPresent, type Variants } from 'motion/react';
 import { open } from '@tauri-apps/plugin-dialog';
 import { getCurrentWebview } from '@tauri-apps/api/webview';
 import {
@@ -18,6 +18,7 @@ import {
   useCallback,
   useEffect,
   useEffectEvent,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -31,6 +32,7 @@ import { MediaRail } from '@/components/editor/MediaRail';
 import { OutputInspector } from '@/components/editor/OutputInspector';
 import { PlayheadTime, createPlayhead } from '@/components/editor/playhead';
 import { PreviewStage } from '@/components/editor/PreviewStage';
+import { RecentDownloads } from '@/components/editor/RecentDownloads';
 import { TimelineDock } from '@/components/editor/TimelineDock';
 import { Button } from '@/components/ui/Button';
 import { IconButton } from '@/components/ui/IconButton';
@@ -40,9 +42,10 @@ import { PageHeader } from '@/components/ui/PageHeader';
 import { Progress } from '@/components/ui/Progress';
 import { errorMessage, useTranslation } from '@/i18n';
 import { cn } from '@/lib/cn';
+import { VIDEO_EXTENSIONS } from '@/lib/editor/files';
 import { cutAt, nextKeptPosition } from '@/lib/editor/segments';
 import { ZOOM_STEP } from '@/lib/editor/zoom';
-import { COLLAPSE, EDITOR, FADE } from '@/lib/motion';
+import { COLLAPSE, EDITOR, FADE, T } from '@/lib/motion';
 import { formatMbps } from '@/lib/editor/bitrate';
 import {
   basename,
@@ -65,9 +68,6 @@ import {
 import { useToolsStore } from '@/stores/useToolsStore';
 import type { Settings } from '@/types';
 
-/** What the picker offers. Containers FFmpeg can read and the editor can cut. */
-const VIDEO_EXTENSIONS = ['mp4', 'mkv', 'webm', 'mov', 'avi', 'm4v', 'ts', 'mpg', 'mpeg'];
-
 /** How many buckets and cells the timeline asks for. */
 const WAVEFORM_BUCKETS = 4000;
 const FILMSTRIP_CELLS = 40;
@@ -80,6 +80,29 @@ const FILMSTRIP_CELLS = 40;
 const FILMSTRIP_CELL_HEIGHT = IS_MOBILE ? 112 : 68;
 
 const DROP_TRANSITION = 'transition-[background-color,box-shadow] duration-150 ease-out-quint';
+
+/**
+ * The phone's empty screen. It leaves lifted out of the flow (the `popLayout`
+ * it is shown under), placed by its offset in the page -- which scrolling does
+ * not change, so scrolled down to the recent downloads it dropped by as much
+ * as it fades. It is moved back up by that much at once, and fades where it
+ * was seen.
+ */
+const EMPTY_SCREEN: Variants = {
+  ...FADE,
+  exit: (scrolled: number) => ({
+    opacity: 0,
+    y: -scrolled,
+    transition: { ...T.componentOut, y: { duration: 0 } },
+  }),
+};
+
+/** How far the page under an element is scrolled, as its offset leaves out. */
+function scrolledUnder(element: HTMLElement | null): number {
+  const parent = element?.offsetParent;
+  if (!element || !(parent instanceof HTMLElement)) return 0;
+  return parent.getBoundingClientRect().top + element.offsetTop - element.getBoundingClientRect().top;
+}
 
 /** Whatever is drawn over the editor and has the keyboard while it is open. */
 const OVERLAY = '[role="dialog"][aria-modal="true"],[role="combobox"][aria-expanded="true"]';
@@ -202,6 +225,13 @@ export function EditorPage({ settings, onBackRef }: EditorPageProps) {
   const [pickFailed, setPickFailed] = useState(false);
   const [installError, setInstallError] = useState<string | null>(null);
   const [linkOpen, setLinkOpen] = useState(false);
+  // A recent download being opened says so on its own row, so the card's
+  // button above it stands still instead of spinning as well.
+  const [openingRecent, setOpeningRecent] = useState(false);
+  // Read as an open begins, while the phone's empty screen is still where it
+  // is seen; see EMPTY_SCREEN.
+  const emptyRef = useRef<HTMLDivElement>(null);
+  const [emptyScrolled, setEmptyScrolled] = useState(0);
   const [discardOpen, setDiscardOpen] = useState(false);
   const [resultError, setResultError] = useState<string | null>(null);
   // Whether the preview has to stop at 100 %, which the inspector then says.
@@ -264,6 +294,20 @@ export function EditorPage({ settings, onBackRef }: EditorPageProps) {
     },
     [hardware, openPath],
   );
+  // A recent download is one more way to pick, and clears a picker's failure
+  // the same way.
+  const openRecent = useCallback(
+    async (path: string) => {
+      setPickFailed(false);
+      setOpeningRecent(true);
+      try {
+        return await openPath(path, hardware);
+      } finally {
+        setOpeningRecent(false);
+      }
+    },
+    [hardware, openPath],
+  );
 
   // A file dropped on the window arrives as an OS event, and only while this
   // screen is up: dropping one on Home has nothing to do there. A phone has no
@@ -299,6 +343,10 @@ export function EditorPage({ settings, onBackRef }: EditorPageProps) {
   // The focus is here too: the transport's keys only answer when the keyboard
   // is aimed at the editor, and a clip opened from the sidebar or the Home
   // screen would otherwise leave it aimed somewhere else.
+  useLayoutEffect(() => {
+    if (IS_MOBILE && opening && !clip) setEmptyScrolled(scrolledUnder(emptyRef.current));
+  }, [opening, clip]);
+
   const clipId = clip?.id ?? null;
   useEffect(() => {
     playhead.set(0);
@@ -884,7 +932,7 @@ export function EditorPage({ settings, onBackRef }: EditorPageProps) {
             stay from its first frame. The dialogs stand outside both, or one
             taken down in the same moment would be frozen open in the copy of
             the shape that is leaving. */}
-        <AnimatePresence initial={false} mode="popLayout">
+        <AnimatePresence initial={false} mode="popLayout" custom={emptyScrolled}>
           {clip ? (
             <motion.div
               key="editing"
@@ -1128,7 +1176,9 @@ export function EditorPage({ settings, onBackRef }: EditorPageProps) {
           ) : (
             <motion.div
               key="empty"
-              variants={FADE}
+              ref={emptyRef}
+              variants={EMPTY_SCREEN}
+              custom={emptyScrolled}
               initial="initial"
               animate="animate"
               exit="exit"
@@ -1144,7 +1194,8 @@ export function EditorPage({ settings, onBackRef }: EditorPageProps) {
                   <Button
                     size="sm"
                     variant="secondary"
-                    loading={picking || opening}
+                    loading={picking || (opening && !openingRecent)}
+                    disabled={opening}
                     onClick={addClip}
                   >
                     {t('editor.chooseVideo')}
@@ -1160,6 +1211,12 @@ export function EditorPage({ settings, onBackRef }: EditorPageProps) {
                   {shownOpenError}
                 </InlineNotice>
               )}
+
+              <RecentDownloads
+                onOpen={openRecent}
+                disabled={picking || opening}
+                className="mt-6"
+              />
             </motion.div>
           )}
         </AnimatePresence>
@@ -1189,7 +1246,13 @@ export function EditorPage({ settings, onBackRef }: EditorPageProps) {
           <p className="mt-3 text-[14px] font-medium text-fg">{t('editor.emptyTitle')}</p>
           <p className="mt-0.5 text-[12.5px] text-fg-muted">{t('editor.emptyBody')}</p>
           <div className="mt-4 flex items-center gap-2">
-            <Button size="sm" variant="secondary" loading={opening} onClick={addClip}>
+            <Button
+              size="sm"
+              variant="secondary"
+              loading={opening && !openingRecent}
+              disabled={opening}
+              onClick={addClip}
+            >
               {t('editor.chooseFile')}
             </Button>
             <Button size="sm" variant="ghost" icon={<Link2 size={15} />} onClick={openLink}>
@@ -1203,6 +1266,8 @@ export function EditorPage({ settings, onBackRef }: EditorPageProps) {
             {shownOpenError}
           </InlineNotice>
         )}
+
+        <RecentDownloads onOpen={openRecent} disabled={opening} className="mt-7" />
 
         {linkSheet}
       </div>

@@ -6,6 +6,7 @@ import { IconButton } from '@/components/ui/IconButton';
 import { ROW_LINE } from '@/components/ui/ListGroup';
 import { PlatformBadge } from '@/components/ui/PlatformBadge';
 import { Progress } from '@/components/ui/Progress';
+import { SourceLink } from '@/components/ui/SourceLink';
 import { useThumbnail } from '@/hooks/useThumbnail';
 import { useTranslation } from '@/i18n';
 import type { TranslationKey } from '@/i18n';
@@ -69,14 +70,9 @@ export const DownloadCard = memo(function DownloadCard({
     : t('downloads.failed');
   const technical = status === 'failed' ? task.error?.technical : null;
 
-  // A finished row's thumbnail and text sit inside a button, which may only
-  // hold phrasing content; every other row is free to hold the bar and the
-  // error line, which are blocks.
-  const Box = outputPath ? 'span' : 'div';
-
   const main = (
     <>
-      <Box
+      <div
         className={cn(
           'flex h-11 w-[72px] shrink-0 items-center justify-center overflow-hidden',
           'rounded-[var(--radius-thumb)] bg-surface-sunken',
@@ -94,9 +90,9 @@ export const DownloadCard = memo(function DownloadCard({
         ) : (
           <PlatformBadge platform={task.platform} size="md" />
         )}
-      </Box>
+      </div>
 
-      <Box className="block min-w-0 flex-1">
+      <div className="min-w-0 flex-1">
         <span className="block truncate text-[13.5px] font-medium leading-[18px] text-fg">
           {task.title}
         </span>
@@ -189,14 +185,20 @@ export const DownloadCard = memo(function DownloadCard({
         {status === 'canceled' && (
           <span className={cn(LINE, 'mt-0.5')}>{t('downloads.canceled')}</span>
         )}
-      </Box>
+
+        {/* A row that is over is a record, and the link is what it was a record
+            of. One still under way is left to its bar and its numbers. */}
+        {(isDone || isAbandoned) && task.url && <SourceLink url={task.url} className="mt-0.5" />}
+      </div>
     </>
   );
 
   // The thumbnail and the text are one target, and the padding on the row's
-  // left is inside it, so the whole row up to the actions opens the file.
+  // left is inside it, so the whole row up to the actions opens the file. The
+  // button lies over them rather than around them: the link under the title is
+  // a button of its own, and one button may not hold another.
   const mainClass = cn(
-    'flex min-w-0 flex-1 items-center py-2.5 pr-2',
+    'relative flex min-w-0 flex-1 items-center py-2.5 pr-2',
     IS_MOBILE ? 'gap-3 pl-3' : 'gap-4 pl-4',
   );
 
@@ -217,19 +219,18 @@ export const DownloadCard = memo(function DownloadCard({
       )}
     >
       <div className={cn('flex items-center', IS_MOBILE ? 'pr-1.5' : 'pr-3')}>
-        {outputPath ? (
-          <button
-            type="button"
-            data-open=""
-            onClick={() => void openFile(outputPath).catch(() => setMissing(true))}
-            aria-label={t('downloads.openFileNamed', { title: task.title })}
-            className={cn(mainClass, 'cursor-pointer rounded-[12px] text-left')}
-          >
-            {main}
-          </button>
-        ) : (
-          <div className={mainClass}>{main}</div>
-        )}
+        <div className={mainClass}>
+          {outputPath && (
+            <button
+              type="button"
+              data-open=""
+              onClick={() => void openFile(outputPath).catch(() => setMissing(true))}
+              aria-label={t('downloads.openFileNamed', { title: task.title })}
+              className="absolute inset-0 cursor-pointer rounded-[12px]"
+            />
+          )}
+          {main}
+        </div>
 
         <div
           className={cn(

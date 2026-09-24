@@ -86,6 +86,9 @@ export const tr: Record<TranslationKey, string> = {
   'downloads.paused': 'Duraklatıldı',
   'downloads.canceled': 'İptal edildi',
   'downloads.failed': 'Başarısız',
+  'downloads.copyLink': 'Bağlantıyı kopyala',
+  'downloads.linkCopied': 'Bağlantı kopyalandı',
+  'downloads.copyFailed': 'Bağlantı kopyalanamadı',
 
   'stage.waiting': 'Bekliyor',
   'stage.resolving': 'Akış çözümleniyor',
@@ -473,6 +476,8 @@ export const tr: Record<TranslationKey, string> = {
   'editor.pickTitle': 'Düzenlenecek bir video seç',
   'editor.pickBody': 'Bu telefondan ya da bir bağlantıdan.',
   'editor.chooseVideo': 'Video seç',
+  'editor.recent': 'Son indirilenler',
+  'editor.openRecent': 'Düzenle: {title}',
   'editor.percent': '%{value}',
 
   'common.cancel': 'İptal',

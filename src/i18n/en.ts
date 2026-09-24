@@ -90,6 +90,9 @@ export const en = {
   'downloads.paused': 'Paused',
   'downloads.canceled': 'Canceled',
   'downloads.failed': 'Failed',
+  'downloads.copyLink': 'Copy link',
+  'downloads.linkCopied': 'Link copied',
+  'downloads.copyFailed': 'Could not copy the link',
 
   'stage.waiting': 'Waiting',
   'stage.resolving': 'Resolving stream',
@@ -478,6 +481,8 @@ export const en = {
   'editor.pickTitle': 'Choose a video to edit',
   'editor.pickBody': 'From this phone, or from a link.',
   'editor.chooseVideo': 'Choose a video',
+  'editor.recent': 'Recent downloads',
+  'editor.openRecent': 'Edit {title}',
   'editor.percent': '{value}%',
 
   'common.cancel': 'Cancel',
