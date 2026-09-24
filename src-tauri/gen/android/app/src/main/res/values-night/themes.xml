@@ -4,11 +4,9 @@
         <item name="android:windowBackground">@color/app_background</item>
         <item name="colorPrimary">@color/app_accent</item>
         <item name="colorAccent">@color/app_accent</item>
-        <!-- The window opens dark whatever the phone's theme (app_background),
-             so the bars' icons start light to match. This covers the launch
-             window; MainActivity says the same again after enableEdgeToEdge,
-             and the page then sets both to its own theme
-             (BridgePlugin.setSystemBarsTheme). -->
+        <!-- The window opens in the phone's theme (app_background), dark
+             here, so the bars' icons start light to match. The page then sets
+             both to its own theme (BridgePlugin.setSystemBarsTheme). -->
         <item name="android:windowLightStatusBar">false</item>
         <item name="android:windowLightNavigationBar" tools:targetApi="27">false</item>
     </style>

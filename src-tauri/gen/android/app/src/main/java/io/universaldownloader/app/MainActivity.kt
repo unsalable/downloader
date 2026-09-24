@@ -1,5 +1,6 @@
 package io.universaldownloader.app
 
+import android.content.res.Configuration
 import android.os.Build
 import android.os.Bundle
 import android.view.View
@@ -13,17 +14,18 @@ import androidx.core.view.WindowInsetsCompat
 class MainActivity : TauriActivity() {
   override fun onCreate(savedInstanceState: Bundle?) {
     enableEdgeToEdge()
-    // enableEdgeToEdge picks the bars' icons by the phone's theme, dark on a
-    // light phone, overriding the app theme's. The window opens dark whatever
-    // the phone's theme, so they would sit dark on dark until the page sets
-    // both to its own theme (BridgePlugin.setSystemBarsTheme).
+    // The window opens in the phone's theme (app_background), so the bars'
+    // icons follow it too: dark on a light phone, light on a dark one. The
+    // page then sets both to its own theme (BridgePlugin.setSystemBarsTheme).
+    val night = (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) ==
+      Configuration.UI_MODE_NIGHT_YES
     WindowCompat.getInsetsController(window, window.decorView).run {
-      isAppearanceLightStatusBars = false
-      isAppearanceLightNavigationBars = false
+      isAppearanceLightStatusBars = !night
+      isAppearanceLightNavigationBars = !night
     }
     // Android 8 and 9 paint the navigation bar rather than showing the window
-    // through it, in a pale scrim on a light phone; painted the window's own
-    // colour, the light icons read on it (see setSystemBarsTheme).
+    // through it, in a scrim of their own choosing; painted the window's own
+    // colour, the icons read on it (see setSystemBarsTheme).
     if (Build.VERSION.SDK_INT in Build.VERSION_CODES.O until Build.VERSION_CODES.Q) {
       @Suppress("DEPRECATION") // from Android 15, which this never reaches
       window.navigationBarColor = ContextCompat.getColor(this, R.color.app_background)
@@ -38,6 +40,11 @@ class MainActivity : TauriActivity() {
    * bars is painted to match the page by `BridgePlugin.setSystemBarsTheme`.
    */
   override fun onWebViewCreate(webView: WebView) {
+    // tauri.conf.json's backgroundColor is the desktop's dark, which on a
+    // light phone would show as a dark frame before the page paints, so
+    // tauri.android.conf.json repeats the window without it and the WebView
+    // takes the window's colour, which follows the phone's theme.
+    webView.setBackgroundColor(ContextCompat.getColor(this, R.color.app_background))
     val content = findViewById<View>(android.R.id.content)
     ViewCompat.setOnApplyWindowInsetsListener(content) { view, insets ->
       val bars = insets.getInsets(

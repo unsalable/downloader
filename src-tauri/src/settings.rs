@@ -131,7 +131,13 @@ impl Default for Settings {
             auto_retry_count: 2,
             filename_template: DEFAULT_FILENAME_TEMPLATE.to_string(),
 
-            theme: ThemePreference::Dark,
+            // A phone opens in the phone's own theme, so a light phone's first
+            // run is not a dark film. The desktop keeps the dark it has had.
+            theme: if cfg!(target_os = "android") {
+                ThemePreference::System
+            } else {
+                ThemePreference::Dark
+            },
             language: "en".to_string(),
             reduce_motion: false,
             show_animated_background: true,

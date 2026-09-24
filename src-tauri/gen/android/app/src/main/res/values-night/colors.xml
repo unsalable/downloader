@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- The dark page's bg token; see values/colors.xml. -->
+    <color name="app_background">#FF1C1C1E</color>
+</resources>

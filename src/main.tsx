@@ -9,6 +9,14 @@ import './styles/globals.css';
 // The stylesheet trims effects a phone pays too much for; see globals.css.
 if (IS_MOBILE) document.documentElement.dataset.mobile = 'true';
 
+// index.html starts dark, the desktop's default. A phone's default follows the
+// phone, and its window opens in the phone's theme, so until the saved theme
+// arrives the page does the same rather than flashing dark on a light phone.
+if (IS_MOBILE && !window.matchMedia('(prefers-color-scheme: dark)').matches) {
+  document.documentElement.classList.remove('dark');
+  document.documentElement.style.colorScheme = 'light';
+}
+
 const container = document.getElementById('root');
 if (!container) throw new Error('the root element is missing from index.html');
 
