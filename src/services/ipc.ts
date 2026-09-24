@@ -14,6 +14,7 @@ import type {
   DownloadRequest,
   DownloadTask,
   HistoryEntry,
+  LanguageCode,
   LicenseEntry,
   MediaMetadata,
   MediaProbe,
@@ -65,9 +66,13 @@ export function toAppError(value: unknown): AppErrorInfo {
 // -- settings --------------------------------------------------------------
 
 export const getSettings = () => invoke<Settings>('get_settings');
+/** True until settings are first saved, i.e. on the first launch after install. */
+export const isFirstLaunch = () => invoke<boolean>('is_first_launch');
 export const saveSettings = (settings: Settings) =>
   invoke<Settings>('save_settings', { settings });
-export const resetSettings = () => invoke<Settings>('reset_settings');
+/** Every default back, in `language` -- the one a first launch would take. */
+export const resetSettings = (language?: LanguageCode) =>
+  invoke<Settings>('reset_settings', { language });
 
 // -- tools -----------------------------------------------------------------
 
@@ -234,6 +239,9 @@ export const platformOpenAppSettings = () => invoke<void>('platform_open_app_set
 export const platformPickMediaFiles = () => invoke<string[]>('platform_pick_media_files');
 export const platformSetSystemBars = (dark: boolean) =>
   invoke<void>('platform_set_system_bars', { dark });
+/** Holds the screen upright, or lets it turn again; a tablet is never held. */
+export const platformSetPortraitLock = (locked: boolean) =>
+  invoke<void>('platform_set_portrait_lock', { locked });
 export const platformTakeSharedText = () => invoke<string | null>('platform_take_shared_text');
 
 /** Dispatched by the Android side when a link is shared into a running app. */

@@ -142,15 +142,9 @@ pub fn run() {
             #[cfg(desktop)]
             {
                 let handle = handle.clone();
-                let language = loaded.language.clone();
                 let queue = Arc::clone(&queue);
                 app.listen(queue::EVENT_CHANGED, move |_| {
-                    tray::update_counts(
-                        &handle,
-                        &language,
-                        queue.active_count(),
-                        queue.queued_count(),
-                    );
+                    tray::update_counts(&handle, queue.active_count(), queue.queued_count());
                 });
             }
 
@@ -225,6 +219,7 @@ pub fn run() {
     builder
         .invoke_handler(tauri::generate_handler![
             commands::get_settings,
+            commands::is_first_launch,
             commands::save_settings,
             commands::reset_settings,
             commands::bridge_status,
@@ -294,6 +289,7 @@ pub fn run() {
             commands::platform_pick_media_files,
             commands::platform_set_system_bars,
             commands::platform_take_shared_text,
+            commands::platform_set_portrait_lock,
             commands::check_app_update,
             commands::get_build_commit,
             commands::install_app_update,

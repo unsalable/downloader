@@ -81,9 +81,19 @@ export function useTranslation() {
   return { t: translate, language };
 }
 
+/**
+ * The first of the system's preferred languages the app speaks, else English.
+ * The whole list rather than its first entry: someone whose phone lists German
+ * and then Turkish reads Turkish better than the English fallback. Used on the
+ * first launch after install, and by a reset (see the settings store).
+ */
 export function detectSystemLanguage(): LanguageCode {
-  const nav = navigator.language?.toLowerCase() ?? 'en';
-  if (nav.startsWith('tr')) return 'tr';
+  const preferred = navigator.languages?.length ? navigator.languages : [navigator.language];
+  for (const tag of preferred) {
+    const code = tag?.toLowerCase().split('-')[0];
+    const known = LANGUAGES.find((language) => language.code === code);
+    if (known) return known.code;
+  }
   return 'en';
 }
 

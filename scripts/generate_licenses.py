@@ -79,6 +79,18 @@ ASSETS = [
 ]
 
 
+# Packages whose manifest points at a file instead of naming a licence.
+NPM_LICENSES = {
+    "remotion": "Remotion License",
+    "@remotion/player": "Remotion License",
+    "@remotion/bundler": "Remotion License",
+    "@remotion/renderer": "Remotion License",
+}
+NPM_NOTES = {
+    "remotion": "Draws the phone's first-run intro. Free for individuals, non-profits and companies of up to three people; see remotion.dev/license.",
+}
+
+
 def npm_packages() -> list[dict]:
     lock_path = os.path.join(ROOT, "package-lock.json")
     with open(lock_path, encoding="utf-8") as fh:
@@ -91,20 +103,23 @@ def npm_packages() -> list[dict]:
 
     out = []
     for path, meta in lock.get("packages", {}).items():
-        if not path.startswith("node_modules/"):
+        # Top-level installs only: a copy nested under another package (one
+        # with a version of its own) would list the same name twice.
+        if not path.startswith("node_modules/") or path.count("node_modules/") > 1:
             continue
-        name = path.split("node_modules/")[-1]
+        name = path[len("node_modules/"):]
         if name not in direct:
             continue
-        out.append(
-            {
-                "name": name,
-                "version": meta.get("version", ""),
-                "license": meta.get("license", "see package"),
-                "kind": "npm",
-                "url": f"https://www.npmjs.com/package/{name}",
-            }
-        )
+        entry = {
+            "name": name,
+            "version": meta.get("version", ""),
+            "license": NPM_LICENSES.get(name, meta.get("license", "see package")),
+            "kind": "npm",
+            "url": f"https://www.npmjs.com/package/{name}",
+        }
+        if name in NPM_NOTES:
+            entry["note"] = NPM_NOTES[name]
+        out.append(entry)
     return sorted(out, key=lambda p: p["name"].lower())
 
 
@@ -136,6 +151,9 @@ CRATE_LICENSES = {
     "once_cell": "MIT OR Apache-2.0",
     "regex": "MIT OR Apache-2.0",
     "chrono": "MIT OR Apache-2.0",
+    "os_info": "MIT",
+    "windows-sys": "MIT OR Apache-2.0",
+    "winreg": "MIT",
 }
 
 

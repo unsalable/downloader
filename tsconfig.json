@@ -26,6 +26,6 @@
     },
     "types": ["vite/client"]
   },
-  "include": ["src"],
+  "include": ["src", "scripts/intro-video"],
   "exclude": ["src-tauri", "node_modules", "dist"]
 }

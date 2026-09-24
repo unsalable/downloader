@@ -28,3 +28,9 @@ src-tauri/icons/ios/
 
 # The Chrome Web Store upload, rebuilt by scripts/pack-extension.mjs.
 extension-upload.zip
+
+# Frames and videos from scripts/intro-video/render.mjs.
+scripts/intro-video/out/
+
+# Release files copied here for upload; they live on the `latest` release.
+/scripts/UniversalDownloader_*

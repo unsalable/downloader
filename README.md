@@ -98,11 +98,13 @@ src/                     React front end
   components/downloads/  Queue cards
   components/settings/   Tool cards, hotkey recorder
   components/convert/    Conversion job rows
+  components/intro/      The phone's first-run film (Remotion)
   pages/                 Home, Downloads, Convert, History, Settings, About
   stores/                Zustand stores (settings, queue, convert, tools, analysis)
   services/ipc.ts        The only place that calls `invoke`
   lib/                   Pure helpers (formatting, URLs, option derivation)
-  i18n/                  English source dictionary + Turkish translation
+  i18n/                  English source dictionary + Turkish translation;
+                         a first launch takes the system's language
 
 src-tauri/src/           Rust core
   providers/             Source adapters and URL classification
@@ -163,6 +165,13 @@ handful of `IS_MOBILE` branches in the front end.
   of sections, each opening on its own page, with rows and controls sized for
   touch. Desktop-only settings (tray, autostart, shortcuts, tool paths, folder
   pickers) are hidden. Pressing Download moves to the Downloads tab.
+- **First run.** The first launch plays a short film of how the app is used,
+  drawn live from the app's own screens and strings with `@remotion/player`
+  (`src/components/intro`, loaded only then), so it follows the language and
+  theme and adds no video to the APK. The screen is held upright while it
+  plays, About can play it again, and with reduced motion or low resource mode
+  it is the still welcome the desktop shows. `node scripts/intro-video/render.mjs`
+  renders the same film to stills or an MP4 for review.
 - **Heat.** A phone pays for effects a desktop does not notice. Frosted glass
   and the moving aurora are replaced by solid panels and a still backdrop,
   progress bars move by transform, list items skip layout animation, and the
@@ -386,4 +395,7 @@ Universal Downloader is released under the [MIT License](LICENSE).
 
 Third-party licences are listed in the app's About screen, generated into
 `src-tauri/resources/licenses.json`. Inter is used under the SIL Open Font
-License; its licence text ships in `src/assets/fonts/`.
+License; its licence text ships in `src/assets/fonts/`. The phone's intro film
+uses [Remotion](https://www.remotion.dev/license), which is free for
+individuals, non-profits and companies of up to three people; a larger company
+building this app needs a Remotion company licence.

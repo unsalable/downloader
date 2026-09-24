@@ -2,7 +2,7 @@ import { getCurrentWindow, Theme } from '@tauri-apps/api/window';
 import { MotionGlobalConfig } from 'motion/react';
 import { create } from 'zustand';
 
-import { setLanguage } from '@/i18n';
+import { detectSystemLanguage, setLanguage } from '@/i18n';
 import { IS_MOBILE } from '@/lib/platform';
 import * as ipc from '@/services/ipc';
 import type { Settings, ThemePreference } from '@/types';
@@ -41,6 +41,20 @@ function applyMotion(settings: Settings) {
   root.dataset.reduceMotion = reduce ? 'true' : 'false';
   root.dataset.lowResource = settings.lowResourceMode ? 'true' : 'false';
   MotionGlobalConfig.skipAnimations = reduce;
+}
+
+/**
+ * The first launch after install speaks the system's language rather than the
+ * stored default. Only the webview knows that language -- on a phone including
+ * one chosen for this app alone -- so it is filled in here, before anything is
+ * drawn. It is saved at once, which makes it a stored choice like any other:
+ * no later launch looks at the system again, so nothing here can override
+ * what the user picks in Settings, before onboarding is finished or after.
+ */
+async function seedLanguage(settings: Settings): Promise<Settings> {
+  const seeded = { ...settings, language: detectSystemLanguage() };
+  // Not saved, it still holds for this launch, and the next one asks again.
+  return ipc.saveSettings(seeded).catch(() => seeded);
 }
 
 let systemThemeQuery: MediaQueryList | null = null;
@@ -97,7 +111,11 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   load: async () => {
     set({ loading: true });
     try {
-      const settings = await ipc.getSettings();
+      const [loaded, firstLaunch] = await Promise.all([
+        ipc.getSettings(),
+        ipc.isFirstLaunch().catch(() => false),
+      ]);
+      const settings = firstLaunch ? await seedLanguage(loaded) : loaded;
       applySideEffects(settings);
       set({ settings, loading: false });
     } catch {
@@ -127,7 +145,11 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
 
   reset: async () => {
     set({ saving: true });
-    const settings = await ipc.resetSettings();
+    // Back to what a first launch starts from, which speaks the system's
+    // language: the stored default is only English for want of knowing it.
+    // Handed to the reset rather than saved after it, which would show the
+    // app in English for the moment between the two.
+    const settings = await ipc.resetSettings(detectSystemLanguage());
     applySideEffects(settings);
     set({ settings, saving: false });
   },

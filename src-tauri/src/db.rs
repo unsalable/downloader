@@ -105,6 +105,17 @@ impl Database {
         Ok(settings)
     }
 
+    /// Whether settings have ever been saved. `load_settings` writes nothing,
+    /// so until something is saved the app is still on its first launch after
+    /// install, running on defaults nobody has chosen.
+    pub fn settings_saved(&self) -> AppResult<bool> {
+        let conn = self.lock()?;
+        let found: Option<i64> = conn
+            .query_row("SELECT 1 FROM settings WHERE key = 'app'", [], |row| row.get(0))
+            .optional()?;
+        Ok(found.is_some())
+    }
+
     pub fn save_settings(&self, settings: &Settings) -> AppResult<()> {
         let json = serde_json::to_string(settings)?;
         let conn = self.lock()?;
@@ -277,5 +288,27 @@ pub fn platform_from_str(value: &str) -> PlatformId {
         "direct" => PlatformId::Direct,
         "web" | "generic" => PlatformId::Generic,
         _ => PlatformId::Unknown,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn settings_count_as_saved_only_once_something_is_saved() {
+        let db = Database::open(Path::new(":memory:")).unwrap();
+        assert!(!db.settings_saved().unwrap(), "a fresh install has saved nothing");
+        // Reading hands back the defaults without writing them.
+        let defaults = db.load_settings().unwrap();
+        assert!(!db.settings_saved().unwrap());
+
+        db.save_settings(&Settings {
+            language: "tr".into(),
+            ..defaults
+        })
+        .unwrap();
+        assert!(db.settings_saved().unwrap());
+        assert_eq!(db.load_settings().unwrap().language, "tr");
     }
 }

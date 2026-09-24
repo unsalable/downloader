@@ -1,5 +1,5 @@
 import { openUrl } from '@tauri-apps/plugin-opener';
-import { ExternalLink, ShieldCheck } from 'lucide-react';
+import { ExternalLink, Play, ShieldCheck } from 'lucide-react';
 import { useEffect, useState } from 'react';
 
 import { UpdateRow } from '@/components/settings/UpdateRow';
@@ -17,7 +17,11 @@ import type { DiagnosticsSnapshot, LicenseEntry } from '@/types';
 const TITLE_SIZE = IS_MOBILE ? 'text-[15px]' : 'text-[13.5px]';
 const BODY_SIZE = IS_MOBILE ? 'text-[13px]' : 'text-[12.5px]';
 
-export function AboutPage() {
+/**
+ * `onPlayIntro` is the phone's: the first-run film, played again on request.
+ * Without it -- the desktop, which has no film -- the row is not there.
+ */
+export function AboutPage({ onPlayIntro }: { onPlayIntro?: () => void }) {
   const { t } = useTranslation();
   const [licenses, setLicenses] = useState<LicenseEntry[]>([]);
   const [diagnostics, setDiagnostics] = useState<DiagnosticsSnapshot | null>(null);
@@ -51,6 +55,20 @@ export function AboutPage() {
             </div>
           </div>
           <UpdateRow />
+          {onPlayIntro && (
+            <button
+              type="button"
+              onClick={onPlayIntro}
+              className={cn(
+                'flex w-full items-center gap-3 px-4 text-left',
+                'transition-colors duration-150 ease-out-quint active:bg-surface-active',
+                IS_MOBILE ? 'py-3.5' : 'py-2.5',
+              )}
+            >
+              <span className={cn('min-w-0 flex-1 text-fg', TITLE_SIZE)}>{t('intro.replay')}</span>
+              <Play size={15} aria-hidden="true" className="shrink-0 text-fg-faint" />
+            </button>
+          )}
         </ListGroup>
 
         <ListGroup>

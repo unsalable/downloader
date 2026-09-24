@@ -5,7 +5,9 @@ import android.app.Activity
 import android.app.DownloadManager
 import android.content.ActivityNotFoundException
 import android.content.Intent
+import android.content.pm.ActivityInfo
 import android.content.pm.PackageManager
+import android.content.res.Resources
 import android.graphics.Color
 import android.media.MediaScannerConnection
 import android.net.ConnectivityManager
@@ -48,6 +50,11 @@ class BackgroundWorkArgs {
 @InvokeArg
 class SystemBarsArgs {
     var dark: Boolean = true
+}
+
+@InvokeArg
+class PortraitLockArgs {
+    var locked: Boolean = false
 }
 
 /**
@@ -170,12 +177,57 @@ class BridgePlugin(private val activity: Activity) : Plugin(activity) {
             val window = activity.window
             // The page pads itself clear of the bars, so what shows behind them
             // is the window, which has to match the page's background.
-            window.decorView.setBackgroundColor(Color.parseColor(if (args.dark) "#1C1C1E" else "#F5F5F7"))
+            val background = Color.parseColor(if (args.dark) "#1C1C1E" else "#F5F5F7")
+            window.decorView.setBackgroundColor(background)
+            // Android 8 and 9 draw the navigation bar over the window rather
+            // than letting it show through, in a scrim chosen by the phone's
+            // theme, which the icons below would not match. Painted the page's
+            // colour, it matches them. Android 7 cannot darken the icons, so
+            // its bar keeps the dark scrim they are drawn for.
+            if (Build.VERSION.SDK_INT in Build.VERSION_CODES.O until Build.VERSION_CODES.Q) {
+                @Suppress("DEPRECATION") // from Android 15, which this never reaches
+                window.navigationBarColor = background
+            }
             val controller = WindowCompat.getInsetsController(window, window.decorView)
             controller.isAppearanceLightStatusBars = !args.dark
             controller.isAppearanceLightNavigationBars = !args.dark
         }
         invoke.resolve()
+    }
+
+    /**
+     * Hold the screen upright while the first-run film plays, which is drawn
+     * for a phone held that way; turned sideways it shrinks to a strip. Only a
+     * phone is held: a tablet's landscape is wide enough for the film, and
+     * Android 16 ignores the request on one anyway. The manifest handles
+     * orientation changes itself, so turning does not restart the activity.
+     */
+    @Command
+    fun setPortraitLock(invoke: Invoke) {
+        val args = invoke.parseArgs(PortraitLockArgs::class.java)
+        activity.runOnUiThread {
+            activity.requestedOrientation = if (args.locked && isPhone()) {
+                ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+            } else {
+                ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+            }
+        }
+        invoke.resolve()
+    }
+
+    /**
+     * Whether the display is a phone's, by its shorter side. The display's and
+     * not the window's: a tablet's half of a split screen is as narrow as a
+     * phone, and would be held upright when made whole again.
+     */
+    private fun isPhone(): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
+            // The system's configuration, not the activity's, which in a split
+            // screen describes its pane.
+            return Resources.getSystem().configuration.smallestScreenWidthDp < 600
+        }
+        val bounds = activity.windowManager.maximumWindowMetrics.bounds
+        return minOf(bounds.width(), bounds.height()) / activity.resources.displayMetrics.density < 600
     }
 
     @Command

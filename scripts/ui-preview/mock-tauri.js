@@ -461,6 +461,9 @@
     get_settings: () => settings,
     save_settings: ({ settings: next }) => Object.assign(settings, next),
     reset_settings: () => settings,
+    // Never a first launch here, so `?lang=` decides the language, not the
+    // browser's.
+    is_first_launch: () => false,
 
     get_tools: () => tools,
     refresh_tools: () => tools,
@@ -815,6 +818,7 @@
     platform_pick_media_files: () => [...picker.picked],
     platform_set_system_bars: () => null,
     platform_take_shared_text: () => null,
+    platform_set_portrait_lock: () => null,
 
     check_app_update: () => (params.has('update') ? update : null),
     install_app_update: async () => {

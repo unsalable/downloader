@@ -2,6 +2,34 @@
   "generatedBy": "scripts/generate_licenses.py",
   "packages": [
     {
+      "name": "@remotion/bundler",
+      "version": "4.0.527",
+      "license": "Remotion License",
+      "kind": "npm",
+      "url": "https://www.npmjs.com/package/@remotion/bundler"
+    },
+    {
+      "name": "@remotion/player",
+      "version": "4.0.527",
+      "license": "Remotion License",
+      "kind": "npm",
+      "url": "https://www.npmjs.com/package/@remotion/player"
+    },
+    {
+      "name": "@remotion/renderer",
+      "version": "4.0.527",
+      "license": "Remotion License",
+      "kind": "npm",
+      "url": "https://www.npmjs.com/package/@remotion/renderer"
+    },
+    {
+      "name": "@remotion/tailwind-v4",
+      "version": "4.0.527",
+      "license": "MIT",
+      "kind": "npm",
+      "url": "https://www.npmjs.com/package/@remotion/tailwind-v4"
+    },
+    {
       "name": "@tailwindcss/vite",
       "version": "4.3.3",
       "license": "MIT",
@@ -107,6 +135,14 @@
       "url": "https://www.npmjs.com/package/react-dom"
     },
     {
+      "name": "remotion",
+      "version": "4.0.527",
+      "license": "Remotion License",
+      "kind": "npm",
+      "url": "https://www.npmjs.com/package/remotion",
+      "note": "Draws the phone's first-run intro. Free for individuals, non-profits and companies of up to three people; see remotion.dev/license."
+    },
+    {
       "name": "tailwindcss",
       "version": "4.3.3",
       "license": "MIT",
@@ -126,6 +162,13 @@
       "license": "MIT",
       "kind": "npm",
       "url": "https://www.npmjs.com/package/vite"
+    },
+    {
+      "name": "vitest",
+      "version": "5.0.0",
+      "license": "MIT",
+      "kind": "npm",
+      "url": "https://www.npmjs.com/package/vitest"
     },
     {
       "name": "zustand",
@@ -182,6 +225,13 @@
       "license": "MIT OR Apache-2.0",
       "kind": "cargo",
       "url": "https://crates.io/crates/once_cell"
+    },
+    {
+      "name": "os_info",
+      "version": "",
+      "license": "MIT",
+      "kind": "cargo",
+      "url": "https://crates.io/crates/os_info"
     },
     {
       "name": "regex",
@@ -301,6 +351,20 @@
       "license": "MIT",
       "kind": "cargo",
       "url": "https://crates.io/crates/urlencoding"
+    },
+    {
+      "name": "windows-sys",
+      "version": "",
+      "license": "MIT OR Apache-2.0",
+      "kind": "cargo",
+      "url": "https://crates.io/crates/windows-sys"
+    },
+    {
+      "name": "winreg",
+      "version": "",
+      "license": "MIT",
+      "kind": "cargo",
+      "url": "https://crates.io/crates/winreg"
     },
     {
       "name": "zip",

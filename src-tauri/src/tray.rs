@@ -21,9 +21,18 @@ const ID_RESUME_ALL: &str = "tray-resume-all";
 const ID_SETTINGS: &str = "tray-settings";
 const ID_QUIT: &str = "tray-quit";
 
-/// Keeps handles to the items whose text changes at runtime.
+/// Keeps handles to the items whose text changes at runtime: the count as the
+/// queue moves, and every label when the language setting does.
 pub struct TrayHandles<R: Runtime> {
     status: MenuItem<R>,
+    open: MenuItem<R>,
+    pause_all: MenuItem<R>,
+    resume_all: MenuItem<R>,
+    settings: MenuItem<R>,
+    quit: MenuItem<R>,
+    language: String,
+    active: u32,
+    queued: u32,
 }
 
 pub struct TrayState<R: Runtime>(pub Mutex<Option<TrayHandles<R>>>);
@@ -144,18 +153,30 @@ pub fn build<R: Runtime>(app: &AppHandle<R>, language: &str) -> AppResult<()> {
         .build(app)
         .map_err(tray_error)?;
 
-    app.manage(TrayState(Mutex::new(Some(TrayHandles { status }))));
+    app.manage(TrayState(Mutex::new(Some(TrayHandles {
+        status,
+        open,
+        pause_all,
+        resume_all,
+        settings,
+        quit,
+        language: language.to_string(),
+        active: 0,
+        queued: 0,
+    }))));
     Ok(())
 }
 
 /// Refresh the count shown at the top of the tray menu.
-pub fn update_counts<R: Runtime>(app: &AppHandle<R>, language: &str, active: u32, queued: u32) {
+pub fn update_counts<R: Runtime>(app: &AppHandle<R>, active: u32, queued: u32) {
     let Some(state) = app.try_state::<TrayState<R>>() else {
         return;
     };
-    let Ok(guard) = state.0.lock() else { return };
-    let Some(handles) = guard.as_ref() else { return };
-    let _ = handles.status.set_text(status_text(language, active, queued));
+    let Ok(mut guard) = state.0.lock() else { return };
+    let Some(handles) = guard.as_mut() else { return };
+    handles.active = active;
+    handles.queued = queued;
+    let _ = handles.status.set_text(status_text(&handles.language, active, queued));
 
     if let Some(tray) = app.tray_by_id(TRAY_ID) {
         let tooltip = if active + queued == 0 {
@@ -165,6 +186,28 @@ pub fn update_counts<R: Runtime>(app: &AppHandle<R>, language: &str, active: u32
         };
         let _ = tray.set_tooltip(Some(tooltip));
     }
+}
+
+/// Put the menu into another language. It is built at start-up in the one
+/// saved then, which a first launch goes on to replace with the system's.
+pub fn relabel<R: Runtime>(app: &AppHandle<R>, language: &str) {
+    let Some(state) = app.try_state::<TrayState<R>>() else {
+        return;
+    };
+    let Ok(mut guard) = state.0.lock() else { return };
+    let Some(handles) = guard.as_mut() else { return };
+    if handles.language == language {
+        return;
+    }
+    handles.language = language.to_string();
+
+    let text = labels(language);
+    let _ = handles.open.set_text(text.open);
+    let _ = handles.pause_all.set_text(text.pause_all);
+    let _ = handles.resume_all.set_text(text.resume_all);
+    let _ = handles.settings.set_text(text.settings);
+    let _ = handles.quit.set_text(text.quit);
+    let _ = handles.status.set_text(status_text(language, handles.active, handles.queued));
 }
 
 pub fn show_main_window<R: Runtime>(app: &AppHandle<R>) {

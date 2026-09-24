@@ -58,6 +58,14 @@ pub fn get_settings(state: State<'_, AppState>) -> Settings {
     state.settings()
 }
 
+/// Whether this is the first launch after install: no settings have been
+/// saved yet. The interface then fills in what only it can know, the system's
+/// language, and saves at once, so every later launch keeps what is stored.
+#[tauri::command]
+pub fn is_first_launch(state: State<'_, AppState>) -> AppResult<bool> {
+    Ok(!state.db.settings_saved()?)
+}
+
 #[tauri::command]
 pub async fn save_settings(
     app: AppHandle,
@@ -92,6 +100,12 @@ pub async fn save_settings(
         let _ = app.emit(EVENT_TOOLS_CHANGED, tools::refresh(&settings).await);
     }
 
+    // The tray menu is built once, in the language saved at start-up.
+    #[cfg(desktop)]
+    if previous.language != settings.language {
+        crate::tray::relabel(&app, &settings.language);
+    }
+
     if previous.start_with_windows != settings.start_with_windows {
         apply_autostart(&app, settings.start_with_windows);
     }
@@ -108,12 +122,20 @@ pub async fn save_settings(
     Ok(settings)
 }
 
+/// `language` is the one a first launch would take, which only the interface
+/// can know (see `is_first_launch`); without it, the stored default. Passed in
+/// rather than saved afterwards, so a reset is one save and one change heard.
 #[tauri::command]
-pub async fn reset_settings(app: AppHandle, state: State<'_, AppState>) -> AppResult<Settings> {
+pub async fn reset_settings(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    language: Option<String>,
+) -> AppResult<Settings> {
     let defaults = Settings {
         // Onboarding is a one-time thing; resetting preferences should not
         // replay it.
         onboarding_complete: state.settings().onboarding_complete,
+        language: language.unwrap_or_else(|| Settings::default().language),
         ..Settings::default()
     };
     save_settings(app, state, defaults).await
@@ -741,6 +763,19 @@ pub async fn platform_set_system_bars(app: AppHandle, dark: bool) -> AppResult<(
     #[cfg(not(target_os = "android"))]
     {
         let _ = (app, dark);
+        Ok(())
+    }
+}
+
+/// Hold the screen upright while the first-run film plays. A desktop window
+/// has no way up to hold, so there it succeeds without doing anything.
+#[tauri::command]
+pub async fn platform_set_portrait_lock(app: AppHandle, locked: bool) -> AppResult<()> {
+    #[cfg(target_os = "android")]
+    return crate::android::set_portrait_lock(app, locked).await;
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = (app, locked);
         Ok(())
     }
 }

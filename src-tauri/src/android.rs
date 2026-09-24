@@ -567,6 +567,21 @@ pub async fn set_system_bars(app: AppHandle, dark: bool) -> AppResult<()> {
     .map(|_| ())
 }
 
+#[derive(Serialize)]
+struct PortraitLock {
+    locked: bool,
+}
+
+/// Hold a phone's screen upright, or let it turn with the phone again. The
+/// first-run film asks for this while it plays; a tablet is left to turn.
+pub async fn set_portrait_lock(app: AppHandle, locked: bool) -> AppResult<()> {
+    blocking(app, move |bridge| {
+        bridge.call::<serde_json::Value>("setPortraitLock", PortraitLock { locked })
+    })
+    .await
+    .map(|_| ())
+}
+
 /// Where a downloaded update waits for the installer. It has to be inside the
 /// cache directory, which is what the file provider shares with the installer.
 pub fn update_dir() -> PathBuf {

@@ -344,11 +344,26 @@ export const en = {
   'welcome.subtitle': 'Fast. Private. Ad-free.',
   'welcome.getStarted': 'Get started',
   'welcome.pointPrivacy': 'Nothing leaves your machine',
+  'welcome.pointPrivacyMobile': 'Nothing leaves your phone',
   'welcome.pointPrivacyBody': 'No account, no telemetry, no ad network.',
   'welcome.pointQuality': 'Best available quality',
   'welcome.pointQualityBody': 'Separate video and audio streams are merged for you.',
   'welcome.pointQueue': 'Queue and resume',
   'welcome.pointQueueBody': 'Pause, resume and retry without losing progress.',
+
+  'intro.skip': 'Skip',
+  'intro.start': 'Get started',
+  'intro.replay': 'Watch the intro',
+  'intro.share': 'Share from any app.',
+  'intro.saved': 'Saved to your phone.',
+  'intro.trim': 'Cut out the extra.',
+  'intro.fast': 'Fast',
+  'intro.private': 'Private',
+  'intro.adFree': 'Ad-free',
+  'intro.sampleTitle': 'A week in the mountains',
+  'intro.sampleChannel': 'Trail Notes',
+  'intro.summary':
+    'Share or paste a link from almost any site, choose video or audio, and download it; cut it on the phone if you like. Fast, private, ad-free.',
 
   'setup.title': 'One-time setup',
   'setup.body':

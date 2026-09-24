@@ -1,10 +1,11 @@
 import { AnimatePresence, motion, useReducedMotionConfig } from 'motion/react';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
 
 import { DesktopUpdater } from '@/components/DesktopUpdater';
 import { UpdatePrompt } from '@/components/UpdatePrompt';
 import { WelcomeScreen } from '@/components/WelcomeScreen';
+import { IntroBoundary } from '@/components/intro/IntroBoundary';
 import { Background } from '@/components/layout/Background';
 import { BottomNav, PHONE_TABS } from '@/components/layout/BottomNav';
 import { Sidebar, type Route } from '@/components/layout/Sidebar';
@@ -40,6 +41,13 @@ import { useToolsStore } from '@/stores/useToolsStore';
 import type { ToolsState } from '@/types';
 
 const SIDEBAR_COLLAPSED_KEY = 'ud.sidebar.collapsed';
+
+// Fetched only when it is about to play: the film and the player that draws it
+// are the phone's first run and nothing else, and have no place in the bundle
+// every later launch loads.
+const IntroScreen = lazy(() =>
+  import('@/components/intro/IntroScreen').then((module) => ({ default: module.IntroScreen })),
+);
 
 interface NavState {
   route: Route;
@@ -276,6 +284,13 @@ export function App() {
   );
   const urlInputRef = useRef<UrlInputHandle | null>(null);
   const mainRef = useRef<HTMLElement | null>(null);
+  // The intro played again from About, which a first run does not need.
+  const [introReplay, setIntroReplay] = useState(false);
+  // Set once the first run has been let go this session -- the film or the
+  // still welcome. The setting says the same for good, but it is saved after
+  // the fact: a save that failed would roll it back and start the first run
+  // over under the user's hand. A shared link sets only this (see below).
+  const [introDone, setIntroDone] = useState(false);
 
   // A screen always opens at its top. The desktop's scroller outlives the
   // screen inside it, so without this, arriving at Downloads from halfway down
@@ -535,7 +550,15 @@ export function App() {
         .platformTakeSharedText()
         .then((text) => {
           const url = text ? extractFirstUrl(text) : null;
-          if (url) goHomeWithUrl(url);
+          if (!url) return;
+          goHomeWithUrl(url);
+          // A link shared in while the intro plays -- or the still welcome
+          // stands in for it -- moves it aside: the user has just done what
+          // the film teaches, and is waiting on the link, not on the film.
+          // Aside for this session only -- the first run is not marked over,
+          // so the next ordinary launch still plays it.
+          setIntroReplay(false);
+          setIntroDone(true);
         })
         .catch(() => {});
     };
@@ -593,9 +616,29 @@ export function App() {
     return <div className="h-full bg-bg" />;
   }
 
-  if (!settings.onboardingComplete) {
-    return <WelcomeScreen onStart={() => void updateSettings({ onboardingComplete: true })} />;
+  // A phone's first run is the intro film. Where the system asks for less
+  // motion -- or the app has been told to -- it is the still welcome instead,
+  // the one the desktop shows, which has no film.
+  const filmAllowed = IS_MOBILE && !stillScreens && !settings.reduceMotion && !settings.lowResourceMode;
+  if (!settings.onboardingComplete && !filmAllowed && !introDone) {
+    return (
+      <WelcomeScreen
+        onStart={() => {
+          setIntroDone(true);
+          void updateSettings({ onboardingComplete: true });
+        }}
+      />
+    );
   }
+  const introShown = IS_MOBILE && (introReplay || (!settings.onboardingComplete && !introDone));
+  const closeIntro = () => {
+    setIntroReplay(false);
+    setIntroDone(true);
+    if (!settings.onboardingComplete) void updateSettings({ onboardingComplete: true });
+  };
+  // A touch of the film pays for its history entry, so the system Back can
+  // reach it (see IntroScreen): the film arrived with no touch to write one.
+  const touchIntro = () => writeHistory(historyRef.current, levelsOf(navRef.current));
 
   // The glow stands still (see Background), so reduced motion has no say in it.
   // A phone has no setting for it; only low resource mode turns it off there.
@@ -635,7 +678,11 @@ export function App() {
           onSectionChange={setSettingsSection}
         />
       )}
-      {route === 'about' && <AboutPage />}
+      {route === 'about' && (
+        // Offered only where the film would play on a first run: with motion
+        // turned down, the film is not what the app shows.
+        <AboutPage onPlayIntro={filmAllowed ? () => setIntroReplay(true) : undefined} />
+      )}
     </>
   );
 
@@ -658,7 +705,9 @@ export function App() {
         />
       )}
 
-      <div className="relative flex min-w-0 flex-1 flex-col">
+      {/* Out of reach while the film covers it: a screen reader would otherwise
+          walk on past Skip into a Home the user cannot see. */}
+      <div className="relative flex min-w-0 flex-1 flex-col" inert={introShown}>
         <Background active={backgroundActive} />
 
         {IS_MOBILE ? (
@@ -753,7 +802,27 @@ export function App() {
         )}
       </div>
 
-      {IS_MOBILE ? <UpdatePrompt /> : <DesktopUpdater />}
+      {/* Not while the film is up, first run or replay: a prompt found
+          meanwhile would open unseen under it, and a Back meant for the film
+          would put the update off instead. One found during a replay opens
+          when the film has gone. */}
+      {IS_MOBILE ? (
+        settings.onboardingComplete && !introShown && <UpdatePrompt />
+      ) : (
+        <DesktopUpdater />
+      )}
+
+      <AnimatePresence>
+        {introShown && (
+          // Until the film has loaded, the page's own colour, so the app does
+          // not show for a moment before it.
+          <IntroBoundary key="intro" onFail={closeIntro}>
+            <Suspense fallback={<div className="fixed inset-0 z-[900] bg-bg" />}>
+              <IntroScreen onDone={closeIntro} onTouch={touchIntro} replay={introReplay} />
+            </Suspense>
+          </IntroBoundary>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

@@ -342,11 +342,26 @@ export const tr: Record<TranslationKey, string> = {
   'welcome.subtitle': 'Hızlı. Gizli. Reklamsız.',
   'welcome.getStarted': 'Başla',
   'welcome.pointPrivacy': 'Hiçbir şey cihazından çıkmaz',
+  'welcome.pointPrivacyMobile': 'Hiçbir şey telefonundan çıkmaz',
   'welcome.pointPrivacyBody': 'Hesap yok, telemetri yok, reklam ağı yok.',
   'welcome.pointQuality': 'Mevcut en iyi kalite',
   'welcome.pointQualityBody': 'Ayrı video ve ses akışları kendiliğinden birleştirilir.',
   'welcome.pointQueue': 'Kuyruk ve devam ettirme',
   'welcome.pointQueueBody': 'İlerlemeyi kaybetmeden duraklat, sürdür, tekrar dene.',
+
+  'intro.skip': 'Geç',
+  'intro.start': 'Başla',
+  'intro.replay': 'Tanıtımı izle',
+  'intro.share': 'Her uygulamadan paylaş.',
+  'intro.saved': 'Telefonuna kaydedilir.',
+  'intro.trim': 'Fazlasını kes.',
+  'intro.fast': 'Hızlı',
+  'intro.private': 'Gizli',
+  'intro.adFree': 'Reklamsız',
+  'intro.sampleTitle': 'Dağlarda bir hafta',
+  'intro.sampleChannel': 'Yol Notları',
+  'intro.summary':
+    'Hemen her siteden bir bağlantıyı paylaş ya da yapıştır, video veya ses seç ve indir; istersen telefonda kes. Hızlı, gizli, reklamsız.',
 
   'setup.title': 'Tek seferlik kurulum',
   'setup.body':

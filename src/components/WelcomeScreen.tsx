@@ -7,7 +7,11 @@ import { cn } from '@/lib/cn';
 import { IS_MOBILE } from '@/lib/platform';
 
 const POINTS: { title: TranslationKey; body: TranslationKey }[] = [
-  { title: 'welcome.pointPrivacy', body: 'welcome.pointPrivacyBody' },
+  {
+    // A phone sees this when its film is off, and a phone is not a machine.
+    title: IS_MOBILE ? 'welcome.pointPrivacyMobile' : 'welcome.pointPrivacy',
+    body: 'welcome.pointPrivacyBody',
+  },
   { title: 'welcome.pointQuality', body: 'welcome.pointQualityBody' },
   { title: 'welcome.pointQueue', body: 'welcome.pointQueueBody' },
 ];
