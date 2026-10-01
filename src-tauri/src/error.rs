@@ -43,6 +43,16 @@ pub enum AppError {
     #[error("not found ({status})")]
     NotFound { status: u16, detail: String },
 
+    /// A song shared from a music service whose recording could not be found
+    /// anywhere the app can download from.
+    #[error("no matching recording: {0}")]
+    NoMatch(String),
+
+    /// A service that encrypts what it streams. Nothing the app does can
+    /// download from it, and it says so before trying.
+    #[error("protected by the service: {0}")]
+    Protected(String),
+
     /// A link that will hand over all of itself and no part of it.
     ///
     /// Kept apart from `Forbidden`, which it would otherwise arrive as, because
@@ -98,6 +108,8 @@ impl AppError {
             Self::Forbidden { .. } => "forbidden",
             Self::MembershipRequired { .. } => "membershipRequired",
             Self::NotFound { .. } => "notFound",
+            Self::NoMatch(_) => "noMatch",
+            Self::Protected(_) => "protected",
             Self::RangeUnavailable(_) => "rangeUnavailable",
             Self::EngineMissing => "engineMissing",
             Self::FfmpegMissing => "ffmpegMissing",
@@ -164,6 +176,14 @@ impl AppError {
             "notFound" => (
                 "This media no longer exists",
                 "The post may have been deleted or made private.",
+            ),
+            "noMatch" => (
+                "This song couldn't be found",
+                "No recording of it turned up on YouTube.",
+            ),
+            "protected" => (
+                "This service can't be downloaded from",
+                "It encrypts what it streams, so there is nothing a downloader can save.",
             ),
             // Deliberately not phrased as something to fix. There is no
             // setting and no sign-in that changes this answer, and the one

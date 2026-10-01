@@ -311,6 +311,15 @@ pub async fn analyze_url(
     Ok(metadata)
 }
 
+/// Whole episodes of a series on the channels that license it.
+#[tauri::command]
+pub async fn search_anime(
+    state: State<'_, AppState>,
+    query: String,
+) -> AppResult<Vec<providers::anime::AnimeEpisode>> {
+    providers::anime::search(&query, &state.settings()).await
+}
+
 #[tauri::command]
 pub async fn get_thumbnail(state: State<'_, AppState>, url: String) -> AppResult<String> {
     cache::thumbnail_data_url(&url, &state.settings()).await
@@ -341,15 +350,7 @@ pub fn summarize_plan(
     metadata: crate::model::MediaMetadata,
     request: DownloadRequest,
 ) -> AppResult<PlanSummary> {
-    let plan = crate::downloader::plan::build(
-        &metadata,
-        request.mode,
-        request.quality,
-        request.video_format_id.as_deref(),
-        request.audio_format_id.as_deref(),
-        request.container.as_deref(),
-        request.watermark,
-    )?;
+    let plan = crate::downloader::plan::for_request(&metadata, &request)?;
 
     // The engine merges for itself, so only a native two-stream download or a
     // conversion actually requires FFmpeg to be present.
@@ -386,10 +387,14 @@ pub fn enqueue_download(state: State<'_, AppState>, request: DownloadRequest) ->
 /// Items are addressed by position within the link: a carousel's items have
 /// no addresses of their own. The analysis the user is looking at already
 /// lists them, so it is what the tasks are made from, and what they download.
+///
+/// `entries` picks some of the items by position, in the order the source
+/// lists them; `None` queues them all.
 #[tauri::command]
 pub async fn enqueue_gallery(
     state: State<'_, AppState>,
     request: DownloadRequest,
+    entries: Option<Vec<u32>>,
 ) -> AppResult<Vec<DownloadTask>> {
     let settings = state.settings();
     let metadata = match providers::recent_analysis(&request.url, &settings) {
@@ -401,9 +406,14 @@ pub async fn enqueue_gallery(
         }
     };
 
-    if metadata.entries.len() < 2 {
+    if metadata.entries.len() < 2 && entries.is_none() {
         return Ok(vec![state.queue.enqueue(request)]);
     }
+    let wanted = |index: usize| {
+        entries
+            .as_ref()
+            .is_none_or(|positions| positions.contains(&(index as u32 + 1)))
+    };
 
     // One creation time for the whole album: the Downloads screen lists newest
     // first, so entries stamped one by one would read backwards there.
@@ -412,6 +422,7 @@ pub async fn enqueue_gallery(
         .entries
         .iter()
         .enumerate()
+        .filter(|(index, _)| wanted(*index))
         .map(|(index, entry)| {
             let mut item = request.clone();
             item.entry = Some(index as u32 + 1);

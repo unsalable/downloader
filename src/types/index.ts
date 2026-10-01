@@ -18,6 +18,7 @@ export type PlatformId =
   | 'vimeo'
   | 'dailymotion'
   | 'soundcloud'
+  | 'spotify'
   | 'direct'
   | 'generic'
   | 'unknown';
@@ -60,6 +61,10 @@ export interface MediaFormat {
   note: string | null;
   /** Set when the stream must be fetched through the external engine. */
   needsEngineDownload: boolean;
+  /** The language its sound is spoken in, when the source says. */
+  language?: string | null;
+  /** How the source ranks that language; the original ranks highest. */
+  languagePreference?: number | null;
 }
 
 export interface MediaMetadata {
@@ -90,6 +95,17 @@ export interface MediaMetadata {
   rangeFetchable: boolean;
   /** Non-fatal notes worth surfacing, already localised keys where possible. */
   warnings: string[];
+  /** The songs of an album or playlist, to list and pick from. Empty otherwise. */
+  tracks: TrackSummary[];
+}
+
+/** One song of an album or playlist. */
+export interface TrackSummary {
+  /** 1-based; the position a download request names it by. */
+  position: number;
+  title: string;
+  artists: string;
+  durationSec: number | null;
 }
 
 export type DownloadMode = 'video' | 'audio' | 'image';
@@ -122,6 +138,17 @@ export interface DownloadRequest {
    * as a whole. Set by the backend when it queues a gallery item by item.
    */
   entry?: number | null;
+  /** The sound track's language, where there are several. Null: the original. */
+  audioLanguage?: string | null;
+}
+
+/** A whole episode on a channel that licenses the series. */
+export interface AnimeEpisode {
+  url: string;
+  title: string;
+  channel: string;
+  durationSec: number | null;
+  thumbnailUrl: string | null;
 }
 
 export type DownloadStatus =

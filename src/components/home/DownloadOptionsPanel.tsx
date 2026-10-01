@@ -23,6 +23,7 @@ import { useTranslation } from '@/i18n';
 import { cn } from '@/lib/cn';
 import { COLLAPSE } from '@/lib/motion';
 import {
+  audioLanguageOptions,
   audioStreamOptions,
   availableModes,
   containerOptions,
@@ -48,6 +49,8 @@ interface DownloadOptionsPanelProps {
   submitting: boolean;
   /** Why the last press of Download did not queue anything. */
   downloadError?: string | null;
+  /** How many songs of a list are picked, when the button downloads a list. */
+  downloadCount?: number;
 }
 
 const MODE_ICONS = { video: Video, audio: Music, image: ImageIcon } as const;
@@ -60,6 +63,7 @@ export function DownloadOptionsPanel({
   onDownload,
   submitting,
   downloadError,
+  downloadCount,
 }: DownloadOptionsPanelProps) {
   const { t } = useTranslation();
   const [plan, setPlan] = useState<ipc.PlanSummary | null>(null);
@@ -82,6 +86,7 @@ export function DownloadOptionsPanel({
     [options.mode, ffmpegAvailable],
   );
   const watermark = watermarkState(metadata);
+  const languages = useMemo(() => audioLanguageOptions(metadata), [metadata]);
 
   const request = useMemo<DownloadRequest>(
     () => ({
@@ -96,6 +101,7 @@ export function DownloadOptionsPanel({
       title: metadata.title,
       thumbnailUrl: metadata.thumbnailUrl,
       platform: metadata.platform,
+      audioLanguage: options.audioLanguage,
     }),
     [metadata, options],
   );
@@ -172,6 +178,18 @@ export function DownloadOptionsPanel({
           onChange={(container) => onChange({ container: container || null })}
         />
       </div>
+
+      {languages.length > 1 && options.mode !== 'image' && (
+        <div className="mt-3">
+          <Dropdown
+            label={t('options.audioLanguage')}
+            value={options.audioLanguage ?? ''}
+            options={languages}
+            onChange={(language) => onChange({ audioLanguage: language || null })}
+            disabled={options.advanced}
+          />
+        </div>
+      )}
 
       {watermark !== 'hidden' && (
         <div className="mt-3">
@@ -306,11 +324,15 @@ export function DownloadOptionsPanel({
         fullWidth
         icon={<Download size={17} />}
         loading={submitting}
-        disabled={ffmpegBlocked || plan == null}
+        disabled={ffmpegBlocked || plan == null || downloadCount === 0}
         onClick={onDownload}
         className="mt-4"
       >
-        {submitting ? t('action.preparing') : t('action.download')}
+        {submitting
+          ? t('action.preparing')
+          : downloadCount != null
+            ? t('action.downloadCount', { n: downloadCount })
+            : t('action.download')}
       </Button>
 
       {downloadError && (

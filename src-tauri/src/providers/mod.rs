@@ -12,11 +12,14 @@
 //! [`photos`] is the exception to the shape: it reads only the photo posts of
 //! a few platforms, and answers "not one of mine" for everything else.
 
+pub mod anime;
 pub mod detect;
 pub mod direct;
 pub mod engine;
 pub mod generic;
 pub mod photos;
+pub mod spotify;
+pub mod words;
 
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
@@ -83,6 +86,8 @@ impl MediaProvider for GenericProvider {
 }
 
 /// Resolution order, matching the documented provider priority:
+///   0. a service that encrypts its streams, refused at once, and a song
+///      shared from Spotify, whose recording is found elsewhere
 ///   1. a direct media file, which needs no extraction at all
 ///   2. a photo post the engine cannot read (X, Reddit, TikTok photo mode)
 ///   3. the engine, which covers the named platforms and many more
@@ -91,6 +96,13 @@ impl MediaProvider for GenericProvider {
 pub async fn analyze(url: &str, settings: &Settings) -> AppResult<MediaMetadata> {
     let info = detect::classify(url)
         .ok_or_else(|| AppError::InvalidUrl(format!("not an http(s) address: {url}")))?;
+
+    if let Some(service) = detect::protected_service(url) {
+        return Err(AppError::Protected(service.to_string()));
+    }
+    if let Some(metadata) = spotify::analyze(url, settings).await? {
+        return Ok(metadata);
+    }
 
     let direct = DirectProvider;
     if MediaProvider::can_handle(&direct, url) {
@@ -271,7 +283,10 @@ pub fn gallery(
 
 /// The item a download names: one entry of a gallery, or the link itself.
 pub fn select_entry(metadata: MediaMetadata, entry: Option<u32>) -> AppResult<MediaMetadata> {
-    let Some(position) = entry else {
+    // A Spotify album is a list and nothing more; as a whole it is its first
+    // song, the way any other gallery is its first item.
+    let listed_only = metadata.provider_id == spotify::PROVIDER_ID && metadata.music.is_none();
+    let Some(position) = entry.or(listed_only.then_some(1)) else {
         return Ok(metadata);
     };
     if metadata.entries.is_empty() && position == 1 {
@@ -287,6 +302,15 @@ pub fn select_entry(metadata: MediaMetadata, entry: Option<u32>) -> AppResult<Me
             status: 404,
             detail: format!("item {position} is no longer part of this post, which now has {count}"),
         })
+}
+
+/// Make an item ready to download: a song listed from an album or playlist is
+/// only looked for once its own download starts.
+pub async fn prepare(item: MediaMetadata, settings: &Settings) -> AppResult<MediaMetadata> {
+    if spotify::is_pending(&item) {
+        return spotify::resolve(item, settings).await;
+    }
+    Ok(item)
 }
 
 /// A picture as a downloadable format.
@@ -333,8 +357,44 @@ pub fn image_format(
         watermarked: None,
         note: None,
         needs_engine_download: false,
+        language: None,
+        language_preference: None,
         url: Some(url),
         http_headers,
+    }
+}
+
+/// Metadata with nothing in it, for tests to fill in what they are about.
+#[cfg(test)]
+pub(crate) mod tests_support {
+    use crate::model::{MediaKind, MediaMetadata, PlatformId, WatermarkSupport};
+
+    pub fn blank() -> MediaMetadata {
+        MediaMetadata {
+            url: "https://example.test/x".into(),
+            canonical_url: "https://example.test/x".into(),
+            platform: PlatformId::Youtube,
+            platform_label: "YouTube".into(),
+            provider_id: "engine".into(),
+            media_kind: MediaKind::Video,
+            title: "t".into(),
+            creator: None,
+            description: None,
+            thumbnail_url: None,
+            duration_sec: None,
+            view_count: None,
+            like_count: None,
+            upload_date: None,
+            is_live: false,
+            formats: Vec::new(),
+            entry_count: None,
+            watermark_support: WatermarkSupport::NotApplicable,
+            range_fetchable: false,
+            warnings: Vec::new(),
+            entries: Vec::new(),
+            tracks: Vec::new(),
+            music: None,
+        }
     }
 }
 
@@ -367,6 +427,8 @@ mod tests {
             range_fetchable: false,
             warnings: Vec::new(),
             entries: Vec::new(),
+            tracks: Vec::new(),
+            music: None,
         }
     }
 

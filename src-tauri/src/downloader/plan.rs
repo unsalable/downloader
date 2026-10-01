@@ -7,8 +7,8 @@
 
 use crate::error::{AppError, AppResult};
 use crate::model::{
-    DownloadMode, FormatKind, MediaFormat, MediaMetadata, QualityPreference, WatermarkPreference,
-    WatermarkSupport,
+    DownloadMode, DownloadRequest, FormatKind, MediaFormat, MediaMetadata, QualityPreference,
+    WatermarkPreference, WatermarkSupport,
 };
 use crate::providers::engine;
 
@@ -237,6 +237,21 @@ fn watermark_allows(format: &MediaFormat, preference: WatermarkPreference) -> bo
     }
 }
 
+/// The plan for everything a download request asks for.
+pub fn for_request(metadata: &MediaMetadata, request: &DownloadRequest) -> AppResult<DownloadPlan> {
+    build_in(
+        metadata,
+        request.mode,
+        request.quality,
+        request.video_format_id.as_deref(),
+        request.audio_format_id.as_deref(),
+        request.container.as_deref(),
+        request.watermark,
+        request.audio_language.as_deref(),
+    )
+}
+
+/// The plan for these choices, with the sound in its original language.
 pub fn build(
     metadata: &MediaMetadata,
     mode: DownloadMode,
@@ -245,6 +260,29 @@ pub fn build(
     audio_format_id: Option<&str>,
     requested_container: Option<&str>,
     watermark: WatermarkPreference,
+) -> AppResult<DownloadPlan> {
+    build_in(
+        metadata,
+        mode,
+        quality,
+        video_format_id,
+        audio_format_id,
+        requested_container,
+        watermark,
+        None,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn build_in(
+    metadata: &MediaMetadata,
+    mode: DownloadMode,
+    quality: QualityPreference,
+    video_format_id: Option<&str>,
+    audio_format_id: Option<&str>,
+    requested_container: Option<&str>,
+    watermark: WatermarkPreference,
+    audio_language: Option<&str>,
 ) -> AppResult<DownloadPlan> {
     if watermark == WatermarkPreference::CleanOnly
         && metadata.watermark_support == WatermarkSupport::WatermarkedOnly
@@ -259,6 +297,7 @@ pub fn build(
         .iter()
         .filter(|format| watermark_allows(format, watermark))
         .collect();
+    let allowed = in_language(allowed, audio_language);
 
     if allowed.is_empty() {
         return Err(AppError::Unsupported(
@@ -288,6 +327,43 @@ pub fn build(
             requested_container,
         ),
     }
+}
+
+/// Of sound tracks offered in several languages, those in the one wanted: the
+/// language asked for, or else the one the source ranks first, which is the
+/// original.
+///
+/// Without this a dubbed video is a lottery. Every dub is offered at much the
+/// same bitrate, the highest bitrate wins every other comparison here, and
+/// which language that turns out to be is an accident of encoding: measured on
+/// a Japanese series with ten dubs, it was the Hindi one.
+fn in_language<'a>(formats: Vec<&'a MediaFormat>, wanted: Option<&str>) -> Vec<&'a MediaFormat> {
+    let sound: Vec<&MediaFormat> = formats
+        .iter()
+        .filter(|format| format.kind == FormatKind::Audio)
+        .copied()
+        .collect();
+    let mut languages: Vec<&str> = sound.iter().filter_map(|format| format.language.as_deref()).collect();
+    languages.sort_unstable();
+    languages.dedup();
+    if languages.len() < 2 {
+        return formats;
+    }
+
+    let keep: Box<dyn Fn(&MediaFormat) -> bool> = match wanted.filter(|language| languages.contains(language)) {
+        Some(language) => {
+            let language = language.to_string();
+            Box::new(move |format| format.language.as_deref() == Some(language.as_str()))
+        }
+        None => match sound.iter().filter_map(|format| format.language_preference).max() {
+            Some(top) => Box::new(move |format| format.language_preference == Some(top)),
+            None => return formats,
+        },
+    };
+    formats
+        .into_iter()
+        .filter(|format| format.kind != FormatKind::Audio || keep(format))
+        .collect()
 }
 
 /// The requested mode when the media offers it, otherwise what the media is:
@@ -704,6 +780,8 @@ mod tests {
             watermarked: None,
             note: None,
             needs_engine_download: false,
+            language: None,
+            language_preference: None,
             url: Some(format!("https://cdn.test/{id}")),
             http_headers: Vec::new(),
         }
@@ -732,6 +810,8 @@ mod tests {
             range_fetchable: false,
             warnings: Vec::new(),
             entries: Vec::new(),
+            tracks: Vec::new(),
+            music: None,
         }
     }
 
@@ -1320,6 +1400,78 @@ mod tests {
             assert_eq!(result.estimated_bytes, Some(1_000_000));
             assert!(result.kept_range.is_some());
         }
+    }
+
+    fn dub(id: &str, language: &str, preference: i64, abr: f64, container: &str) -> MediaFormat {
+        let mut track = format(id, FormatKind::Audio, None, Some(abr), container);
+        track.language = Some(language.into());
+        track.language_preference = Some(preference);
+        track
+    }
+
+    /// A Japanese series with dubs, as YouTube lists it: the dubs at -1, the
+    /// original at 10, and the Hindi dub a hair above the rest in bitrate.
+    fn dubbed() -> MediaMetadata {
+        metadata(vec![
+            format("137", FormatKind::Video, Some(1080), None, "mp4"),
+            dub("251-0", "en", -1, 125.3, "webm"),
+            dub("251-9", "hi", -1, 130.6, "webm"),
+            dub("251-10", "ja", 10, 127.5, "webm"),
+            dub("140-0", "en", -1, 129.5, "m4a"),
+            dub("140-10", "ja", 10, 129.5, "m4a"),
+        ])
+    }
+
+    fn request(mode: DownloadMode, audio_language: Option<&str>) -> DownloadRequest {
+        DownloadRequest {
+            url: "https://example.test/x".into(),
+            mode,
+            quality: QualityPreference::Best,
+            video_format_id: None,
+            audio_format_id: None,
+            container: None,
+            watermark: WatermarkPreference::Any,
+            output_dir: None,
+            title: None,
+            thumbnail_url: None,
+            platform: None,
+            entry: None,
+            audio_language: audio_language.map(str::to_string),
+        }
+    }
+
+    #[test]
+    fn a_dubbed_video_keeps_its_original_voice() {
+        let meta = dubbed();
+        for mode in [DownloadMode::Video, DownloadMode::Audio] {
+            let plan = for_request(&meta, &request(mode, None)).unwrap();
+            assert_eq!(plan.audio.as_ref().unwrap().language.as_deref(), Some("ja"), "{mode:?}");
+        }
+    }
+
+    #[test]
+    fn a_dub_is_taken_when_it_is_asked_for() {
+        let plan = for_request(&dubbed(), &request(DownloadMode::Video, Some("en"))).unwrap();
+        assert_eq!(plan.audio.as_ref().unwrap().language.as_deref(), Some("en"));
+
+        // A language the video does not have is no reason to fail.
+        let plan = for_request(&dubbed(), &request(DownloadMode::Video, Some("tr"))).unwrap();
+        assert_eq!(plan.audio.as_ref().unwrap().language.as_deref(), Some("ja"));
+    }
+
+    #[test]
+    fn one_language_is_no_choice_at_all() {
+        let mut meta = metadata(vec![
+            format("137", FormatKind::Video, Some(1080), None, "mp4"),
+            dub("251", "en", -1, 130.0, "webm"),
+            dub("140", "en", -1, 129.5, "m4a"),
+        ]);
+        let plan = for_request(&meta, &request(DownloadMode::Audio, None)).unwrap();
+        assert_eq!(plan.audio.as_ref().unwrap().id, "251");
+
+        // Unnamed languages leave the choice to bitrate, as before.
+        meta.formats.iter_mut().for_each(|format| format.language = None);
+        assert!(for_request(&meta, &request(DownloadMode::Audio, None)).is_ok());
     }
 
     #[test]

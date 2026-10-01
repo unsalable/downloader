@@ -23,6 +23,10 @@ export function MediaPreviewCard({ metadata }: { metadata: MediaMetadata }) {
   const isPhoto =
     metadata.formats.some((format) => format.kind === 'image') &&
     !metadata.formats.some((format) => format.hasVideo);
+  // An album cover is square, and cropping it into a wide frame would cut the
+  // artwork in half.
+  const isCover = metadata.platform === 'spotify';
+  const songs = metadata.tracks.length;
 
   return (
     <article className="overflow-hidden rounded-[var(--radius-card)] border border-card-edge bg-surface">
@@ -34,7 +38,7 @@ export function MediaPreviewCard({ metadata }: { metadata: MediaMetadata }) {
             src={src}
             alt=""
             draggable={false}
-            className={cn('no-drag size-full', isPhoto ? 'object-contain' : 'object-cover')}
+            className={cn('no-drag size-full', isPhoto || isCover ? 'object-contain' : 'object-cover')}
             // Decorative: the title beneath carries the meaning.
             aria-hidden="true"
           />
@@ -61,11 +65,19 @@ export function MediaPreviewCard({ metadata }: { metadata: MediaMetadata }) {
           )
         )}
 
-        {metadata.entryCount != null && metadata.entryCount > 1 && (
+        {songs > 0 ? (
           <span className={cn(CHIP, 'left-2.5 top-2.5')}>
-            <Images size={12} />
-            {t('preview.entries', { n: metadata.entryCount })}
+            <Music size={12} />
+            {t('preview.songs', { n: songs })}
           </span>
+        ) : (
+          metadata.entryCount != null &&
+          metadata.entryCount > 1 && (
+            <span className={cn(CHIP, 'left-2.5 top-2.5')}>
+              <Images size={12} />
+              {t('preview.entries', { n: metadata.entryCount })}
+            </span>
+          )
         )}
       </div>
 

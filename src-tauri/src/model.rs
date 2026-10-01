@@ -20,6 +20,7 @@ pub enum PlatformId {
     Vimeo,
     Dailymotion,
     Soundcloud,
+    Spotify,
     Direct,
     Generic,
     Unknown,
@@ -39,6 +40,7 @@ impl PlatformId {
             Self::Vimeo => "Vimeo",
             Self::Dailymotion => "Dailymotion",
             Self::Soundcloud => "SoundCloud",
+            Self::Spotify => "Spotify",
             Self::Direct => "Direct file",
             Self::Generic => "Web page",
             Self::Unknown => "Unknown",
@@ -59,6 +61,7 @@ impl PlatformId {
             Self::Vimeo => "vimeo",
             Self::Dailymotion => "dailymotion",
             Self::Soundcloud => "soundcloud",
+            Self::Spotify => "spotify",
             Self::Direct => "direct",
             Self::Generic => "web",
             Self::Unknown => "media",
@@ -118,6 +121,14 @@ pub struct MediaFormat {
     pub quality_label: String,
     pub watermarked: Option<bool>,
     pub note: Option<String>,
+    /// The language its sound is spoken in, when the source says: one video
+    /// can carry its original track and several dubs.
+    #[serde(default)]
+    pub language: Option<String>,
+    /// How the source ranks that language among the others. The original
+    /// ranks highest.
+    #[serde(default)]
+    pub language_preference: Option<i64>,
     /// Segmented protocols (HLS/DASH) cannot be fetched with a plain ranged
     /// GET, so they are handed back to the external engine.
     pub needs_engine_download: bool,
@@ -181,6 +192,63 @@ pub struct MediaMetadata {
     /// UI, for the same reason stream addresses are not.
     #[serde(skip)]
     pub entries: Vec<MediaMetadata>,
+    /// The songs of an album or playlist, for the interface to list and pick
+    /// from. Empty for everything else.
+    #[serde(default)]
+    pub tracks: Vec<TrackSummary>,
+    /// What a song is, from the service it was shared from. Written into the
+    /// finished file as its tags.
+    #[serde(skip)]
+    pub music: Option<MusicTags>,
+}
+
+impl MediaMetadata {
+    /// The page the streams were read from, which is what the engine is
+    /// pointed at when it does the downloading. For a song shared from a music
+    /// service that is where its recording was found, not the link itself.
+    pub fn stream_page(&self) -> &str {
+        self.music
+            .as_ref()
+            .and_then(|music| music.stream_page.as_deref())
+            .unwrap_or(&self.canonical_url)
+    }
+}
+
+/// One song of an album or playlist, as the interface lists it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TrackSummary {
+    /// 1-based, the same position a download request names it by.
+    pub position: u32,
+    pub title: String,
+    pub artists: String,
+    pub duration_sec: Option<f64>,
+}
+
+/// A song as the music service describes it.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct MusicTags {
+    pub title: String,
+    pub artists: Vec<String>,
+    pub album: Option<String>,
+    pub album_artist: Option<String>,
+    pub track_number: Option<u32>,
+    /// `YYYY` or `YYYY-MM-DD`, as the service gives it.
+    pub release_date: Option<String>,
+    pub duration_sec: Option<f64>,
+    pub cover_url: Option<String>,
+    /// The song's own page on the service.
+    pub page_url: String,
+    /// The album or playlist it was queued from, which names its folder.
+    pub collection: Option<String>,
+    /// Where its recording was found. `None` until it has been looked for.
+    pub stream_page: Option<String>,
+}
+
+impl MusicTags {
+    pub fn artist_line(&self) -> String {
+        self.artists.join(", ")
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -229,6 +297,10 @@ pub struct DownloadRequest {
     /// link as a whole, which for a gallery is its first item.
     #[serde(default)]
     pub entry: Option<u32>,
+    /// The language of the sound track to take, where there are several.
+    /// `None` takes the original.
+    #[serde(default)]
+    pub audio_language: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

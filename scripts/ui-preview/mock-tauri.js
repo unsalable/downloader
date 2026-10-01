@@ -336,6 +336,98 @@
     // add "#whole" to a link to see the source that cannot hand over a range.
     rangeFetchable: !url.includes('#whole'),
     warnings: [],
+    tracks: [],
+  });
+
+  // An album shared from Spotify: listed, with every song picked, and planned
+  // as the M4A the recordings arrive in.
+  const ALBUM_SONGS = [
+    ['Gece Yarısı', 'Deniz Kaya', 214],
+    ['Kıyı', 'Deniz Kaya, Ada Yılmaz', 187],
+    ['Uzak Şehir', 'Deniz Kaya', 243],
+    ['Sessiz Sokak', 'Deniz Kaya', 199],
+    ['Mavi', 'Deniz Kaya, Mert Aksoy', 226],
+    ['Son Tren', 'Deniz Kaya', 258],
+    ['Rüzgâr', 'Deniz Kaya', 176],
+    ['Eve Dönüş', 'Deniz Kaya', 301],
+  ];
+  // An episode on a licensor's channel: 1080p, the original Japanese track
+  // and two dubs, the way YouTube ranks them.
+  const dub = (id, language, languagePreference, abr) => ({
+    ...format(id, 0, 20_000_000),
+    kind: 'audio',
+    container: 'm4a',
+    hasVideo: false,
+    width: null,
+    height: null,
+    fps: null,
+    vcodec: null,
+    tbr: null,
+    vbr: null,
+    abr,
+    qualityLabel: `${Math.round(abr)} kbps`,
+    language,
+    languagePreference,
+  });
+  const animeEpisode = (url) => ({
+    ...metadataFor(url),
+    title: 'Yıldız Kıyısı Episode 1 SUB/DUB | İlk Işık',
+    creator: 'Crunchyroll',
+    durationSec: 1431,
+    viewCount: 2_431_880,
+    likeCount: 61_200,
+    formats: [
+      { ...format('137', 1080, 180_000_000), hasAudio: false, kind: 'video', acodec: null },
+      dub('140-0', 'en', -1, 129.5),
+      dub('140-1', 'de', -1, 129.5),
+      dub('140-2', 'ja', 10, 129.5),
+    ],
+  });
+
+  const ANIME_RESULTS = [
+    ['Yıldız Kıyısı Episode 1 SUB/DUB | İlk Işık', 'Crunchyroll', 1431],
+    ['Yıldız Kıyısı Episode 2 SUB/DUB | Sessiz Liman', 'Crunchyroll', 1430],
+    ['Yıldız Kıyısı Episode 3 SUB/DUB | Rüzgârın Yönü', 'Crunchyroll', 1432],
+    ["Yıldız Kıyısı: Season 1 Complete (12 Episodes) | MULTI-SUB", "It's Anime powered by REMOW", 16992],
+  ];
+
+  const spotifyAlbum = (url) => ({
+    ...metadataFor(url),
+    platform: 'spotify',
+    platformLabel: 'Spotify',
+    providerId: 'spotify',
+    mediaKind: 'gallery',
+    title: 'Uzak Şehir',
+    creator: 'Deniz Kaya',
+    thumbnailUrl: 'thumb:7',
+    durationSec: null,
+    viewCount: null,
+    likeCount: null,
+    uploadDate: null,
+    rangeFetchable: false,
+    entryCount: ALBUM_SONGS.length,
+    formats: [
+      {
+        ...format('spotify-pending', 0, null),
+        kind: 'audio',
+        container: 'm4a',
+        hasVideo: false,
+        width: null,
+        height: null,
+        fps: null,
+        vcodec: null,
+        tbr: null,
+        vbr: null,
+        abr: null,
+        qualityLabel: 'AAC',
+      },
+    ],
+    tracks: ALBUM_SONGS.map(([title, artists, durationSec], index) => ({
+      position: index + 1,
+      title,
+      artists,
+      durationSec,
+    })),
   });
 
   function detect(url) {
@@ -352,6 +444,7 @@
       ['vimeo', 'vimeo'],
       ['dailymotion', 'dailymotion'],
       ['soundcloud', 'soundcloud'],
+      ['spotify', 'spotify'],
     ];
     const match = hosts.find(([needle]) => url.includes(needle));
     if (match) return match[1];
@@ -579,13 +672,49 @@
           retryable: true,
         };
       }
+      if (url.includes('netflix')) {
+        throw {
+          code: 'protected',
+          title: "This service can't be downloaded from",
+          message: 'It encrypts what it streams, so there is nothing a downloader can save.',
+          technical: 'protected by the service: Netflix',
+          retryable: false,
+        };
+      }
+      if (url.includes('open.spotify.com/')) return spotifyAlbum(url);
+      if (url.includes('watch?v=anime')) return animeEpisode(url);
       return metadataFor(url);
+    },
+    search_anime: async ({ query }) => {
+      await wait(700);
+      if (query.includes('yok')) return [];
+      return ANIME_RESULTS.map(([title, channel, durationSec], index) => ({
+        url: `https://www.youtube.com/watch?v=anime${index + 1}`,
+        title,
+        channel,
+        durationSec,
+        thumbnailUrl: `thumb:${20 + index}`,
+      }));
     },
     get_thumbnail: ({ url }) => {
       if (!url.startsWith('thumb:')) throw new Error('no thumbnail');
       return thumbnail(url);
     },
-    summarize_plan: () => ({
+    summarize_plan: ({ metadata }) =>
+      metadata.platform === 'spotify'
+        ? {
+            label: 'AAC - M4A',
+            qualityLabel: 'AAC',
+            container: 'm4a',
+            needsMerge: false,
+            needsFfmpeg: false,
+            estimatedBytes: null,
+            videoFormatId: null,
+            audioFormatId: 'spotify-pending',
+            stageCount: 1,
+          }
+        : commands.summarize_video_plan(),
+    summarize_video_plan: () => ({
       label: '1080p - MP4',
       qualityLabel: '1080p',
       container: 'mp4',
@@ -608,7 +737,15 @@
       changed();
       return added;
     },
-    enqueue_gallery: (args) => [commands.enqueue_download(args)],
+    enqueue_gallery: ({ request: asked, entries }) => {
+      if (!entries) return [commands.enqueue_download({ request: asked })];
+      return entries.map((position) => {
+        const song = ALBUM_SONGS[position - 1];
+        return commands.enqueue_download({
+          request: { ...asked, title: song ? song[0] : asked.title, entry: position },
+        });
+      });
+    },
     pause_download: ({ id }) => patch(id, { status: 'paused' }),
     resume_download: ({ id }) => patch(id, { status: 'downloading' }),
     cancel_download: ({ id }) => patch(id, { status: 'canceled' }),

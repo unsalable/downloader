@@ -34,7 +34,52 @@ const HOSTS: &[(&str, PlatformId)] = &[
     ("dai.ly", PlatformId::Dailymotion),
     ("soundcloud.com", PlatformId::Soundcloud),
     ("snd.sc", PlatformId::Soundcloud),
+    ("spotify.com", PlatformId::Spotify),
 ];
+
+/// Services that encrypt what they stream. The app cannot download from them
+/// and does not try: saying so at once beats a long wait for a vague refusal.
+/// Named by the host suffix, with the name the user knows them by.
+const PROTECTED: &[(&str, &str)] = &[
+    ("netflix.com", "Netflix"),
+    ("disneyplus.com", "Disney+"),
+    ("primevideo.com", "Prime Video"),
+    ("max.com", "Max"),
+    ("hbomax.com", "HBO Max"),
+    ("hulu.com", "Hulu"),
+    ("paramountplus.com", "Paramount+"),
+    ("peacocktv.com", "Peacock"),
+    ("tv.apple.com", "Apple TV+"),
+    ("music.apple.com", "Apple Music"),
+    ("crunchyroll.com", "Crunchyroll"),
+    ("blutv.com", "BluTV"),
+    ("exxen.com", "Exxen"),
+    ("gain.tv", "Gain"),
+    ("tod.tv", "TOD"),
+    ("tvplus.com.tr", "TV+"),
+    ("deezer.com", "Deezer"),
+    ("tidal.com", "TIDAL"),
+];
+
+/// The protected service a link belongs to, if it belongs to one.
+///
+/// A song on Spotify is not on this list: its recording is found elsewhere,
+/// and only the description is read from Spotify.
+pub fn protected_service(raw: &str) -> Option<&'static str> {
+    let info = classify(raw)?;
+    let host = info.host.as_str();
+    let on = |suffix: &str| host == suffix || host.ends_with(&format!(".{suffix}"));
+
+    // Amazon's videos live under its shop's many country domains.
+    if host.split('.').any(|label| label == "amazon") && info.path.starts_with("/gp/video") {
+        return Some("Prime Video");
+    }
+
+    PROTECTED
+        .iter()
+        .find(|(suffix, _)| on(suffix))
+        .map(|(_, name)| *name)
+}
 
 /// Pinterest and a few others use per-country domains; matching the leading
 /// label covers `pinterest.co.uk`, `pinterest.com.au` and friends.
@@ -166,6 +211,22 @@ pub fn detect_platform(raw: &str) -> PlatformId {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn protected_services_are_named_and_nothing_else_is() {
+        assert_eq!(protected_service("https://www.netflix.com/watch/80100172"), Some("Netflix"));
+        assert_eq!(protected_service("https://www.disneyplus.com/video/abc"), Some("Disney+"));
+        assert_eq!(protected_service("https://www.amazon.com.tr/gp/video/detail/B0B"), Some("Prime Video"));
+        assert_eq!(protected_service("https://www.crunchyroll.com/watch/GR3VWXP96/"), Some("Crunchyroll"));
+        assert_eq!(protected_service("https://www.blutv.com/izle/abc"), Some("BluTV"));
+
+        assert_eq!(protected_service("https://www.amazon.com/dp/B000"), None, "a shop page is not a film");
+        assert_eq!(protected_service("https://open.spotify.com/track/0VjIjW4GlUZAMYd2vXMi3b"), None);
+        assert_eq!(protected_service("https://www.youtube.com/watch?v=abc"), None);
+        assert_eq!(protected_service("https://notnetflix.com/x"), None);
+        assert_eq!(protected_service("https://maxcdn.example.com/x"), None);
+        assert_eq!(detect_platform("https://open.spotify.com/track/abc"), PlatformId::Spotify);
+    }
 
     #[test]
     fn recognises_each_supported_host() {

@@ -286,7 +286,7 @@ impl RangeFetchManager {
 
         let outcome = engine_dl::run(
             EngineDownload {
-                url: &job.metadata.canonical_url,
+                url: job.metadata.stream_page(),
                 format_selector: &selector,
                 target: &staged,
                 merge_container: job
@@ -606,6 +606,8 @@ mod tests {
             watermarked: None,
             note: None,
             needs_engine_download: false,
+            language: None,
+            language_preference: None,
             url: Some("https://cdn.test/v".into()),
             http_headers: Vec::new(),
         }
@@ -634,6 +636,8 @@ mod tests {
             range_fetchable: true,
             warnings: Vec::new(),
             entries: Vec::new(),
+            tracks: Vec::new(),
+            music: None,
         }
     }
 

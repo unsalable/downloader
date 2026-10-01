@@ -23,6 +23,8 @@ export interface DownloadOptions {
   audioFormatId: string | null;
   outputDir: string | null;
   advanced: boolean;
+  /** The sound track's language, where there are several. Null: the original. */
+  audioLanguage: string | null;
 }
 
 interface AnalysisState {
@@ -54,6 +56,7 @@ const DEFAULT_OPTIONS: DownloadOptions = {
   audioFormatId: null,
   outputDir: null,
   advanced: false,
+  audioLanguage: null,
 };
 
 /**

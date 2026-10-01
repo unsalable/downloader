@@ -17,6 +17,8 @@ export const tr: Record<TranslationKey, string> = {
   'hero.subtitle': 'Hemen her siteden video, ses ve görsel.',
 
   'input.placeholder': 'Bir video, görsel veya medya bağlantısı yapıştır…',
+  'input.placeholderSearch': 'Bağlantı yapıştır ya da anime ara…',
+  'input.search': 'Ara',
   'input.paste': 'Yapıştır',
   'input.clear': 'Temizle',
   'input.analyze': 'Analiz et',
@@ -34,6 +36,7 @@ export const tr: Record<TranslationKey, string> = {
 
   'preview.live': 'Canlı',
   'preview.entries': '{n} öğe',
+  'preview.songs': '{n} şarkı',
   'preview.startOver': 'Yeni bağlantı',
   'preview.warningGeneric':
     'Bu site tanınmadı; gösterilen, sayfanın kendi öne çıkardığı medya. Aradığın bu olmayabilir.',
@@ -51,6 +54,9 @@ export const tr: Record<TranslationKey, string> = {
   'options.qualityAuto': 'Otomatik',
   'options.qualityBestHint': 'Mevcut en yüksek video ve ses, birleştirilmiş',
   'options.audioBest': 'En iyi ses',
+  'options.audioLanguage': 'Ses dili',
+  'options.audioOriginal': 'Orijinal',
+  'options.audioOriginalNamed': '{name} (orijinal)',
   'options.watermarkAny': 'Kaynaktaki gibi',
   'options.watermarkClean': 'Filigransız',
   'options.watermarkUnavailable': 'Filigransız sürüm kullanılamıyor.',
@@ -62,6 +68,16 @@ export const tr: Record<TranslationKey, string> = {
 
   'action.download': 'İndir',
   'action.downloadAll': 'Tümünü indir ({n})',
+  'action.downloadCount': 'İndir ({n})',
+
+  'anime.title': 'Resmî kanallarda',
+  'anime.searching': 'Aranıyor…',
+  'anime.empty':
+    'Lisanslı kanallarda tam bölüm bulunamadı. Serinin İngilizce adıyla dene.',
+
+  'tracks.title': 'Şarkılar',
+  'tracks.selectAll': 'Tümünü seç',
+  'tracks.selectNone': 'Seçimi kaldır',
   'action.preparing': 'Hazırlanıyor…',
 
   'downloads.title': 'İndirmeler',
@@ -532,6 +548,11 @@ export const tr: Record<TranslationKey, string> = {
     "YouTube bu videoyu yalnızca kanalın üyeliğine sahip bir hesaba veriyor. Ayarlar'dan tarayıcını bağla; Universal Downloader bu bağlantıyı bir dahaki denemende o oturumu kullanarak açsın.",
   'error.notFound.title': 'Bu medya artık mevcut değil',
   'error.notFound.message': 'Gönderi silinmiş veya gizli yapılmış olabilir.',
+  'error.noMatch.title': 'Bu şarkı bulunamadı',
+  'error.noMatch.message': "YouTube'da bu şarkının bir kaydı çıkmadı.",
+  'error.protected.title': 'Bu servisten indirme yapılamaz',
+  'error.protected.message':
+    'Yayınladığı her şeyi şifreliyor, bu yüzden hiçbir indirici kaydedemez.',
   'error.rangeUnavailable.title': 'Bu kaynak videoyu sadece bütün olarak veriyor',
   'error.rangeUnavailable.message':
     'Videonun bir parçasını indirmek ayrı bir adım gerektiriyor ve bu kaynak ona yanıt vermiyor. Tamamını indirip kesimi burada yap.',

@@ -1,5 +1,5 @@
 import type { DropdownOption } from '@/components/ui/Dropdown';
-import { translate } from '@/i18n';
+import { getLanguage, translate } from '@/i18n';
 import { formatBitrate, formatBytes, prettyCodec } from '@/lib/format';
 import type { DownloadMode, MediaFormat, MediaMetadata, QualityPreference } from '@/types';
 
@@ -126,6 +126,51 @@ export function containerOptions(
       disabledReason: !ffmpegAvailable ? translate('error.ffmpegMissing.message') : undefined,
     })),
   ];
+}
+
+/**
+ * The languages a video's sound comes in, when it comes in more than one: the
+ * original first, as the empty value that means "the original", then the
+ * dubs by name.
+ */
+export function audioLanguageOptions(metadata: MediaMetadata): DropdownOption<string>[] {
+  const tracks = metadata.formats.filter((format) => format.kind === 'audio' && format.language);
+  const codes = [...new Set(tracks.map((format) => format.language!))];
+  if (codes.length < 2) return [];
+
+  const top = Math.max(...tracks.map((format) => format.languagePreference ?? -Infinity));
+  const original =
+    Number.isFinite(top) && tracks.filter((format) => format.languagePreference === top).length < tracks.length
+      ? tracks.find((format) => format.languagePreference === top)?.language
+      : undefined;
+
+  const names = displayNames();
+  const name = (code: string) => {
+    const shown = names?.of(code) ?? code;
+    return shown.charAt(0).toLocaleUpperCase(getLanguage()) + shown.slice(1);
+  };
+
+  const options: DropdownOption<string>[] = [
+    {
+      value: '',
+      label: original
+        ? translate('options.audioOriginalNamed', { name: name(original) })
+        : translate('options.audioOriginal'),
+    },
+  ];
+  for (const code of codes.sort((a, b) => name(a).localeCompare(name(b), getLanguage()))) {
+    if (code === original) continue;
+    options.push({ value: code, label: name(code) });
+  }
+  return options;
+}
+
+function displayNames(): Intl.DisplayNames | null {
+  try {
+    return new Intl.DisplayNames([getLanguage()], { type: 'language' });
+  } catch {
+    return null;
+  }
 }
 
 /** "H.264 · 30 fps · 4.2 Mbps" for the advanced stream pickers. */

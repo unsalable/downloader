@@ -80,6 +80,84 @@ impl EngineProvider {
     }
 }
 
+/// One result of a search the engine ran, as its flat listing gives it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SearchHit {
+    pub id: String,
+    pub url: String,
+    pub title: String,
+    pub duration_sec: Option<f64>,
+    pub channel: Option<String>,
+    pub channel_id: Option<String>,
+    pub view_count: Option<u64>,
+    pub thumbnail_url: Option<String>,
+}
+
+/// Run a search the engine understands -- `ytsearch10:words`, or the address
+/// of a results page -- and list what it found, without reading any of it.
+pub async fn search(query: &str, limit: u32, settings: &Settings) -> AppResult<Vec<SearchHit>> {
+    let engine = tools::require_engine()?;
+    let mut args = base_args(settings);
+    args.extend([
+        "--flat-playlist".to_string(),
+        "--playlist-items".to_string(),
+        format!("1:{}", limit.max(1)),
+        "-J".to_string(),
+    ]);
+    let output = run_engine(&engine, &args, query, None).await?;
+    if !output.success() {
+        return Err(classify_engine_error(&output.stderr));
+    }
+    let root: Value = serde_json::from_str(output.stdout.trim())
+        .map_err(|err| AppError::Parse(format!("the engine returned unreadable JSON: {err}")))?;
+    Ok(search_hits(&root))
+}
+
+fn search_hits(root: &Value) -> Vec<SearchHit> {
+    root.get("entries")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|entry| {
+            let id = entry.get("id").and_then(Value::as_str)?.to_string();
+            let url = entry
+                .get("url")
+                .and_then(Value::as_str)
+                .filter(|url| url.starts_with("http"))
+                .map(str::to_string)
+                .unwrap_or_else(|| format!("https://www.youtube.com/watch?v={id}"));
+            let text = |key: &str| {
+                entry
+                    .get(key)
+                    .and_then(Value::as_str)
+                    .filter(|value| !value.trim().is_empty())
+                    .map(str::to_string)
+            };
+            let thumbnail_url = entry
+                .get("thumbnails")
+                .and_then(Value::as_array)
+                .and_then(|list| {
+                    list.iter()
+                        .filter(|item| item.get("url").and_then(Value::as_str).is_some_and(|url| url.starts_with("http")))
+                        .max_by_key(|item| item.get("width").and_then(Value::as_u64).unwrap_or(0))
+                })
+                .and_then(|item| item.get("url").and_then(Value::as_str))
+                .map(str::to_string)
+                .or_else(|| text("thumbnail"));
+            Some(SearchHit {
+                title: text("title")?,
+                channel: text("channel").or_else(|| text("uploader")),
+                channel_id: text("channel_id"),
+                duration_sec: entry.get("duration").and_then(Value::as_f64),
+                view_count: entry.get("view_count").and_then(Value::as_u64),
+                thumbnail_url,
+                id,
+                url,
+            })
+        })
+        .collect()
+}
+
 /// What a finished engine run means: the media it described, or the reason
 /// there is none.
 ///
@@ -596,6 +674,8 @@ pub fn parse_metadata(node: &Value, requested_url: &str) -> AppResult<MediaMetad
         watermark_support,
         warnings,
         entries: Vec::new(),
+        tracks: Vec::new(),
+        music: None,
     })
 }
 
@@ -761,6 +841,37 @@ fn string_pairs(value: Option<&Value>) -> Vec<(String, String)> {
         .unwrap_or_default()
 }
 
+/// What a format says about one of its two tracks.
+///
+/// yt-dlp writes the literal string "none" for a track a format does not
+/// carry, and leaves the field out when the extractor could not tell. Those
+/// are different answers. Reading the second as the first is what made every
+/// X video arrive silent: X's progressive MP4s carry their sound but name no
+/// codec, and its HLS sound rendition names no audio codec either, so the
+/// files read as picture only and the sound as nothing at all.
+enum Track {
+    Named(String),
+    Absent,
+    Unknown,
+}
+
+impl Track {
+    fn read(value: Option<&Value>) -> Self {
+        match value.and_then(Value::as_str).map(str::trim) {
+            Some("none") => Self::Absent,
+            Some(codec) if !codec.is_empty() => Self::Named(codec.to_string()),
+            _ => Self::Unknown,
+        }
+    }
+
+    fn name(self) -> Option<String> {
+        match self {
+            Self::Named(codec) => Some(codec),
+            _ => None,
+        }
+    }
+}
+
 fn parse_format(node: &Value) -> Option<MediaFormat> {
     let url = node.get("url").and_then(Value::as_str)?.to_string();
     if url.is_empty() {
@@ -779,17 +890,8 @@ fn parse_format(node: &Value) -> Option<MediaFormat> {
         .unwrap_or("https")
         .to_string();
 
-    // yt-dlp uses the literal string "none" rather than null for an absent codec.
-    let vcodec = node
-        .get("vcodec")
-        .and_then(Value::as_str)
-        .filter(|value| *value != "none" && !value.is_empty())
-        .map(str::to_string);
-    let acodec = node
-        .get("acodec")
-        .and_then(Value::as_str)
-        .filter(|value| *value != "none" && !value.is_empty())
-        .map(str::to_string);
+    let video_track = Track::read(node.get("vcodec"));
+    let audio_track = Track::read(node.get("acodec"));
 
     let width = node.get("width").and_then(Value::as_u64).map(|v| v as u32);
     let height = node.get("height").and_then(Value::as_u64).map(|v| v as u32);
@@ -799,9 +901,25 @@ fn parse_format(node: &Value) -> Option<MediaFormat> {
         .unwrap_or("bin")
         .to_string();
 
-    let has_video = vcodec.is_some() || (height.is_some() && detect::is_video_extension(&container));
-    let has_audio = acodec.is_some();
+    let has_video = match &video_track {
+        Track::Named(_) => true,
+        Track::Absent => false,
+        Track::Unknown => height.is_some() && detect::is_video_extension(&container),
+    };
+    // An unnamed sound track is read the way yt-dlp reads it: present unless
+    // the format says otherwise. A stream that states it has no picture is its
+    // sound, and an unlabelled progressive video file carries its own.
+    let has_audio = match &audio_track {
+        Track::Named(_) => true,
+        Track::Absent => false,
+        Track::Unknown => match video_track {
+            Track::Absent => !detect::is_image_extension(&container),
+            _ => has_video,
+        },
+    };
     let is_image = !has_video && !has_audio && detect::is_image_extension(&container);
+    let vcodec = video_track.name();
+    let acodec = audio_track.name();
 
     let kind = if is_image {
         FormatKind::Image
@@ -836,6 +954,13 @@ fn parse_format(node: &Value) -> Option<MediaFormat> {
         // fetch a manifest's worth of segments.
         needs_engine_download: is_segmented(&protocol),
         protocol,
+        language: node
+            .get("language")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|language| !language.is_empty() && *language != "und")
+            .map(str::to_string),
+        language_preference: node.get("language_preference").and_then(Value::as_i64),
         has_video,
         has_audio,
         width,
@@ -1326,6 +1451,87 @@ mod tests {
         let format = parse_format(&node).unwrap();
         assert_eq!(format.kind, FormatKind::Audio);
         assert_eq!(format.quality_label, "192 kbps");
+    }
+
+    /// An X video as the engine lists it (2026.08.19): progressive MP4s that
+    /// name neither codec, HLS picture renditions that say they have no sound,
+    /// and HLS sound renditions that say they have no picture and nothing more.
+    fn x_video() -> Value {
+        let hls = |id: &str, codec: &str, width: u32, height: u32, tbr: f64| {
+            serde_json::json!({
+                "format_id": id, "url": format!("https://video.twimg.test/{id}.m3u8"),
+                "protocol": "m3u8_native", "ext": "mp4",
+                "vcodec": codec, "acodec": "none", "width": width, "height": height, "tbr": tbr,
+            })
+        };
+        let http = |tbr: u32, width: u32, height: u32| {
+            serde_json::json!({
+                "format_id": format!("http-{tbr}"), "url": format!("https://video.twimg.test/{tbr}.mp4"),
+                "protocol": "https", "ext": "mp4", "width": width, "height": height, "tbr": tbr,
+            })
+        };
+        serde_json::json!({
+            "id": "910031516746514432",
+            "title": "A post",
+            "duration": 47.48,
+            "formats": [
+                { "format_id": "hls-audio-128000-Audio", "url": "https://video.twimg.test/a.m3u8",
+                  "protocol": "m3u8_native", "ext": "mp4", "vcodec": "none", "tbr": 128 },
+                http(832, 640, 360),
+                hls("hls-473", "avc1.42C01E", 640, 360, 473.6),
+                http(2176, 1280, 720),
+                hls("hls-1296", "avc1.4D401F", 1280, 720, 1296.3),
+            ],
+        })
+    }
+
+    #[test]
+    fn an_x_video_keeps_its_sound() {
+        let meta = parse_metadata(&x_video(), "https://x.com/a/status/910031516746514432").unwrap();
+        let kind = |id: &str| meta.formats.iter().find(|format| format.id == id).map(|format| format.kind);
+
+        assert_eq!(kind("http-2176"), Some(FormatKind::Muxed));
+        assert_eq!(kind("hls-1296"), Some(FormatKind::Video));
+        assert_eq!(kind("hls-audio-128000-Audio"), Some(FormatKind::Audio));
+
+        for quality in [
+            crate::model::QualityPreference::Auto,
+            crate::model::QualityPreference::Best,
+        ] {
+            let plan = crate::downloader::plan::build(
+                &meta,
+                crate::model::DownloadMode::Video,
+                quality,
+                None,
+                None,
+                None,
+                crate::model::WatermarkPreference::Any,
+            )
+            .unwrap();
+            let video = plan.video.as_ref().unwrap();
+            assert!(
+                video.has_audio || plan.audio.is_some(),
+                "{quality:?} chose {} with no sound",
+                video.id
+            );
+            assert_eq!(video.height, Some(720));
+        }
+    }
+
+    #[test]
+    fn a_track_the_engine_could_not_name_is_not_a_track_it_denied() {
+        // Only the audio stream of a direct link: the engine states there is
+        // no picture and cannot tell the codec.
+        let audio = serde_json::json!({ "format_id": "mp3", "url": "https://cdn.test/a.mp3", "ext": "mp3", "vcodec": "none" });
+        assert_eq!(parse_format(&audio).unwrap().kind, FormatKind::Audio);
+
+        // Stated absences still hold, and a picture stays a picture.
+        let silent = serde_json::json!({ "format_id": "v", "url": "https://cdn.test/v.mp4", "ext": "mp4", "height": 720, "acodec": "none" });
+        assert_eq!(parse_format(&silent).unwrap().kind, FormatKind::Video);
+        let picture = serde_json::json!({ "format_id": "p", "url": "https://cdn.test/p.jpg", "ext": "jpg", "vcodec": "none" });
+        assert_eq!(parse_format(&picture).unwrap().kind, FormatKind::Image);
+        let storyboard = serde_json::json!({ "format_id": "sb0", "url": "https://cdn.test/sb", "ext": "mhtml", "vcodec": "none", "acodec": "none" });
+        assert!(parse_format(&storyboard).is_none());
     }
 
     #[test]

@@ -130,6 +130,8 @@ impl DirectProvider {
             watermarked: None,
             note: (!resumable).then(|| "no-resume".to_string()),
             needs_engine_download: false,
+            language: None,
+            language_preference: None,
             url: Some(url.to_string()),
             http_headers: Vec::new(),
         };
@@ -159,6 +161,8 @@ impl DirectProvider {
             watermark_support: WatermarkSupport::NotApplicable,
             warnings: Vec::new(),
             entries: Vec::new(),
+            tracks: Vec::new(),
+            music: None,
         })
     }
 }

@@ -364,6 +364,8 @@ fn soundtrack(url: &str) -> MediaFormat {
         watermarked: None,
         note: None,
         needs_engine_download: false,
+        language: None,
+        language_preference: None,
         url: Some(url.to_string()),
         http_headers: vec![("Referer".to_string(), "https://www.tiktok.com/".to_string())],
     }

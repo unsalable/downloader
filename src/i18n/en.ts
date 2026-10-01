@@ -20,6 +20,8 @@ export const en = {
   'hero.subtitle': 'Video, audio and images from almost any site.',
 
   'input.placeholder': 'Paste a video, image or media link…',
+  'input.placeholderSearch': 'Paste a link or search for an anime…',
+  'input.search': 'Search',
   'input.paste': 'Paste',
   'input.clear': 'Clear',
   'input.analyze': 'Analyze',
@@ -37,6 +39,7 @@ export const en = {
 
   'preview.live': 'Live',
   'preview.entries': '{n} items',
+  'preview.songs': '{n} songs',
   'preview.startOver': 'New link',
   'preview.warningGeneric':
     'No provider recognised this site, so this is the media the page itself advertises. It may not be the item you meant.',
@@ -54,6 +57,9 @@ export const en = {
   'options.qualityAuto': 'Auto',
   'options.qualityBestHint': 'Highest available video and audio, merged',
   'options.audioBest': 'Best audio',
+  'options.audioLanguage': 'Audio language',
+  'options.audioOriginal': 'Original',
+  'options.audioOriginalNamed': '{name} (original)',
   'options.watermarkAny': 'As provided',
   'options.watermarkClean': 'Without watermark',
   'options.watermarkUnavailable': 'A watermark-free version is not available.',
@@ -65,6 +71,16 @@ export const en = {
 
   'action.download': 'Download',
   'action.downloadAll': 'Download all ({n})',
+  'action.downloadCount': 'Download ({n})',
+
+  'anime.title': 'On official channels',
+  'anime.searching': 'Searching…',
+  'anime.empty':
+    'No full episodes on the channels that license anime. Try the series’ English name.',
+
+  'tracks.title': 'Songs',
+  'tracks.selectAll': 'Select all',
+  'tracks.selectNone': 'Deselect all',
   'action.preparing': 'Preparing…',
 
   'downloads.title': 'Downloads',
@@ -537,6 +553,11 @@ export const en = {
     "YouTube only serves it to an account that holds the channel's membership. Connect your browser in Settings and Universal Downloader will offer that sign-in the next time you try this link.",
   'error.notFound.title': 'This media no longer exists',
   'error.notFound.message': 'The post may have been deleted or made private.',
+  'error.noMatch.title': "This song couldn't be found",
+  'error.noMatch.message': 'No recording of it turned up on YouTube.',
+  'error.protected.title': "This service can't be downloaded from",
+  'error.protected.message':
+    'It encrypts what it streams, so there is nothing a downloader can save.',
   'error.rangeUnavailable.title': 'This source only hands over the whole video',
   'error.rangeUnavailable.message':
     'Fetching part of a video is a separate step that this source will not answer. Fetch all of it and cut it here instead.',

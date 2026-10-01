@@ -312,3 +312,140 @@ async fn reads_platform_metadata_through_the_engine() {
     assert!(audio.audio.is_some());
     assert!(audio.video.is_none());
 }
+
+/// A song shared from Spotify: its description read from Spotify, its
+/// recording found on YouTube, and the file named and tagged as the song.
+#[tokio::test]
+#[ignore = "contacts Spotify and YouTube and downloads a song"]
+async fn downloads_a_spotify_song_as_that_song() {
+    use universal_downloader_lib::downloader;
+    use universal_downloader_lib::model::{DownloadRequest, PlatformId};
+
+    let settings = settings();
+    ensure_engine(&settings).await;
+
+    let url = "https://open.spotify.com/track/0VjIjW4GlUZAMYd2vXMi3b";
+    let song = providers::analyze(url, &settings)
+        .await
+        .expect("the song should be found");
+    assert_eq!(song.platform, PlatformId::Spotify);
+    assert_eq!(song.title, "Blinding Lights");
+    assert_eq!(song.creator.as_deref(), Some("The Weeknd"));
+    let music = song.music.clone().expect("a song carries its tags");
+    assert_eq!(music.album.as_deref(), Some("After Hours"));
+    let found = music.stream_page.clone().expect("a recording was found");
+    eprintln!("matched {found}; formats {:?}", song.formats.iter().map(|f| &f.id).collect::<Vec<_>>());
+    assert!(found.contains("youtube.com/watch?v="));
+    assert!(song.formats.iter().all(|format| format.kind == universal_downloader_lib::model::FormatKind::Audio));
+
+    let album = providers::analyze("https://open.spotify.com/album/4yP0hdKOZPNshxUOjY0cZj", &settings)
+        .await
+        .expect("the album should be listed");
+    assert_eq!(album.title, "After Hours");
+    assert_eq!(album.tracks.len(), 14);
+    eprintln!("album tracks: {:?}", album.tracks.iter().map(|t| &t.title).collect::<Vec<_>>());
+
+    let output = std::env::temp_dir().join(format!("ud-spotify-{}", std::process::id()));
+    std::fs::create_dir_all(&output).unwrap();
+    let request = DownloadRequest {
+        url: album.canonical_url.clone(),
+        mode: DownloadMode::Audio,
+        quality: QualityPreference::Best,
+        video_format_id: None,
+        audio_format_id: None,
+        container: None,
+        watermark: WatermarkPreference::Any,
+        output_dir: Some(output.to_string_lossy().into_owned()),
+        title: None,
+        thumbnail_url: None,
+        platform: None,
+        entry: Some(2),
+        audio_language: None,
+    };
+    providers::remember_analysis(&request.url, &settings, &album);
+    let mut sink = |_progress| {};
+    let outcome = downloader::execute("spotifytest", &request, &settings, Arc::new(TaskControl::new()), &mut sink)
+        .await
+        .expect("the second song of the album should download");
+
+    eprintln!("wrote {}", outcome.output_path.display());
+    assert_eq!(outcome.output_path.parent().unwrap(), output.join("After Hours"));
+    assert_eq!(outcome.output_path.extension().unwrap(), "m4a");
+
+    let ffprobe = tools::ffmpeg_path().unwrap().with_file_name(if cfg!(windows) { "ffprobe.exe" } else { "ffprobe" });
+    let probe = std::process::Command::new(ffprobe)
+        .args(["-v", "error", "-show_entries", "format_tags:stream=codec_type,codec_name:stream_disposition=attached_pic", "-of", "json"])
+        .arg(&outcome.output_path)
+        .output()
+        .unwrap();
+    let report = String::from_utf8_lossy(&probe.stdout);
+    eprintln!("{report}");
+    let report: serde_json::Value = serde_json::from_str(&report).unwrap();
+    let tags = &report["format"]["tags"];
+    assert_eq!(tags["album"], "After Hours");
+    assert_eq!(tags["artist"], "The Weeknd");
+    assert_eq!(tags["track"], "2");
+    assert!(report["streams"].as_array().unwrap().iter().any(|s| s["disposition"]["attached_pic"] == 1), "no cover");
+
+    std::fs::remove_dir_all(&output).unwrap();
+}
+
+/// Anime searched for on the channels that license it, and a dubbed episode
+/// downloaded in its original language.
+#[tokio::test]
+#[ignore = "searches YouTube"]
+async fn finds_an_official_episode_and_keeps_its_japanese_track() {
+    let settings = settings();
+    ensure_engine(&settings).await;
+
+    let episodes = providers::anime::search("dress up darling", &settings)
+        .await
+        .expect("the channels should answer");
+    for episode in &episodes {
+        eprintln!("{} | {} | {:?}", episode.channel, episode.title, episode.duration_sec);
+    }
+    assert!(!episodes.is_empty(), "no episodes found");
+    assert!(episodes.iter().all(|episode| episode.duration_sec.is_some_and(|s| s >= 600.0)));
+
+    let metadata = providers::analyze(&episodes[0].url, &settings)
+        .await
+        .expect("the episode should be readable");
+    let plan = plan::build(
+        &metadata,
+        DownloadMode::Video,
+        QualityPreference::Best,
+        None,
+        None,
+        None,
+        WatermarkPreference::Any,
+    )
+    .unwrap();
+    let audio = plan.audio.expect("a separate sound track");
+    eprintln!("{} + {} ({:?})", plan.video.unwrap().quality_label, audio.id, audio.language);
+    assert_eq!(audio.language.as_deref(), Some("ja"));
+    assert!(providers::anime::episode_of(&metadata).is_some());
+}
+
+/// An X video keeps its sound. X names no codec on its progressive files and
+/// none on its HLS sound track, which once read as a silent picture and as
+/// nothing at all.
+#[tokio::test]
+#[ignore = "contacts X through the engine"]
+async fn an_x_video_downloads_with_its_sound() {
+    let settings = settings();
+    ensure_engine(&settings).await;
+
+    let metadata = providers::analyze("https://x.com/i/web/status/910031516746514432", &settings)
+        .await
+        .expect("the post should be readable");
+    for quality in [QualityPreference::Auto, QualityPreference::Best] {
+        let chosen = plan::build(&metadata, DownloadMode::Video, quality, None, None, None, WatermarkPreference::Any)
+            .unwrap();
+        let video = chosen.video.as_ref().expect("a picture");
+        eprintln!("{quality:?}: {} (sound in it: {}, separate: {:?})", video.id, video.has_audio, chosen.audio.as_ref().map(|a| &a.id));
+        assert!(video.has_audio || chosen.audio.is_some(), "{quality:?} would download no sound");
+    }
+    let sound = plan::build(&metadata, DownloadMode::Audio, QualityPreference::Best, None, None, None, WatermarkPreference::Any)
+        .expect("the sound alone should be offered too");
+    assert!(sound.audio.is_some());
+}

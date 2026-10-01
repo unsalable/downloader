@@ -20,7 +20,8 @@ use std::sync::Arc;
 
 use crate::error::{AppError, AppResult};
 use crate::model::{
-    DownloadProgress, DownloadRequest, DownloadStage, MediaFormat, MediaMetadata, PlatformId,
+    DownloadProgress, DownloadRequest, DownloadStage, MediaFormat, MediaMetadata, MusicTags,
+    PlatformId,
 };
 use crate::settings::Settings;
 use crate::{ffmpeg, filename, log_debug, log_info, paths, providers};
@@ -148,7 +149,11 @@ pub async fn execute(
         }
     };
 
-    let result = match providers::select_entry(metadata, request.entry) {
+    let item = match providers::select_entry(metadata, request.entry) {
+        Ok(item) => providers::prepare(item, settings).await,
+        Err(err) => Err(err),
+    };
+    let result = match item {
         Ok(item) => download_analyzed(task_id, request, settings, control, on_update, &temp_dir, item).await,
         Err(err) => Err(err),
     };
@@ -173,15 +178,7 @@ async fn download_analyzed(
         return Err(AppError::Canceled);
     }
 
-    let plan = plan::build(
-        &metadata,
-        request.mode,
-        request.quality,
-        request.video_format_id.as_deref(),
-        request.audio_format_id.as_deref(),
-        request.container.as_deref(),
-        request.watermark,
-    )?;
+    let plan = plan::for_request(&metadata, request)?;
 
     // A merge is the one step with a hard external dependency. Failing here,
     // before any bytes move, is much better than after a 2 GB download.
@@ -200,7 +197,7 @@ async fn download_analyzed(
     );
     std::fs::create_dir_all(&output_dir)?;
 
-    let final_path = target_path(&output_dir, settings, &metadata, &plan);
+    let final_path = target_path(&output_dir, settings, &metadata, &plan, request.entry.is_some());
     log_debug!(
         "downloader",
         "task {task_id} -> {} (merge={}, engine={})",
@@ -239,6 +236,16 @@ async fn download_analyzed(
             }
             Err(err) => return Err(err),
         }
+    };
+
+    // A song shared from a music service is named and tagged as that song,
+    // not as the upload its sound came from.
+    let produced = match metadata.music.as_ref() {
+        Some(song) if plan.video.is_none() && plan.image.is_none() => {
+            on_update(aggregate.processing(DownloadStage::Finalizing, Some(98.0)));
+            tag_song(task_id, &produced, song, settings, &control, temp_dir).await?
+        }
+        _ => produced,
     };
 
     // Move into place last, so the user's folder never holds a partial file.
@@ -294,7 +301,7 @@ async fn run_natively(
         aggregate.enter(stage, stage_index);
         let path = ffmpeg::intermediate_path(temp_dir, task_id, "v", &format.container);
         let written =
-            fetch_format(&client, format, &metadata.canonical_url, &path, settings, control, aggregate, on_update)
+            fetch_format(&client, format, metadata.stream_page(), &path, settings, control, aggregate, on_update)
                 .await?;
         aggregate.finish_stage(written);
         video_path = Some(path);
@@ -305,7 +312,7 @@ async fn run_natively(
         aggregate.enter(DownloadStage::Audio, stage_index);
         let path = ffmpeg::intermediate_path(temp_dir, task_id, "a", &format.container);
         let written =
-            fetch_format(&client, format, &metadata.canonical_url, &path, settings, control, aggregate, on_update)
+            fetch_format(&client, format, metadata.stream_page(), &path, settings, control, aggregate, on_update)
                 .await?;
         aggregate.finish_stage(written);
         audio_path = Some(path);
@@ -384,7 +391,7 @@ async fn run_via_engine(
 
     engine_dl::run(
         engine_dl::EngineDownload {
-            url: &metadata.canonical_url,
+            url: metadata.stream_page(),
             format_selector: &selector,
             target: &staged,
             merge_container: plan.needs_merge.then_some(plan.container.as_str()),
@@ -489,12 +496,173 @@ async fn fetch_format(
     .await
 }
 
+/// Write a song's tags and cover into the file that was downloaded for it.
+///
+/// Worth doing, not worth failing over: a file whose tags could not be written
+/// still holds the song, so anything short of a cancel keeps it as it is.
+async fn tag_song(
+    task_id: &str,
+    produced: &Path,
+    song: &MusicTags,
+    settings: &Settings,
+    control: &Arc<TaskControl>,
+    temp_dir: &Path,
+) -> AppResult<PathBuf> {
+    if crate::tools::ffmpeg_path().is_none() {
+        return Ok(produced.to_path_buf());
+    }
+    let container = produced
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+
+    let cover = match song.cover_url.as_deref().filter(|_| ffmpeg::holds_cover(&container)) {
+        Some(url) => fetch_cover(url, &temp_dir.join(format!("{task_id}.cover")), settings).await,
+        None => None,
+    };
+
+    let tagged = ffmpeg::intermediate_path(temp_dir, task_id, "t", &container);
+    let args = ffmpeg::tag_args(
+        produced,
+        cover.as_ref().map(|(path, art)| (path.as_path(), *art)),
+        &tagged,
+        &song_tags(song),
+    );
+    let mut quiet = |_: ffmpeg::FfmpegProgress| {};
+    let result = ffmpeg::run_with_progress(&args, None, Arc::clone(control), &mut quiet).await;
+    if let Some((path, _)) = &cover {
+        let _ = std::fs::remove_file(path);
+    }
+
+    match result {
+        Ok(()) => {
+            let _ = std::fs::remove_file(produced);
+            Ok(tagged)
+        }
+        Err(AppError::Canceled) => {
+            let _ = std::fs::remove_file(&tagged);
+            Err(AppError::Canceled)
+        }
+        Err(err) => {
+            log_info!("downloader", "task {task_id}: the song's tags could not be written: {err}");
+            let _ = std::fs::remove_file(&tagged);
+            Ok(produced.to_path_buf())
+        }
+    }
+}
+
+/// The tags a song is written with, under the names FFmpeg maps onto each
+/// container's own.
+fn song_tags(song: &MusicTags) -> Vec<(&'static str, String)> {
+    let mut tags = vec![("title", song.title.clone()), ("artist", song.artist_line())];
+    if let Some(album) = &song.album {
+        tags.push(("album", album.clone()));
+    }
+    if let Some(artist) = &song.album_artist {
+        tags.push(("album_artist", artist.clone()));
+    }
+    if let Some(number) = song.track_number {
+        tags.push(("track", number.to_string()));
+    }
+    if let Some(date) = &song.release_date {
+        tags.push(("date", date.clone()));
+    }
+    tags
+}
+
+/// Fetch a cover picture, and say whether it can go into a file as it is.
+async fn fetch_cover(url: &str, stem: &Path, settings: &Settings) -> Option<(PathBuf, ffmpeg::CoverArt)> {
+    let client = crate::net::client(settings).ok()?;
+    let response = client.get(url).send().await.ok()?.error_for_status().ok()?;
+    let bytes = response.bytes().await.ok()?;
+    // A cover is a few hundred kilobytes; anything far larger is not one.
+    if bytes.is_empty() || bytes.len() > 8 * 1024 * 1024 {
+        return None;
+    }
+    let (extension, art) = if bytes.starts_with(&[0xFF, 0xD8, 0xFF]) {
+        ("jpg", ffmpeg::CoverArt::Copy)
+    } else if bytes.starts_with(&[0x89, b'P', b'N', b'G']) {
+        ("png", ffmpeg::CoverArt::Copy)
+    } else {
+        ("img", ffmpeg::CoverArt::Encode)
+    };
+    let path = stem.with_extension(extension);
+    std::fs::write(&path, &bytes).ok()?;
+    Some((path, art))
+}
+
+/// Where a finished download goes.
+///
+/// A song is named for itself -- who made it, then its name -- and one queued
+/// from an album or playlist goes into a folder named after it, so the songs
+/// of an album arrive together.
 fn target_path(
     output_dir: &Path,
     settings: &Settings,
     metadata: &MediaMetadata,
     plan: &DownloadPlan,
+    from_collection: bool,
 ) -> PathBuf {
+    if let Some(song) = metadata.music.as_ref().filter(|_| plan.video.is_none()) {
+        let folder = song
+            .collection
+            .as_deref()
+            .filter(|_| from_collection)
+            .map(filename::sanitize_component)
+            .filter(|name| !name.is_empty());
+        let dir = match folder {
+            Some(name) => {
+                let dir = output_dir.join(filename::truncate_stem(&name, 80));
+                match std::fs::create_dir_all(&dir) {
+                    Ok(()) => dir,
+                    Err(_) => output_dir.to_path_buf(),
+                }
+            }
+            None => output_dir.to_path_buf(),
+        };
+        let artists = song.artist_line();
+        return filename::build_output_path(
+            &dir,
+            "{creator} - {title}",
+            &filename::NameContext {
+                title: &song.title,
+                creator: (!artists.is_empty()).then_some(artists.as_str()),
+                quality: &plan.quality_label,
+                platform: metadata.platform.slug(),
+                date: "",
+                ext: &plan.container,
+            },
+        );
+    }
+
+    // An episode from a channel that licenses anime is filed the way media
+    // servers expect a series: its own folder, a folder per season, and the
+    // season and episode in the name.
+    if let Some(episode) = crate::providers::anime::episode_of(metadata).filter(|_| plan.video.is_some()) {
+        let series = filename::sanitize_component(&episode.series);
+        if !series.is_empty() {
+            let dir = output_dir
+                .join(filename::truncate_stem(&series, 80))
+                .join(format!("Season {:02}", episode.season));
+            if std::fs::create_dir_all(&dir).is_ok() {
+                let name = format!("{series} - S{:02}E{:02}", episode.season, episode.number);
+                return filename::build_output_path(
+                    &dir,
+                    "{title}",
+                    &filename::NameContext {
+                        title: &name,
+                        creator: None,
+                        quality: &plan.quality_label,
+                        platform: metadata.platform.slug(),
+                        date: "",
+                        ext: &plan.container,
+                    },
+                );
+            }
+        }
+    }
+
     let date = metadata
         .upload_date
         .as_deref()

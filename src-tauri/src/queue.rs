@@ -673,6 +673,7 @@ mod tests {
                 thumbnail_url: None,
                 platform: None,
                 entry: None,
+                audio_language: None,
             },
         }
     }

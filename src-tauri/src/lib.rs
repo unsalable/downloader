@@ -232,6 +232,7 @@ pub fn run() {
             commands::check_tool_update,
             commands::detect_platform,
             commands::analyze_url,
+            commands::search_anime,
             commands::get_thumbnail,
             commands::summarize_plan,
             commands::list_downloads,

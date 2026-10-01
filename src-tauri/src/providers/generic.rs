@@ -172,6 +172,8 @@ impl GenericProvider {
             watermark_support: WatermarkSupport::NotApplicable,
             warnings: vec!["generic".to_string()],
             entries: Vec::new(),
+            tracks: Vec::new(),
+            music: None,
         })
     }
 }
@@ -245,6 +247,8 @@ fn push_format(formats: &mut Vec<MediaFormat>, candidate: &str, base: &str, kind
         watermarked: None,
         note: None,
         needs_engine_download: segmented,
+        language: None,
+        language_preference: None,
         url: Some(absolute),
         http_headers: Vec::new(),
     });
@@ -287,7 +291,7 @@ fn absolutize(candidate: &str, base: &str) -> Option<String> {
 
 /// Only the entities that actually show up in meta tags. A full HTML entity
 /// table would be dead weight for the handful that matter here.
-fn decode_entities(input: &str) -> String {
+pub(crate) fn decode_entities(input: &str) -> String {
     let mut out = input
         .replace("&amp;", "&")
         .replace("&lt;", "<")

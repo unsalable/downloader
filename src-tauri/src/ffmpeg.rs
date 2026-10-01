@@ -291,6 +291,74 @@ fn conversion_args(
     args
 }
 
+/// How a cover picture goes into a tagged file.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CoverArt {
+    /// Already a JPEG or PNG, which every container that takes a cover takes.
+    Copy,
+    /// Anything else, turned into a JPEG first.
+    Encode,
+}
+
+/// Whether a container can carry a cover picture alongside its sound.
+pub fn holds_cover(container: &str) -> bool {
+    matches!(container, "m4a" | "mp4" | "mp3" | "flac")
+}
+
+/// Rewrite an audio file with a song's tags and cover, leaving the sound as
+/// it is.
+///
+/// Whatever the source wrote into the file -- a video description, the page
+/// it came from -- is dropped: it describes an upload, not the song.
+pub fn tag_args(
+    input: &Path,
+    cover: Option<(&Path, CoverArt)>,
+    output: &Path,
+    tags: &[(&str, String)],
+) -> Vec<String> {
+    let target = output
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    let cover = cover.filter(|_| holds_cover(&target));
+
+    let mut args = base_args();
+    args.extend(["-i".into(), input.to_string_lossy().into_owned()]);
+    if let Some((picture, _)) = cover {
+        args.extend(["-i".into(), picture.to_string_lossy().into_owned()]);
+    }
+    args.extend(["-map".into(), "0:a:0".into()]);
+    if let Some((_, art)) = cover {
+        args.extend(["-map".into(), "1:v:0".into()]);
+        match art {
+            CoverArt::Copy => args.extend(["-c:v".into(), "copy".into()]),
+            CoverArt::Encode => args.extend(["-c:v".into(), "mjpeg".into(), "-q:v".into(), "2".into()]),
+        }
+        args.extend(["-disposition:v:0".into(), "attached_pic".into()]);
+    }
+    args.extend(["-c:a".into(), "copy".into(), "-map_metadata".into(), "-1".into()]);
+
+    for (key, value) in tags {
+        if !value.trim().is_empty() {
+            args.extend(["-metadata".into(), format!("{key}={value}")]);
+        }
+    }
+    if target == "mp3" {
+        // The version every player reads, Windows Explorer included.
+        args.extend(["-id3v2_version".into(), "3".into()]);
+        if cover.is_some() {
+            args.extend(["-metadata:s:v".into(), "comment=Cover (front)".into()]);
+        }
+    }
+    if matches!(target.as_str(), "m4a" | "mp4") {
+        args.extend(["-movflags".into(), "+faststart".into()]);
+    }
+
+    args.push(output.to_string_lossy().into_owned());
+    args
+}
+
 fn is_image_target(target: &str) -> bool {
     matches!(target, "jpg" | "jpeg" | "png" | "webp")
 }

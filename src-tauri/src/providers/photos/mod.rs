@@ -158,6 +158,8 @@ impl Post {
             watermark_support: WatermarkSupport::NotApplicable,
             warnings: Vec::new(),
             entries: Vec::new(),
+            tracks: Vec::new(),
+            music: None,
         }
     }
 

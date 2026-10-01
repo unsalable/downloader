@@ -4,12 +4,14 @@ import { Images, RotateCcw } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { AnalyzingCard } from '@/components/home/AnalyzingCard';
+import { AnimeResults, type AnimeSearch } from '@/components/home/AnimeResults';
 import { ClipboardSuggestion } from '@/components/home/ClipboardSuggestion';
 import { DownloadOptionsPanel } from '@/components/home/DownloadOptionsPanel';
 import { ErrorCard } from '@/components/home/ErrorCard';
 import { Hero } from '@/components/home/Hero';
 import { MediaPreviewCard } from '@/components/home/MediaPreviewCard';
 import { PlatformIndicator } from '@/components/home/PlatformIndicator';
+import { TrackList } from '@/components/home/TrackList';
 import { UrlInput, type UrlInputHandle } from '@/components/home/UrlInput';
 import { useToolInstall } from '@/components/home/useToolInstall';
 import { InstallProgress } from '@/components/settings/ToolCard';
@@ -24,7 +26,7 @@ import { normalizeUrl } from '@/lib/url';
 import * as ipc from '@/services/ipc';
 import { useAnalysisStore } from '@/stores/useAnalysisStore';
 import { useToolsStore } from '@/stores/useToolsStore';
-import type { AppErrorInfo, DownloadRequest, Settings } from '@/types';
+import type { AnimeEpisode, AppErrorInfo, DownloadRequest, Settings } from '@/types';
 
 /** The result arrives as one object: the preview and its options together. */
 const READY = rise(10);
@@ -64,12 +66,24 @@ export function HomePage({
   const { install: installEngine, error: engineInstallError } = useToolInstall('engine');
 
   const [submitting, setSubmitting] = useState(false);
+  // Words typed instead of a link: a search of the channels that license
+  // anime, shown until a result is picked or the field is cleared.
+  const [search, setSearch] = useState<AnimeSearch | null>(null);
+  const searchToken = useRef(0);
   const [dragging, setDragging] = useState(false);
   // Which of the two download buttons failed, so the reason is set under it.
   const [enqueueError, setEnqueueError] = useState<{ gallery: boolean; text: string } | null>(
     null,
   );
   useEffect(() => setEnqueueError(null), [metadata]);
+
+  // The songs of an album or playlist that will be downloaded: all of them
+  // until the list says otherwise.
+  const tracks = metadata?.tracks ?? [];
+  const [picked, setPicked] = useState<Set<number>>(new Set());
+  useEffect(() => {
+    setPicked(new Set((metadata?.tracks ?? []).map((track) => track.position)));
+  }, [metadata]);
 
   const engineReady = tools?.engine.available ?? false;
   const engineMissing = !engineReady && tools != null && !checkingTools;
@@ -105,6 +119,8 @@ export function HomePage({
         return;
       }
       setHeldTarget(null);
+      searchToken.current += 1;
+      setSearch(null);
       // A missing engine is left to the analysis to report: that is the path
       // that puts Install on screen, and that retries itself below once the
       // engine is there.
@@ -144,6 +160,49 @@ export function HomePage({
   useEffect(() => {
     if (engineMissing) setHeldTarget(null);
   }, [engineMissing]);
+
+  const startSearch = useCallback(
+    (query: string) => {
+      const token = ++searchToken.current;
+      reset();
+      setUrl(query);
+      setSearch({ phase: 'searching', query });
+      ipc
+        .searchAnime(query)
+        .then((episodes) => {
+          if (token === searchToken.current) setSearch({ phase: 'done', query, episodes });
+        })
+        .catch((caught) => {
+          if (token !== searchToken.current) return;
+          const info = ipc.toAppError(caught);
+          const titleKey = `error.${info.code}.title` as TranslationKey;
+          setSearch({
+            phase: 'error',
+            query,
+            message: t(titleKey) === titleKey ? info.title : t(titleKey),
+          });
+        });
+    },
+    [reset, setUrl, t],
+  );
+
+  // Emptying the field by hand ends the search as surely as its clear button.
+  useEffect(() => {
+    if (url.trim()) return;
+    searchToken.current += 1;
+    setSearch(null);
+  }, [url]);
+
+  const pickEpisode = (episode: AnimeEpisode) => {
+    setUrl(episode.url);
+    startAnalysis(episode.url);
+  };
+
+  const clearAll = () => {
+    searchToken.current += 1;
+    setSearch(null);
+    reset();
+  };
 
   const pasteFromClipboard = useCallback(async () => {
     try {
@@ -214,6 +273,7 @@ export function HomePage({
       title: metadata.title,
       thumbnailUrl: metadata.thumbnailUrl,
       platform: metadata.platform,
+      audioLanguage: options.audioLanguage,
     };
   };
 
@@ -235,8 +295,11 @@ export function HomePage({
     setEnqueueError(null);
     try {
       // A carousel or album becomes one task per item, so each gets its own
-      // progress, retry and history row.
-      if (asGallery) await ipc.enqueueGallery(request);
+      // progress, retry and history row. A list of songs queues the ones
+      // that are picked, in the album's order.
+      if (tracks.length > 0) {
+        await ipc.enqueueGallery(request, [...picked].sort((a, b) => a - b));
+      } else if (asGallery) await ipc.enqueueGallery(request);
       else await ipc.enqueueDownload(request);
 
       // The download itself is the next thing to look at, and going to the
@@ -264,7 +327,7 @@ export function HomePage({
         ? { label: t('error.networkBlocked.action'), onClick: () => void ipc.platformOpenAppSettings() }
         : undefined;
 
-  const isCollapsed = phase !== 'idle';
+  const isCollapsed = phase !== 'idle' || search != null;
   // Offered only while there is nothing else to do with the field, and only
   // when accepting it could actually start an analysis.
   const suggestion =
@@ -300,11 +363,12 @@ export function HomePage({
           value={url}
           onChange={setUrl}
           onSubmit={startAnalysis}
-          onClear={reset}
+          onSearch={startSearch}
+          onClear={clearAll}
           onPaste={pasteFromClipboard}
           // A held link is already on its way as far as the user is concerned,
           // so the field says so rather than sitting there looking ignored.
-          analyzing={phase === 'analyzing' || heldTarget !== null}
+          analyzing={phase === 'analyzing' || heldTarget !== null || search?.phase === 'searching'}
         />
       </div>
 
@@ -372,6 +436,10 @@ export function HomePage({
 
       <div className="mt-5 flex flex-col gap-4">
         <AnimatePresence mode="wait">
+          {phase === 'idle' && search && (
+            <AnimeResults key="anime" search={search} onPick={pickEpisode} />
+          )}
+
           {phase === 'analyzing' && <AnalyzingCard key="analyzing" />}
 
           {phase === 'error' && error && (
@@ -398,6 +466,10 @@ export function HomePage({
             >
               <MediaPreviewCard metadata={metadata} />
 
+              {tracks.length > 0 && (
+                <TrackList tracks={tracks} picked={picked} onChange={setPicked} />
+              )}
+
               <DownloadOptionsPanel
                 metadata={metadata}
                 options={options}
@@ -406,9 +478,10 @@ export function HomePage({
                 submitting={submitting}
                 onDownload={() => void startDownload(false)}
                 downloadError={enqueueError && !enqueueError.gallery ? enqueueError.text : null}
+                downloadCount={tracks.length > 0 ? picked.size : undefined}
               />
 
-              {metadata.entryCount != null && metadata.entryCount > 1 && (
+              {tracks.length === 0 && metadata.entryCount != null && metadata.entryCount > 1 && (
                 <div>
                   <Button
                     variant="secondary"
@@ -429,7 +502,7 @@ export function HomePage({
 
               <button
                 type="button"
-                onClick={reset}
+                onClick={clearAll}
                 className="pressable mx-auto flex items-center gap-1.5 rounded-md px-2 py-1 text-[12.5px] font-medium text-fg-muted hover:text-fg"
               >
                 <RotateCcw size={13} />
