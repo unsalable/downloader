@@ -48,7 +48,7 @@ describe('extensionOffer', () => {
   });
 
   test('stops asking once a bound browser proves the extension is installed', () => {
-    const bound = status({ connected: true, browser: 'Chrome', extensionVersion: '1.0.3' });
+    const bound = status({ connected: true, browser: 'Chrome', extensionVersion: '1.0.4' });
     expect(extensionOffer(bound)).toBeNull();
     expect(extensionOffer({ ...bound, storeListed: false })).toBeNull();
   });

@@ -8,7 +8,9 @@
 //! not be. An extension the user installed, pushing through a channel the
 //! browser owns, is the honest version of the same thing. The same channel
 //! carries the videos the user sends from a page to download, which this
-//! program leaves in the app's inbox before starting the app.
+//! program leaves in the app's inbox before starting the app -- and, before
+//! that, the popup's question of what each would download, which this program
+//! answers itself by running the app's own analysis, without starting the app.
 //!
 //! The app is usually closed while this runs, which shapes everything here: it
 //! holds no state of its own, takes every decision from the files under
@@ -21,13 +23,19 @@
 
 use std::io::{ErrorKind, Read, Write};
 use std::path::PathBuf;
+use std::sync::OnceLock;
+use std::time::Duration;
 
 use universal_downloader_lib::bridge::handoff;
 use universal_downloader_lib::bridge::protocol::{
     self, Download, ErrorCode, HostStatus, Peer, Push, Request, Response,
 };
 use universal_downloader_lib::bridge::LinkState;
-use universal_downloader_lib::log_warn;
+use universal_downloader_lib::downloader::{self, DownloadPreview};
+use universal_downloader_lib::error::{AppError, AppResult};
+use universal_downloader_lib::model::DownloadRequest;
+use universal_downloader_lib::settings::Settings;
+use universal_downloader_lib::{db, log_debug, log_warn, logging, paths, tools};
 
 fn main() {
     // Chrome passes the calling extension's origin as the first argument. This
@@ -138,7 +146,7 @@ fn send(output: &mut impl Write, response: &Response) -> std::io::Result<()> {
 fn handle(request: Request) -> Response {
     let version = match &request {
         Request::Push(push) => push.peer.v,
-        Request::Download(download) => download.peer.v,
+        Request::Download(download) | Request::Probe(download) => download.peer.v,
         Request::Status(peer)
         | Request::Claim(peer)
         | Request::Forget(peer)
@@ -175,6 +183,11 @@ fn handle(request: Request) -> Response {
         // session, and a link the user pressed Download on lends nothing: the
         // app fetches it as it would one pasted into its own window.
         Request::Download(download) => hand_over(&state, &download),
+
+        // Nor is asking what a download would fetch, for the same reason. The
+        // analysis it runs is the download's own, so it leans on a stored
+        // session exactly when the download would, toggle and all.
+        Request::Probe(download) => probe(&state, &download),
 
         // Nor is deleting. A user who turns the link off in the app and then
         // presses Forget in the popup is asking for the same thing twice, and
@@ -270,6 +283,106 @@ fn hand_over(state: &LinkState, download: &Download) -> Response {
 
     open_app(&[handoff::LAUNCH_ARG]);
     Response::ok(status(state, &download.peer))
+}
+
+/// How long a probe may take, start to answer.
+///
+/// A YouTube link read with a session after the first look was refused is two
+/// engine runs, which is the slowest honest case and takes well under this. A
+/// site that has not answered by then is not going to give the popup anything
+/// worth having waited for.
+const PROBE_TIMEOUT: Duration = Duration::from_secs(25);
+
+/// Say what pressing Download on this link would fetch, without fetching it.
+///
+/// The answer has to be the app's, not a guess made in the browser, so it is
+/// worked out from the very request the app would queue for this link
+/// (`Handoff::to_request`, with the user's own defaults) by the code the
+/// download runs (`downloader::preview`). Nothing is left in the inbox and
+/// the app is not started: the settings are read without opening the
+/// database for writing, and the only programs run are the ones an analysis
+/// runs.
+fn probe(state: &LinkState, download: &Download) -> Response {
+    let handoff = match handoff::validate(download, chrono::Utc::now().timestamp()) {
+        Ok(handoff) => handoff,
+        Err(reason) => return Response::err(ErrorCode::Malformed, reason),
+    };
+
+    let mut settings = paths::database_path()
+        .map(|path| db::load_settings_read_only(&path))
+        .unwrap_or_default();
+    // A preview never borrows the browser's YouTube session. A download does,
+    // for the one run that needs it, by writing the cookies out in plain text
+    // and deleting them when the engine is done -- and this process is the
+    // browser's to kill at any moment, which would leave that file behind
+    // until the app next starts. A members-only video shows no details in the
+    // popup rather than risk that; pressing İndir still downloads it with the
+    // session.
+    settings.browser_link_enabled = false;
+    // The pipeline logs what it does where the app would, when the user has
+    // asked the app to.
+    logging::set_debug_enabled(settings.debug_logging);
+    let request = handoff.to_request(&settings);
+
+    let Some(runtime) = runtime() else {
+        log_warn!("bridge-host", "could not start the runtime a preview runs on");
+        return Response::err(ErrorCode::Internal, "the app could not look at the link");
+    };
+    let outcome = runtime.block_on(async {
+        tokio::time::timeout(PROBE_TIMEOUT, look(&request, &settings)).await
+    });
+
+    match outcome {
+        Ok(Ok(preview)) => Response::previewed(status(state, &download.peer), preview.into()),
+        Ok(Err(err)) => refused(&err),
+        Err(_) => {
+            log_debug!("bridge-host", "a preview ran out of time");
+            Response::err(ErrorCode::Unavailable, "the link took too long to read")
+        }
+    }
+}
+
+/// Find the tools an analysis runs, then analyse and plan.
+async fn look(request: &DownloadRequest, settings: &Settings) -> AppResult<DownloadPreview> {
+    tools::discover_for_analysis(settings).await;
+    downloader::preview(request, settings).await
+}
+
+/// Why there is no preview, said without the link.
+///
+/// A protected service is the one refusal told apart, because it is the one
+/// that changes what the popup offers. Everything else reaches the popup as
+/// "no details", with the app's own short title for what went wrong. That
+/// title is fixed text: the error's own detail can quote the address, and the
+/// reply goes back into the browser.
+fn refused(err: &AppError) -> Response {
+    log_debug!("bridge-host", "no preview: {}", err.code());
+    let code = match err {
+        AppError::Protected(_) => ErrorCode::Protected,
+        _ => ErrorCode::Unavailable,
+    };
+    Response::err(code, err.to_info().title)
+}
+
+/// The runtime previews run on: one for the life of the process, made by the
+/// first probe.
+///
+/// One rather than one per probe, because the HTTP client the analysis uses is
+/// kept between calls, and the connections it pools belong to the runtime
+/// they were opened on -- a second probe on a fresh runtime would find them
+/// dead. Never dropped, either: dropping a runtime waits for its blocking
+/// threads, and this process must not outlive its last answer waiting on a
+/// name lookup nobody needs. Returning from `main` ends them all.
+fn runtime() -> Option<&'static tokio::runtime::Runtime> {
+    static RUNTIME: OnceLock<Option<tokio::runtime::Runtime>> = OnceLock::new();
+    RUNTIME
+        .get_or_init(|| {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .ok()
+        })
+        .as_ref()
 }
 
 fn disabled() -> Response {
@@ -419,7 +532,7 @@ mod tests {
     #[test]
     fn a_link_that_is_not_a_web_address_is_malformed() {
         let Request::Download(download) = request(serde_json::json!({
-            "type": "download", "v": 1, "profileId": "p", "extensionVersion": "1.0.3",
+            "type": "download", "v": 1, "profileId": "p", "extensionVersion": "1.0.4",
             "url": "javascript:alert(1)",
         })) else {
             panic!("not read as a download");
@@ -427,5 +540,56 @@ mod tests {
         let response = hand_over(&LinkState::default(), &download);
         assert!(!response.ok);
         assert_eq!(code(&response), Some(ErrorCode::Malformed));
+    }
+
+    /// A probe is held to the same version rule as everything else, so a
+    /// newer extension's question is answered with "update the app" rather
+    /// than with an analysis of something it may mean differently.
+    #[test]
+    fn a_probe_from_a_newer_extension_asks_for_an_update() {
+        let newer = request(serde_json::json!({
+            "type": "probe", "v": 2, "profileId": "p", "extensionVersion": "9.0.0",
+            "url": "https://www.youtube.com/watch?v=jNQXAC9IVRw",
+        }));
+        let response = handle(newer);
+        assert_eq!(code(&response), Some(ErrorCode::Version));
+        assert!(response.preview.is_none());
+    }
+
+    /// Refused before settings are read, a tool is looked for or a process is
+    /// started.
+    #[test]
+    fn a_probe_of_a_link_that_is_not_a_web_address_is_malformed() {
+        let Request::Probe(probed) = request(serde_json::json!({
+            "type": "probe", "v": 1, "profileId": "p", "extensionVersion": "1.0.4",
+            "url": "file:///C:/Windows/win.ini", "kind": "video",
+        })) else {
+            panic!("not read as a probe");
+        };
+        let response = probe(&LinkState::default(), &probed);
+        assert!(!response.ok);
+        assert_eq!(code(&response), Some(ErrorCode::Malformed));
+        assert!(response.preview.is_none());
+    }
+
+    #[test]
+    fn only_a_protected_service_is_told_apart_and_no_refusal_quotes_the_link() {
+        let link = "https://site.example/watch/secret-id";
+        let protected = refused(&AppError::Protected("Netflix".into()));
+        assert_eq!(code(&protected), Some(ErrorCode::Protected));
+
+        for err in [
+            AppError::InvalidUrl(format!("not an http(s) address: {link}")),
+            AppError::Unsupported(format!("no provider could read {link}")),
+            AppError::NotFound { status: 404, detail: link.into() },
+            AppError::Network(format!("dns error for {link}")),
+            AppError::Engine(format!("ERROR: [generic] {link}: unable to download")),
+            AppError::EngineMissing,
+        ] {
+            let response = refused(&err);
+            assert_eq!(code(&response), Some(ErrorCode::Unavailable), "{err:?}");
+            let text = serde_json::to_string(&response).unwrap();
+            assert!(!text.contains("site.example"), "{text}");
+        }
     }
 }

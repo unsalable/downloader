@@ -602,10 +602,11 @@ export function cleanTitle(value) {
   return chars.length > TITLE_LIMIT ? chars.slice(0, TITLE_LIMIT).join('').trim() : text;
 }
 
+// "Song - YouTube", "Clip | Facebook", and Vimeo's own "Concert on Vimeo".
 function stripSiteName(title, site) {
   if (!site) return title;
   const escaped = site.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  return title.replace(new RegExp(`\\s+[-|•·–—/]\\s+${escaped}$`, 'i'), '').trim();
+  return title.replace(new RegExp(`\\s+(?:[-|•·–—/]|on)\\s+${escaped}$`, 'i'), '').trim();
 }
 
 // Whether the page's og: tags still describe the page. They do when there is
@@ -715,6 +716,57 @@ export function normaliseFrame(raw, frameId) {
 
 const STREAM_KINDS = new Set(['hls', 'dash']);
 
+// Where a known site's page is one video rather than a feed. On a feed the
+// page address names a timeline, which is nothing the app can download, so
+// there the rows come from what the page played instead.
+function isVideoPage(url, site) {
+  const host = url.hostname.toLowerCase();
+  const path = url.pathname;
+  switch (site) {
+    case 'YouTube':
+    case 'YouTube Music':
+      if (onHost(host, 'youtu.be')) return path.length > 1;
+      return path === '/watch' || /^\/(shorts|live|embed)\/[\w-]/.test(path);
+    case 'X':
+      return /\/status\/\d/.test(path);
+    case 'Instagram':
+      return /^\/(?:[\w.]+\/)?(p|reel|reels|tv)\/[\w-]/.test(path);
+    case 'TikTok':
+      return /\/(video|photo)\/\d/.test(path);
+    case 'Facebook':
+      return onHost(host, 'fb.watch') || (path === '/watch' && url.searchParams.has('v')) || /\/(videos|reel|watch)\/./.test(path);
+    case 'Threads':
+      return /\/post\/[\w-]/.test(path);
+    case 'Reddit':
+      return /\/comments\/\w/.test(path);
+    default:
+      return path !== '/' && path !== '';
+  }
+}
+
+// One player, one row. A player asks for the same video in more than one
+// shape -- a master playlist and a variant it does not name, HLS beside DASH
+// -- and three rows for one video is three chances to pick the wrong one. The
+// app chooses the quality anyway, so the row kept is simply the best described.
+//
+// Only where the frame holds at most one player, though: two players in one
+// document are two videos, and folding them would hide one. A protected stream
+// is never folded into a clear one either -- the clear one may be the advert
+// that played before the programme.
+function oneStreamPerPlayer(list, frames) {
+  const players = (frameId) => frames.find((frame) => frame.frameId === frameId)?.videos.length ?? 0;
+  const groupOf = (row) => `${row.frameId}:${row.protected ? 'locked' : 'clear'}`;
+  const best = new Map();
+  for (const row of list) {
+    if (row.kind !== 'stream' || players(row.frameId) > 1) continue;
+    const held = best.get(groupOf(row));
+    if (!held || (row.height ?? 0) > (held.height ?? 0)) best.set(groupOf(row), row);
+  }
+  return list.filter(
+    (row) => row.kind !== 'stream' || players(row.frameId) > 1 || best.get(groupOf(row)) === row,
+  );
+}
+
 function quality(height) {
   return height ? `${height}p` : null;
 }
@@ -767,12 +819,18 @@ export function rows(state, reported = [], { userAgent = '' } = {}) {
   const page = parseHttp(pageUrl);
   const site = siteOf(pageUrl);
   const top = frames.find((frame) => frame.isTop) ?? null;
-  const fresh = ogFresh(top, pageUrl);
   const items = Array.isArray(state?.items) ? state.items : [];
 
-  const rawTitle = (fresh && top?.ogTitle) || top?.title || state?.title || '';
+  // The og: tags are believed only when they can be shown to describe this
+  // address: og:url names it, or the site is not one of the known ones. The
+  // known ones are single-page apps, and they leave the first page's tags in
+  // place as the user moves on -- a YouTube visit that began on the front page
+  // carries "YouTube" and the YouTube logo to every video after it, with no
+  // og:url to give it away. The document's title is kept current by all of them.
+  const trustOg = top?.ogUrl ? ogFresh(top, pageUrl) : !site;
+  const rawTitle = (trustOg && top?.ogTitle) || top?.title || state?.title || '';
   const pageTitle = cleanTitle(stripSiteName(cleanTitle(rawTitle), site)) || displayHost(pageUrl);
-  const ogImage = fresh && isHttpUrl(top?.ogImage) ? top.ogImage : '';
+  const ogImage = trustOg && isHttpUrl(top?.ogImage) ? top.ogImage : '';
   const agent = typeof userAgent === 'string' ? userAgent : '';
 
   const drmFrames = new Set(
@@ -830,6 +888,7 @@ export function rows(state, reported = [], { userAgent = '' } = {}) {
     out.push({
       key: `item:${item.id ?? key}`,
       kind,
+      frameId: item.frameId,
       url: key,
       title: pageTitle,
       thumbnail,
@@ -862,6 +921,7 @@ export function rows(state, reported = [], { userAgent = '' } = {}) {
     out.push({
       key: `element:${key}`,
       kind,
+      frameId: media.frame.frameId,
       url: key,
       title: pageTitle,
       thumbnail,
@@ -873,25 +933,28 @@ export function rows(state, reported = [], { userAgent = '' } = {}) {
     });
   }
 
-  // The page itself. On a site the app knows, the page address is the better
-  // thing to hand over whenever something is playing -- but never a site's
-  // front page, which is a feed with a preview playing rather than a video.
-  // Elsewhere it is the last resort for a player that builds its video from
-  // script (a blob: source), where nothing else could be listed -- and when a
-  // player on the page uses EME, that player is the one it stands for, so the
-  // row says it is protected instead of offering a button that can only fail.
+  // The page itself. On a site the app knows, a page that is one video is
+  // handed over whole and is the only row: the app reads it with that site's
+  // own extractor and picks the quality itself, so the streams its player
+  // happened to fetch would only be the same video again, in a worse shape.
+  // Elsewhere the page is the last resort for a player that builds its video
+  // from script (a blob: source), where nothing else could be listed -- and
+  // when a player on the page uses EME, that player is the one it stands for,
+  // so the row says it is protected instead of offering a button that can
+  // only fail.
   const hasElements = frames.some((frame) => frame.videos.length > 0 || frame.audios.length > 0);
+  const videoPage = Boolean(site && page && isVideoPage(page, site));
   let pageRow = null;
-  const content = page && page.pathname !== '/' && page.pathname !== '';
-  if (site && content && (state?.sawMedia || items.length > 0 || hasElements)) {
+  if (videoPage && (state?.sawMedia || items.length > 0 || hasElements)) {
     pageRow = { label: 'site', site };
   } else if (!site && page && out.length === 0 && hasElements) {
     pageRow = { label: drmFrames.size > 0 ? 'protected' : 'page' };
   }
 
-  out.sort(compareRows);
+  const kept = videoPage ? [] : oneStreamPerPlayer(out, frames);
+  kept.sort(compareRows);
 
-  const list = out.map((row) => ({
+  const list = kept.map(({ frameId, ...row }) => ({
     ...row,
     meta: row.protected
       ? { label: 'protected', parts: [] }
@@ -899,10 +962,15 @@ export function rows(state, reported = [], { userAgent = '' } = {}) {
   }));
 
   if (pageRow) {
-    const thumbnail = ogImage || (page ? youtubeThumbnail(page) : null) || posterIn(top?.frameId ?? 0) || '';
+    // YouTube's address names its own still, which no stale tag can get wrong.
+    const thumbnail = (page ? youtubeThumbnail(page) : null) || ogImage || posterIn(top?.frameId ?? 0) || '';
     const payload = toPayload({ url: pageUrl, kind: 'page', title: pageTitle, pageUrl, userAgent: agent, thumbnail });
     if (payload) {
       const locked = pageRow.label === 'protected';
+      // A known site's player is not asked how long the video is: what it is
+      // playing when the popup opens is as often the advert before the video
+      // as the video, and the app's own reading of the page says it right.
+      const durationSec = pageRow.label === 'site' ? null : soleDuration(top);
       list.unshift({
         key: 'page',
         kind: 'page',
@@ -912,8 +980,8 @@ export function rows(state, reported = [], { userAgent = '' } = {}) {
         protected: locked,
         height: null,
         size: null,
-        durationSec: soleDuration(top),
-        meta: { ...pageRow, parts: locked ? [] : metaParts({ durationSec: soleDuration(top) }) },
+        durationSec,
+        meta: { ...pageRow, parts: locked ? [] : metaParts({ durationSec }) },
         payload,
       });
     }
@@ -924,9 +992,31 @@ export function rows(state, reported = [], { userAgent = '' } = {}) {
 
 const UNITS = ['B', 'KB', 'MB', 'GB', 'TB'];
 
-/** 25 165 824 -> "24 MB". Binary units, like the app's formatBytes. */
+/**
+ * 85 458 944 -> "81.5 MB". Binary units and the precision of the app's
+ * formatBytes, so the size a row promises reads the same as the size the
+ * download shows once it is in the app.
+ */
 export function formatSize(bytes) {
   if (typeof bytes !== 'number' || !Number.isFinite(bytes) || bytes < 0) return '';
+  if (bytes < 1) return '0 B';
+  let value = bytes;
+  let unit = 0;
+  while (value >= 1024 && unit < UNITS.length - 1) {
+    value /= 1024;
+    unit += 1;
+  }
+  const digits = unit <= 1 ? 0 : value >= 100 ? 0 : value >= 10 ? 1 : 2;
+  return `${value.toFixed(digits)} ${UNITS[unit]}`;
+}
+
+/**
+ * A size the app only estimated, said as one: "~31 MB", "~1.2 GB". Its
+ * decimals would claim a precision the estimate does not have, and the row
+ * has no room for them.
+ */
+export function formatEstimate(bytes) {
+  if (typeof bytes !== 'number' || !Number.isFinite(bytes) || bytes <= 0) return '';
   let value = bytes;
   let unit = 0;
   while (value >= 1024 && unit < UNITS.length - 1) {
@@ -934,7 +1024,7 @@ export function formatSize(bytes) {
     unit += 1;
   }
   const digits = unit <= 1 || value >= 10 ? 0 : 1;
-  return `${value.toFixed(digits)} ${UNITS[unit]}`;
+  return `~${value.toFixed(digits)} ${UNITS[unit]}`;
 }
 
 /** Seconds -> "4:05" or "1:02:03", like the app's formatDuration. */

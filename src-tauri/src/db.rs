@@ -6,8 +6,9 @@
 
 use std::path::Path;
 use std::sync::Mutex;
+use std::time::Duration;
 
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{params, Connection, OpenFlags, OptionalExtension};
 
 use crate::error::{AppError, AppResult};
 use crate::model::{DownloadRequest, DownloadTask, HistoryEntry, PlatformId};
@@ -89,20 +90,7 @@ impl Database {
 
     pub fn load_settings(&self) -> AppResult<Settings> {
         let conn = self.lock()?;
-        let raw: Option<String> = conn
-            .query_row("SELECT value FROM settings WHERE key = 'app'", [], |row| {
-                row.get(0)
-            })
-            .optional()?;
-
-        let mut settings = match raw {
-            // A config that fails to parse (downgrade, hand edit) should not
-            // block startup -- fall back to defaults and let the user re-save.
-            Some(json) => serde_json::from_str::<Settings>(&json).unwrap_or_default(),
-            None => Settings::default(),
-        };
-        settings.sanitize();
-        Ok(settings)
+        Ok(read_settings(&conn)?)
     }
 
     /// Whether settings have ever been saved. `load_settings` writes nothing,
@@ -268,6 +256,74 @@ impl Database {
     }
 }
 
+/// The settings as `load_settings` reads them, for a process that is not the
+/// app: the browser link's host, which reads the user's defaults to work out
+/// what a download would fetch.
+///
+/// The app may well be running and holding this file, and the host must not
+/// disturb it, so the file is opened read-only and is never created or
+/// migrated: a missing database is an app that has not run yet, and its
+/// defaults are the answer. A lock the app holds is waited on briefly rather
+/// than for as long as the app holds it. Any failure at all -- no file, a
+/// locked one, one that is not a database -- reads as the defaults, which is
+/// what the app itself would be running on.
+pub fn load_settings_read_only(path: &Path) -> Settings {
+    let read = || -> rusqlite::Result<Settings> {
+        let conn = open_read_only(path)?;
+        conn.busy_timeout(Duration::from_millis(1500))?;
+        read_settings(&conn)
+    };
+
+    let mut settings = read().unwrap_or_default();
+    settings.sanitize();
+    settings
+}
+
+/// Open `path` for reading, creating nothing beside it.
+///
+/// A database in WAL mode is read through its `-wal` and `-shm` files, and
+/// SQLite creates them when they are missing -- for a read-only connection as
+/// well, which then cannot remove them again (measured). They are only missing
+/// when nothing has the database open and every write has reached the main
+/// file, so in that case the main file is all there is to read, and it is read
+/// as it stands (`immutable`) without them. An address SQLite will not take as
+/// a URI -- a profile on a network share -- is read the ordinary way.
+fn open_read_only(path: &Path) -> rusqlite::Result<Connection> {
+    // `SQLITE_OPEN_URI` is left out of the ordinary open on purpose: that is a
+    // path, and read as a URI a `?` or `#` in it would mean something else.
+    let flags = OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX;
+
+    let mut wal = path.as_os_str().to_owned();
+    wal.push("-wal");
+    if path.is_file() && !Path::new(&wal).exists() {
+        if let Ok(mut uri) = reqwest::Url::from_file_path(path) {
+            uri.set_query(Some("immutable=1"));
+            if let Ok(conn) = Connection::open_with_flags(uri.as_str(), flags | OpenFlags::SQLITE_OPEN_URI) {
+                return Ok(conn);
+            }
+        }
+    }
+    Connection::open_with_flags(path, flags)
+}
+
+/// The one row settings live in, parsed and made safe.
+fn read_settings(conn: &Connection) -> rusqlite::Result<Settings> {
+    let raw: Option<String> = conn
+        .query_row("SELECT value FROM settings WHERE key = 'app'", [], |row| {
+            row.get(0)
+        })
+        .optional()?;
+
+    let mut settings = match raw {
+        // A config that fails to parse (downgrade, hand edit) should not
+        // block startup -- fall back to defaults and let the user re-save.
+        Some(json) => serde_json::from_str::<Settings>(&json).unwrap_or_default(),
+        None => Settings::default(),
+    };
+    settings.sanitize();
+    Ok(settings)
+}
+
 pub fn platform_to_str(platform: PlatformId) -> &'static str {
     platform.slug()
 }
@@ -310,5 +366,105 @@ mod tests {
         .unwrap();
         assert!(db.settings_saved().unwrap());
         assert_eq!(db.load_settings().unwrap().language, "tr");
+    }
+
+    fn scratch(name: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("ud-db-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn chosen() -> Settings {
+        Settings {
+            default_mode: crate::model::DownloadMode::Audio,
+            default_quality: crate::model::QualityPreference::AudioBitrate { kbps: 192 },
+            default_container: Some("mp3".into()),
+            language: "tr".into(),
+            ..Settings::default()
+        }
+    }
+
+    #[test]
+    fn another_process_reads_what_the_app_saved_without_writing_a_byte() {
+        let dir = scratch("read-only");
+        let path = dir.join("library.db");
+        let db = Database::open(&path).unwrap();
+        db.save_settings(&chosen()).unwrap();
+
+        // While the app holds the file, as it does whenever it is running.
+        let read = load_settings_read_only(&path);
+        assert_eq!(read.default_mode, crate::model::DownloadMode::Audio);
+        assert_eq!(read.default_quality, chosen().default_quality);
+        assert_eq!(read.default_container.as_deref(), Some("mp3"));
+        assert_eq!(read.language, "tr");
+
+        // And once it has closed it, which takes its `-wal` and `-shm` away.
+        // Nothing is put back in their place.
+        drop(db);
+        assert_eq!(files_in(&dir), ["library.db"]);
+        let before = std::fs::read(&path).unwrap();
+        let read = load_settings_read_only(&path);
+        assert_eq!(read.default_container.as_deref(), Some("mp3"));
+        assert_eq!(read.language, "tr");
+        assert_eq!(std::fs::read(&path).unwrap(), before, "the database was written to");
+        assert_eq!(files_in(&dir), ["library.db"], "files were created beside the database");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    fn files_in(dir: &Path) -> Vec<String> {
+        let mut names: Vec<String> = std::fs::read_dir(dir)
+            .unwrap()
+            .flatten()
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .collect();
+        names.sort();
+        names
+    }
+
+    #[test]
+    fn a_folder_name_a_uri_would_misread_is_read_as_the_folder_it_is() {
+        // Spaces, a `#`, a `%` and letters outside ASCII: everything the
+        // address SQLite is handed has to escape.
+        let dir = scratch("Melikşah's 100% #1 folder");
+        let path = dir.join("library.db");
+        let db = Database::open(&path).unwrap();
+        db.save_settings(&chosen()).unwrap();
+        drop(db);
+
+        assert_eq!(load_settings_read_only(&path).default_container.as_deref(), Some("mp3"));
+        // Read as it stands, not through a WAL it had to create.
+        assert_eq!(files_in(&dir), ["library.db"]);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_database_that_is_not_there_is_not_created_and_reads_as_the_defaults() {
+        let dir = scratch("missing");
+        let path = dir.join("library.db");
+
+        let read = load_settings_read_only(&path);
+        assert_eq!(read.default_mode, Settings::default().default_mode);
+        assert_eq!(read.default_container, None);
+        assert!(!path.exists(), "the database was created");
+        assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 0, "something was created beside it");
+
+        // Nor is anything that is not a database read as one.
+        std::fs::write(&path, b"not a database").unwrap();
+        assert_eq!(load_settings_read_only(&path).language, "en");
+        assert_eq!(std::fs::read(&path).unwrap(), b"not a database");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_database_from_before_any_settings_reads_as_the_defaults() {
+        let dir = scratch("empty");
+        let path = dir.join("library.db");
+        drop(Database::open(&path).unwrap());
+
+        let read = load_settings_read_only(&path);
+        assert_eq!(read.language, "en");
+        assert_eq!(read.default_container, None);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

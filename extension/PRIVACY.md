@@ -38,11 +38,16 @@ desktop application, running on the same computer as your browser. Chrome starts
 that program itself, over its native messaging channel, and only for this
 extension.
 
+- **When the popup lists a video:** the same details as below, for each of the
+  first few items it lists, so the app can say what it would download -- the
+  title, the picture, the quality, the format and roughly the size. The app
+  reads the video's page or stream from the site to answer, as it would before
+  downloading; it downloads nothing and keeps nothing for this.
 - **When you press Get (İndir in Turkish):** that one item's address and kind, the
   page's title and address, the referring address and origin the request was
   made with, your browser's user-agent string and the preview image address.
   The app then downloads the video from the site, as your browser would.
-  Nothing is sent for items you do not press.
+  Nothing is downloaded for items you do not press.
 - **When you open the popup:** a question -- is the app installed, and is this
   profile the connected one? It carries the profile identifier below, the
   browser's name and the extension's version, and nothing about the page. The
@@ -134,11 +139,17 @@ uygulamasının parçası olan `ud-bridge.exe` adlı programa. O programı Chrom
 kendisi başlatır, kendi yerel mesajlaşma kanalı üzerinden, yalnızca bu eklenti
 için.
 
+- **Açılır pencere bir video listelediğinde:** listelediği ilk birkaç öğenin
+  her biri için aşağıdakiyle aynı bilgiler; böylece uygulama ne indireceğini
+  söyleyebilir -- başlığı, görseli, kaliteyi, biçimi ve yaklaşık boyutu.
+  Uygulama bunu yanıtlamak için videonun sayfasını ya da akışını, indirmeden
+  önce yapacağı gibi siteden okur; bunun için hiçbir şey indirmez, hiçbir şey
+  saklamaz.
 - **İndir'e bastığınızda:** yalnızca o öğenin adresi ve türü, sayfanın başlığı
   ve adresi, isteğin yapıldığı yönlendiren adres ve köken, tarayıcınızın
   kullanıcı aracısı dizesi ve önizleme görselinin adresi. Uygulama sonra
   videoyu, tarayıcınızın yapacağı gibi, siteden indirir. Basmadığınız öğeler
-  için hiçbir şey gönderilmez.
+  indirilmez.
 - **Açılır pencereyi açtığınızda:** bir soru -- uygulama kurulu mu, bağlı
   profil bu mu? Aşağıdaki profil tanımlayıcısını, tarayıcının adını ve
   eklentinin sürümünü taşır; sayfayla ilgili hiçbir şey taşımaz. Eklenti

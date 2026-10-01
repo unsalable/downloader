@@ -205,6 +205,40 @@ pub async fn discovered(settings: &Settings) -> ToolsState {
     discover_all(settings).await
 }
 
+/// Discovery for a process that only reads links: the engine and the
+/// JavaScript runtime, found by the same rules and in the same order as
+/// [`refresh`] finds them, and FFmpeg left alone.
+///
+/// The browser link's host answers the popup's preview with this, once per
+/// question, in a process that lives for one answer. Analysis and planning
+/// never touch FFmpeg, so asking it its version would start a process for
+/// nothing every time the popup opened; the engine's answer is usually the one
+/// remembered on disk and starts nothing at all. The runtime is still asked,
+/// not merely found: discovery passes over a copy that will not start, and a
+/// preview read with a runtime the app would not have used could list formats
+/// the download never sees.
+///
+/// FFmpeg reads as missing afterwards, and the first full pass is still to
+/// come for anyone who asks [`discovered`].
+pub async fn discover_for_analysis(settings: &Settings) -> ToolsState {
+    let _pass = DISCOVERY.lock().await;
+
+    #[cfg(target_os = "android")]
+    prepare_android_runtime(false).await;
+
+    let engine = detect_kind(ToolKind::Engine, settings).await;
+    #[cfg(not(target_os = "android"))]
+    let js_runtime = detect_kind(ToolKind::JsRuntime, settings).await;
+
+    publish(|state| {
+        state.engine = engine;
+        #[cfg(not(target_os = "android"))]
+        {
+            state.js_runtime = js_runtime;
+        }
+    })
+}
+
 /// The caller holds `DISCOVERY`.
 async fn discover_all(settings: &Settings) -> ToolsState {
     // Neither tool can start until the libraries they link against have been

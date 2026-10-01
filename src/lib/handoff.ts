@@ -10,6 +10,11 @@ type Defaults = Pick<Settings, 'defaultMode' | 'defaultQuality' | 'defaultContai
  * Nothing is analysed first. The backend analyses the link when the download
  * starts, with the page's headers from `source`, and whatever goes wrong
  * shows on the download's row like any other failure.
+ *
+ * `Handoff::to_request` in src-tauri/src/bridge/handoff.rs builds the same
+ * request for the popup's preview of what İndir would download, and has to
+ * stay in step with this one field for field, or the preview promises one
+ * file and the download delivers another.
  */
 export function requestFromHandoff(handoff: Handoff, defaults: Defaults): DownloadRequest {
   const mode = handoff.kind === 'audio' ? 'audio' : defaults.defaultMode;

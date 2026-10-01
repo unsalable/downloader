@@ -26,8 +26,10 @@
 import {
   MAX_ITEMS,
   classify,
+  cleanTitle,
   dedupeKey,
   headerMap,
+  isHttpUrl,
   normaliseFrame,
   parseDash,
   parseHls,
@@ -147,7 +149,7 @@ function sendNative(request) {
           return;
         }
         if (response.ok === true) {
-          resolve({ ok: true, status: response.status ?? null });
+          resolve({ ok: true, status: response.status ?? null, preview: response.preview ?? null });
           return;
         }
         resolve({
@@ -716,7 +718,96 @@ async function download(message) {
   return { result: await callHost({ type: 'download', ...(await peer()), ...fields }) };
 }
 
-const ACTIONS = { scan, status, download, connect, forget };
+// What the app would make of a row: the title it would save under, its own
+// still, and the quality, container and rough size of the file -- read by the
+// app's helper with the same analysis and the same plan a download runs, so
+// the row promises what the download then delivers.
+//
+// Asked for when the popup shows a row, which is why the answer is kept: the
+// helper runs the download engine to find out, which takes seconds, and the
+// same row is usually shown again the next time the popup opens. Only answers
+// that asking again would not change are kept -- a preview, or "protected" --
+// and none for longer than PROBE_TTL_MS, after which a signed address may have
+// expired and a live stream ended.
+const PROBE_KEY = 'probes';
+const PROBE_TTL_MS = 15 * 60 * 1000;
+const PROBE_KEEP = 40;
+const probing = new Map();
+let probeWrites = Promise.resolve();
+
+function shortText(value, limit) {
+  return typeof value === 'string' && value.trim() !== '' && value.length <= limit ? value.trim() : null;
+}
+
+// The helper is ours, but its answer is about a page, so it is held to the
+// same standard as anything else from one before the popup draws it.
+function previewOf(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+  const number = (value) => (typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : null);
+  const container = shortText(raw.container, 10);
+  return {
+    title: cleanTitle(raw.title) || null,
+    thumbnail: isHttpUrl(raw.thumbnail) ? raw.thumbnail : null,
+    durationSec: number(raw.durationSec),
+    qualityLabel: shortText(raw.qualityLabel, 40),
+    container: container && /^[a-z0-9]+$/i.test(container) ? container.toLowerCase() : null,
+    estimatedBytes: number(raw.estimatedBytes),
+    platform: shortText(raw.platform, 40),
+    isLive: raw.isLive === true,
+    audioOnly: raw.audioOnly === true,
+  };
+}
+
+async function readProbes() {
+  try {
+    const stored = await chrome.storage.session.get(PROBE_KEY);
+    const probes = stored[PROBE_KEY];
+    return probes && typeof probes === 'object' ? probes : {};
+  } catch {
+    return {};
+  }
+}
+
+function keepProbe(key, answer) {
+  probeWrites = probeWrites
+    .then(async () => {
+      const probes = await readProbes();
+      probes[key] = { at: Date.now(), answer };
+      const newest = Object.entries(probes)
+        .filter(([, entry]) => Date.now() - entry.at < PROBE_TTL_MS)
+        .sort(([, a], [, b]) => b.at - a.at)
+        .slice(0, PROBE_KEEP);
+      await chrome.storage.session.set({ [PROBE_KEY]: Object.fromEntries(newest) });
+    })
+    .catch(() => {});
+  return probeWrites;
+}
+
+async function probe(message) {
+  const fields = toPayload(message.payload);
+  if (!fields) return { preview: null, protected: false };
+  const key = `${fields.kind}:${fields.url}`;
+
+  const kept = (await readProbes())[key];
+  if (kept && Date.now() - kept.at < PROBE_TTL_MS) return kept.answer;
+
+  // Two opens of the popup in quick succession ask once.
+  if (!probing.has(key)) {
+    const asking = (async () => {
+      const result = await callHost({ type: 'probe', ...(await peer()), ...fields });
+      const answer = {
+        preview: result.ok ? previewOf(result.preview) : null,
+        protected: !result.ok && result.code === 'protected',
+      };
+      if (answer.preview || answer.protected) await keepProbe(key, answer);
+      return answer;
+    })().finally(() => probing.delete(key));
+    probing.set(key, asking);
+  }
+  return probing.get(key);
+}
+
+const ACTIONS = { scan, status, download, probe, connect, forget };
 
 chrome.webRequest.onHeadersReceived.addListener(
   onHeaders,

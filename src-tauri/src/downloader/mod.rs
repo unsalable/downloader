@@ -38,6 +38,27 @@ pub struct DownloadOutcome {
     pub metadata: MediaMetadata,
 }
 
+/// What a download would fetch, decided as [`execute`] decides it and read off
+/// before anything is fetched. See [`preview`].
+#[derive(Debug, Clone, PartialEq)]
+pub struct DownloadPreview {
+    /// What the finished task, its file and its history entry are named.
+    pub title: String,
+    /// The picture the finished row shows: the source's own, or else the one
+    /// the request arrived with.
+    pub thumbnail_url: Option<String>,
+    pub duration_sec: Option<f64>,
+    pub quality_label: String,
+    /// The finished file's extension, lowercase.
+    pub container: String,
+    /// See [`estimated_size`].
+    pub estimated_bytes: Option<u64>,
+    pub platform_label: String,
+    pub is_live: bool,
+    /// The plan takes sound and no picture.
+    pub audio_only: bool,
+}
+
 /// Called on every progress tick. The queue turns these into IPC events.
 pub type UpdateSink<'a> = &'a mut (dyn FnMut(DownloadProgress) + Send);
 
@@ -175,6 +196,108 @@ pub async fn execute(
     result
 }
 
+/// What [`execute`] would fetch for `request`, worked out the way it works it
+/// out -- the same analysis, the same item, the same title rule and the same
+/// plan -- and stopped there.
+///
+/// Nothing is downloaded and nothing is written, and the analyses `execute`
+/// keeps for a download that follows one are neither read nor added to. A
+/// handed-over link -- what a preview is nearly always of -- never uses them
+/// in `execute` either, and a preview that kept one would change what a later
+/// download fetched, which asking about a download must never do.
+pub async fn preview(request: &DownloadRequest, settings: &Settings) -> AppResult<DownloadPreview> {
+    // One call for both of `execute`'s branches: with no source, `analyze` is
+    // this with none.
+    let metadata =
+        providers::analyze_with_source(&request.url, settings, request.source.as_ref()).await?;
+    let item = providers::select_entry(metadata, request.entry)?;
+    preview_of(providers::prepare(item, settings).await?, request)
+}
+
+/// The part of [`preview`] that needs no network: an analysis already made,
+/// put through the title rule and the plan, and what they decide read off.
+pub fn preview_of(metadata: MediaMetadata, request: &DownloadRequest) -> AppResult<DownloadPreview> {
+    let (metadata, plan) = settle(metadata, request)?;
+    let duration_sec = metadata
+        .duration_sec
+        .filter(|seconds| seconds.is_finite() && *seconds > 0.0);
+
+    Ok(DownloadPreview {
+        estimated_bytes: estimated_size(&plan, duration_sec, metadata.is_live),
+        audio_only: plan.video.is_none() && plan.image.is_none(),
+        // As the finished task takes it.
+        thumbnail_url: metadata
+            .thumbnail_url
+            .or_else(|| request.thumbnail_url.clone()),
+        title: metadata.title,
+        duration_sec,
+        quality_label: plan.quality_label,
+        container: plan.container,
+        platform_label: metadata.platform_label,
+        is_live: metadata.is_live,
+    })
+}
+
+/// What a download settles before it moves a byte: the name it goes by and the
+/// streams it takes. A download and a preview both go through here, so the
+/// one cannot describe anything but the other.
+fn settle(metadata: MediaMetadata, request: &DownloadRequest) -> AppResult<(MediaMetadata, DownloadPlan)> {
+    let metadata = with_page_title(metadata, request);
+    let plan = plan::for_request(&metadata, request)?;
+    Ok((metadata, plan))
+}
+
+/// How much a plan will fetch: the plan's own figure, from the sizes the
+/// source states, or when it states none, what each chosen stream's bitrate
+/// comes to over the running time.
+///
+/// Some sources list a stream by its rate alone, and a preview without a size
+/// would leave out the figure people decide on. A stream that states neither
+/// leaves the whole figure unknown rather than low, and a live stream has
+/// none: the time it has run so far is not its length.
+fn estimated_size(plan: &DownloadPlan, duration_sec: Option<f64>, is_live: bool) -> Option<u64> {
+    if plan.estimated_bytes.is_some() {
+        return plan.estimated_bytes;
+    }
+    if is_live || plan.image.is_some() {
+        return None;
+    }
+    let seconds = duration_sec?;
+
+    let streams: Vec<&MediaFormat> = [plan.video.as_ref(), plan.audio.as_ref()]
+        .into_iter()
+        .flatten()
+        .collect();
+    if streams.is_empty() {
+        return None;
+    }
+    let mut bytes = 0.0;
+    for stream in streams {
+        bytes += match stream.best_known_size() {
+            Some(stated) => stated as f64,
+            None => kbps_of(stream)? * 1000.0 / 8.0 * seconds,
+        };
+    }
+    Some(bytes.round() as u64)
+}
+
+/// What a stream costs a second, in kilobits, as the source states it: its
+/// total, or else its picture and sound added up. A picture whose rate is not
+/// stated leaves the stream with none, since its sound alone would price a
+/// film like a song.
+fn kbps_of(format: &MediaFormat) -> Option<f64> {
+    let stated = |kbps: Option<f64>| kbps.filter(|kbps| kbps.is_finite() && *kbps > 0.0);
+    if let Some(total) = stated(format.tbr) {
+        return Some(total);
+    }
+    let sound = stated(format.abr).filter(|_| format.has_audio);
+    if format.has_video {
+        stated(format.vbr).map(|picture| picture + sound.unwrap_or(0.0))
+    } else {
+        sound
+    }
+}
+
 async fn download_analyzed(
     task_id: &str,
     request: &DownloadRequest,
@@ -190,14 +313,12 @@ async fn download_analyzed(
 
     // Before anything is named after it: the file, the finished task and the
     // history entry all take their title from here.
-    let metadata = with_page_title(metadata, request);
+    let (metadata, plan) = settle(metadata, request)?;
     let headers = request
         .source
         .as_ref()
         .map(SourceContext::headers)
         .unwrap_or_default();
-
-    let plan = plan::for_request(&metadata, request)?;
 
     // A merge is the one step with a hard external dependency. Failing here,
     // before any bytes move, is much better than after a 2 GB download.
@@ -1028,5 +1149,166 @@ mod tests {
         // A platform the app knows names its media better than a tab does.
         metadata.platform = PlatformId::Youtube;
         assert_eq!(with_page_title(metadata, &request(handed_over(), Some("Bölüm 5"))).title, "master");
+    }
+
+    /// A stream as the engine lists one, with no size and no rate until a
+    /// test gives it one.
+    fn listed(id: &str, kind: FormatKind, height: Option<u32>, container: &str) -> MediaFormat {
+        let mut format = providers::image_format(id, format!("https://cdn.example/{id}"), None, height, Vec::new());
+        format.kind = kind;
+        format.container = container.into();
+        format.has_video = matches!(kind, FormatKind::Video | FormatKind::Muxed);
+        format.has_audio = matches!(kind, FormatKind::Audio | FormatKind::Muxed);
+        format.vcodec = format.has_video.then(|| "avc1.640028".to_string());
+        format.acodec = format.has_audio.then(|| "mp4a.40.2".to_string());
+        format.quality_label = height.map_or_else(|| "128 kbps".to_string(), |height| format!("{height}p"));
+        format
+    }
+
+    /// A YouTube video as it is usually offered: 1080p picture and its sound
+    /// apart, each with a stated size.
+    fn zoo() -> MediaMetadata {
+        let mut picture = listed("137", FormatKind::Video, Some(1080), "mp4");
+        picture.filesize = Some(40_000_000);
+        let mut sound = listed("140", FormatKind::Audio, None, "m4a");
+        sound.filesize = Some(3_000_000);
+        sound.abr = Some(128.0);
+
+        let mut metadata = providers::tests_support::blank();
+        metadata.title = "Me at the zoo".into();
+        metadata.thumbnail_url = Some("https://i.ytimg.com/vi/jNQXAC9IVRw/hqdefault.jpg".into());
+        metadata.duration_sec = Some(19.0);
+        metadata.formats = vec![picture, sound];
+        metadata
+    }
+
+    #[test]
+    fn a_preview_is_the_plan_the_download_makes() {
+        let metadata = zoo();
+        let asked = request(handed_over(), Some("Me at the zoo - YouTube"));
+        let preview = preview_of(metadata.clone(), &asked).unwrap();
+        let plan = plan::for_request(&metadata, &asked).unwrap();
+
+        assert_eq!(preview.quality_label, plan.quality_label);
+        assert_eq!(preview.container, plan.container);
+        assert_eq!(preview.estimated_bytes, plan.estimated_bytes);
+        assert_eq!(
+            preview,
+            DownloadPreview {
+                // A platform the app knows keeps its own title over the tab's.
+                title: "Me at the zoo".into(),
+                thumbnail_url: Some("https://i.ytimg.com/vi/jNQXAC9IVRw/hqdefault.jpg".into()),
+                duration_sec: Some(19.0),
+                quality_label: "1080p".into(),
+                container: "mp4".into(),
+                estimated_bytes: Some(43_000_000),
+                platform_label: "YouTube".into(),
+                is_live: false,
+                audio_only: false,
+            }
+        );
+
+        let sound = preview_of(
+            metadata,
+            &DownloadRequest {
+                mode: crate::model::DownloadMode::Audio,
+                ..asked
+            },
+        )
+        .unwrap();
+        assert!(sound.audio_only);
+        assert_eq!(sound.container, "m4a");
+        assert_eq!(sound.quality_label, "128 kbps");
+        assert_eq!(sound.estimated_bytes, Some(3_000_000));
+    }
+
+    #[test]
+    fn a_handed_over_stream_previews_under_its_tab_and_its_poster() {
+        let mut metadata = page_stream(FormatKind::Muxed);
+        metadata.title = "master".into();
+        metadata.platform_label = PlatformId::Generic.label().into();
+        let asked = DownloadRequest {
+            thumbnail_url: Some("https://site.example/poster.jpg".into()),
+            ..request(handed_over(), Some("  Bölüm 5 "))
+        };
+
+        let preview = preview_of(metadata.clone(), &asked).unwrap();
+        assert_eq!(preview.title, "Bölüm 5");
+        assert_eq!(preview.thumbnail_url.as_deref(), Some("https://site.example/poster.jpg"));
+        assert_eq!(preview.platform_label, "Web page");
+
+        // The source's own picture wins, as it does on the finished row.
+        metadata.thumbnail_url = Some("https://cdn.example/still.jpg".into());
+        let preview = preview_of(metadata, &asked).unwrap();
+        assert_eq!(preview.thumbnail_url.as_deref(), Some("https://cdn.example/still.jpg"));
+    }
+
+    #[test]
+    fn a_size_the_source_does_not_state_is_worked_out_from_the_bitrate() {
+        let mut metadata = zoo();
+        metadata.duration_sec = Some(100.0);
+        for format in &mut metadata.formats {
+            format.filesize = None;
+        }
+        metadata.formats[0].tbr = Some(2000.0);
+        let asked = request(handed_over(), None);
+
+        // (2000 + 128) kbps for 100 s.
+        let preview = preview_of(metadata.clone(), &asked).unwrap();
+        assert_eq!(preview.estimated_bytes, Some(2128 * 1000 / 8 * 100));
+
+        // A stated size is used where there is one.
+        let mut sized = metadata.clone();
+        sized.formats[1].filesize = Some(1_000_000);
+        assert_eq!(
+            preview_of(sized, &asked).unwrap().estimated_bytes,
+            Some(2000 * 1000 / 8 * 100 + 1_000_000)
+        );
+
+        // A stream with picture and sound in one, stating the two rates apart.
+        let mut muxed = listed("hls-720", FormatKind::Muxed, Some(720), "mp4");
+        muxed.vbr = Some(1500.0);
+        muxed.abr = Some(128.0);
+        let single = MediaMetadata {
+            formats: vec![muxed.clone()],
+            duration_sec: Some(60.0),
+            ..zoo()
+        };
+        assert_eq!(
+            preview_of(single.clone(), &asked).unwrap().estimated_bytes,
+            Some(1628 * 1000 / 8 * 60)
+        );
+
+        // Unknown rather than low: a picture with no rate of its own...
+        muxed.vbr = None;
+        let unpriced = MediaMetadata {
+            formats: vec![muxed],
+            ..single.clone()
+        };
+        assert_eq!(preview_of(unpriced, &asked).unwrap().estimated_bytes, None);
+        // ...no running time...
+        let untimed = MediaMetadata {
+            duration_sec: None,
+            ..metadata.clone()
+        };
+        assert_eq!(preview_of(untimed, &asked).unwrap().estimated_bytes, None);
+        // ...or a stream that has not ended.
+        let live = MediaMetadata {
+            is_live: true,
+            ..metadata
+        };
+        let preview = preview_of(live, &asked).unwrap();
+        assert!(preview.is_live);
+        assert_eq!(preview.estimated_bytes, None);
+    }
+
+    #[test]
+    fn what_the_plan_refuses_the_preview_refuses() {
+        let nothing = MediaMetadata {
+            formats: Vec::new(),
+            ..zoo()
+        };
+        let refused = preview_of(nothing, &request(handed_over(), None)).unwrap_err();
+        assert_eq!(refused.code(), "unsupported");
     }
 }

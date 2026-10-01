@@ -194,6 +194,10 @@ fn interpret(output: &process::CapturedOutput, url: &str) -> AppResult<MediaMeta
 
 /// One engine run: the shared arguments, a cookie jar when the caller has one
 /// to lend, and the URL last.
+///
+/// Run as a family, so that a caller who stops waiting -- the browser link's
+/// host gives a preview a fixed time -- ends the engine rather than leaving it
+/// to finish reading, and to write a lent session back to disk, on its own.
 async fn run_engine(
     engine: &Path,
     args: &[String],
@@ -206,7 +210,7 @@ async fn run_engine(
         args.push(jar.to_string());
     }
     args.push(url.to_string());
-    process::run(engine, &args).await
+    process::run_tree(engine, &args).await
 }
 
 /// The browser session to repeat a failed run with, if repeating it is worth

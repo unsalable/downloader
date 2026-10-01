@@ -23,6 +23,8 @@ use serde::{Deserialize, Serialize};
 
 use super::protocol::Download;
 use crate::error::AppResult;
+use crate::model::{DownloadMode, DownloadRequest, SourceContext, WatermarkPreference};
+use crate::settings::Settings;
 
 /// The argument the host starts the app with. The running copy receives it
 /// through the single-instance plugin; a copy that is starting fresh reads the
@@ -65,6 +67,65 @@ pub struct Handoff {
     pub thumbnail: Option<String>,
     /// Unix seconds, stamped by the host when it accepted the link.
     pub received_at: i64,
+}
+
+impl Handoff {
+    /// The request the app queues for this link: the one Home would send with
+    /// the default options untouched, since the user picked the video in the
+    /// browser and there is nothing left to ask them.
+    ///
+    /// Must stay in step with `requestFromHandoff` in `src/lib/handoff.ts`,
+    /// field for field. That function builds the request the app downloads;
+    /// this one builds the request the popup's preview is worked out from, and
+    /// a preview of any other request would describe a download that never
+    /// happens.
+    pub fn to_request(&self, settings: &Settings) -> DownloadRequest {
+        let mode = if self.kind == "audio" {
+            DownloadMode::Audio
+        } else {
+            settings.default_mode
+        };
+        // `value || null` on the other side: an empty string is no value.
+        let given = |value: &Option<String>| value.clone().filter(|value| !value.is_empty());
+
+        DownloadRequest {
+            url: self.url.clone(),
+            mode,
+            quality: settings.default_quality,
+            video_format_id: None,
+            audio_format_id: None,
+            // A default container belongs to the default mode, as on Home: an
+            // MP4 preference would have a song converted into a video.
+            container: if mode == settings.default_mode {
+                settings.default_container.clone()
+            } else {
+                None
+            },
+            watermark: WatermarkPreference::Any,
+            output_dir: None,
+            title: self
+                .title
+                .as_deref()
+                .map(str::trim)
+                .filter(|title| !title.is_empty())
+                .map(str::to_string),
+            thumbnail_url: given(&self.thumbnail),
+            // The download tells the site from the link; a stream's own
+            // address rarely says which page it played on.
+            platform: None,
+            entry: None,
+            audio_language: None,
+            // Present even when every part of it is empty, as it is on the
+            // other side. Its presence is what marks a link as handed over,
+            // and that decides how it is analysed and what it is called.
+            source: Some(SourceContext {
+                page_url: given(&self.page_url),
+                referer: given(&self.referer),
+                origin: given(&self.origin),
+                user_agent: given(&self.user_agent),
+            }),
+        }
+    }
 }
 
 /// Check what the extension sent and cut it down to what the app may use.
@@ -218,8 +279,9 @@ fn has_control(value: &str) -> bool {
 ///
 /// Checked on the text as sent as well as on the parsed address: the parser
 /// quietly removes tabs and line breaks, which a header built from this later
-/// must never carry and which a real browser never sends.
-fn web_address(value: Option<&str>) -> Result<Option<String>, &'static str> {
+/// must never carry and which a real browser never sends. The preview's
+/// picture is held to the same rule on its way back to the popup.
+pub(super) fn web_address(value: Option<&str>) -> Result<Option<String>, &'static str> {
     let Some(value) = present(value) else {
         return Ok(None);
     };
@@ -279,7 +341,7 @@ mod tests {
             "v": 1,
             "profileId": "profile-a",
             "browser": "chrome",
-            "extensionVersion": "1.0.3",
+            "extensionVersion": "1.0.4",
             "url": "https://cdn.example/hls/master.m3u8",
         });
         for (key, value) in extra.as_object().unwrap() {
@@ -325,7 +387,7 @@ mod tests {
         assert_eq!(download.peer.v, 1);
         assert_eq!(download.peer.profile_id, "profile-a");
         assert_eq!(download.peer.browser, Browser::Chrome);
-        assert_eq!(download.peer.extension_version, "1.0.3");
+        assert_eq!(download.peer.extension_version, "1.0.4");
         assert_eq!(download.kind.as_deref(), Some("stream"));
         assert_eq!(download.page_url.as_deref(), Some("https://site.example/watch/5"));
         assert_eq!(download.origin.as_deref(), Some("https://player.example"));
@@ -493,5 +555,125 @@ mod tests {
         let dir = scratch("missing");
         assert!(take_from(&dir, 0).unwrap().is_empty());
         assert!(!dir.exists());
+    }
+
+    // The four cases below are the ones `src/lib/handoff.test.ts` holds
+    // `requestFromHandoff` to. The two functions have to agree, so they are
+    // held to the same examples.
+
+    fn defaults() -> Settings {
+        Settings {
+            default_mode: DownloadMode::Video,
+            default_quality: crate::model::QualityPreference::MaxHeight { height: 1080 },
+            default_container: Some("mp4".into()),
+            ..Settings::default()
+        }
+    }
+
+    fn stream() -> Handoff {
+        Handoff {
+            url: "https://cdn.example.com/hls/master.m3u8".into(),
+            kind: "stream".into(),
+            title: Some("Bölüm 5".into()),
+            page_url: Some("https://dizi.example.com/izle/5".into()),
+            referer: Some("https://player.example.com/".into()),
+            origin: Some("https://player.example.com".into()),
+            user_agent: Some("Mozilla/5.0".into()),
+            thumbnail: Some("https://cdn.example.com/poster.jpg".into()),
+            received_at: 1_790_000_000,
+        }
+    }
+
+    #[test]
+    fn a_handed_over_link_is_asked_for_as_home_would_with_the_default_options() {
+        let request = stream().to_request(&defaults());
+        assert_eq!(
+            serde_json::to_value(&request).unwrap(),
+            serde_json::json!({
+                "url": "https://cdn.example.com/hls/master.m3u8",
+                "mode": "video",
+                "quality": { "type": "maxHeight", "height": 1080 },
+                "videoFormatId": null,
+                "audioFormatId": null,
+                "container": "mp4",
+                "watermark": "any",
+                "outputDir": null,
+                "title": "Bölüm 5",
+                "thumbnailUrl": "https://cdn.example.com/poster.jpg",
+                "platform": null,
+                "entry": null,
+                "audioLanguage": null,
+                "source": {
+                    "pageUrl": "https://dizi.example.com/izle/5",
+                    "referer": "https://player.example.com/",
+                    "origin": "https://player.example.com",
+                    "userAgent": "Mozilla/5.0",
+                },
+            })
+        );
+    }
+
+    #[test]
+    fn a_sound_is_asked_for_as_a_sound_without_the_video_container() {
+        let request = Handoff {
+            kind: "audio".into(),
+            ..stream()
+        }
+        .to_request(&defaults());
+        assert_eq!(request.mode, DownloadMode::Audio);
+        assert_eq!(request.container, None);
+
+        // Every other kind takes the default mode and its container.
+        for kind in ["page", "stream", "video"] {
+            let request = Handoff {
+                kind: kind.into(),
+                ..stream()
+            }
+            .to_request(&defaults());
+            assert_eq!(request.mode, DownloadMode::Video, "{kind}");
+            assert_eq!(request.container.as_deref(), Some("mp4"), "{kind}");
+        }
+    }
+
+    #[test]
+    fn the_container_is_kept_when_the_default_is_already_sound() {
+        let settings = Settings {
+            default_mode: DownloadMode::Audio,
+            default_container: Some("m4a".into()),
+            ..defaults()
+        };
+        let request = Handoff {
+            kind: "video".into(),
+            ..stream()
+        }
+        .to_request(&settings);
+        assert_eq!(request.mode, DownloadMode::Audio);
+        assert_eq!(request.container.as_deref(), Some("m4a"));
+    }
+
+    #[test]
+    fn what_the_browser_did_not_know_is_left_out_but_the_source_stays() {
+        let request = Handoff {
+            kind: "page".into(),
+            title: Some("   ".into()),
+            referer: None,
+            origin: None,
+            user_agent: Some(String::new()),
+            thumbnail: None,
+            ..stream()
+        }
+        .to_request(&defaults());
+        assert_eq!(request.title, None);
+        assert_eq!(request.thumbnail_url, None);
+        assert_eq!(
+            request.source,
+            Some(SourceContext {
+                page_url: Some("https://dizi.example.com/izle/5".into()),
+                ..SourceContext::default()
+            })
+        );
+
+        let bare = handoff("https://a.example/v.mp4", 0);
+        assert_eq!(bare.to_request(&defaults()).source, Some(SourceContext::default()));
     }
 }

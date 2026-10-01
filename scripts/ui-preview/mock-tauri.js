@@ -679,7 +679,7 @@
       browser: 'Chrome',
       profileLabel: 'Melih',
       accountHint: 'm•••@gmail.com',
-      extensionVersion: '1.0.3',
+      extensionVersion: '1.0.4',
       lastPushAt: Math.floor(now / 1000) - 600,
       session: 'fresh',
       hostPath: 'C:\\Users\\melik\\AppData\\Local\\Universal Downloader\\ud-bridge.exe',

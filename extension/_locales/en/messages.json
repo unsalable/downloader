@@ -32,6 +32,10 @@
     "message": "Page",
     "description": "Meta line label for a row that hands over the page's address itself."
   },
+  "kindLive": {
+    "message": "Live",
+    "description": "First word of a row's details when the app says the video is a live broadcast."
+  },
   "kindProtected": {
     "message": "Protected",
     "description": "Meta line of a row whose video is DRM-protected. Such a row has no button."
@@ -80,6 +84,6 @@
     "message": "Chrome hides new extensions behind the puzzle-piece button next to the address bar. Click it, then the pin beside Universal Downloader Connector."
   },
   "privacyBody": {
-    "message": "The extension sends nothing anywhere but to Universal Downloader on this computer, and a video only when you press Get."
+    "message": "The extension sends nothing anywhere but to Universal Downloader on this computer, and the app downloads a video only when you press Get."
   }
 }

@@ -6,7 +6,7 @@ Everything the dashboard asks for. Paste each block into the field it names.
 development `key` from the manifest, which is what Google's guidance says to do, and leaves
 out `key.pem`, the icon generator, the notes and any test file. Bump `version` in
 `extension/manifest.json` before every upload; Chrome refuses a package whose version has not
-increased. This one is **1.0.3**.
+increased. This one is **1.0.4**.
 
 **Images:** `store-assets/`, from `node scripts/build-store-assets.mjs` (rerun it whenever the
 popup or the mark changes). They are photographs of the real popup, rendered with its own HTML, CSS and
@@ -18,9 +18,9 @@ one value per field rather than one per language; nothing obliges those to be En
 are given in Turkish, which is the language of this account's dashboard. The English wording is
 kept in the appendix for a reviewer exchange that happens in English.
 
-**Before uploading 1.0.3, know two things.**
+**Before uploading 1.0.4, know two things.**
 
-- **Existing users will see the extension switched off.** 1.0.3 asks for more than 1.0.2 did
+- **Existing users will see the extension switched off.** 1.0.4 asks for more than 1.0.2 did
   (`webRequest`, `scripting`, access to all sites). Chrome disables an installed extension whose
   update adds permissions until the user accepts them, with a prompt in the toolbar menu.
 - **YouTube is a policy risk.** The Chrome Web Store has refused and removed extensions that
@@ -61,7 +61,7 @@ For members-only YouTube videos you already pay for, turn on "YouTube session" i
 WHAT IT DOES NOT DO
 
 - It has no server, no analytics and no account. Nothing it sees goes to the developer or to any third party.
-- Nothing leaves your computer. The only recipient is the Universal Downloader application, which you installed, and a video goes to it only when you press Get.
+- Nothing leaves your computer. The only recipient is the Universal Downloader application, which you installed. It says what each video would download as before you press anything, and downloads one only when you press Get.
 - It does not get around DRM. Protected videos are marked "Protected" and have no button, and services such as Netflix are listed as protected.
 
 HOW IT WORKS
@@ -110,7 +110,7 @@ Zaten ödediğiniz, üyelere özel YouTube videoları için açılır penceredek
 YAPMADIKLARI
 
 - Sunucusu, analitiği ve hesabı yoktur. Gördüğü hiçbir şey geliştiriciye veya üçüncü bir tarafa gitmez.
-- Hiçbir şey bilgisayarınızdan çıkmaz. Tek alıcı, sizin kurduğunuz Universal Downloader uygulamasıdır ve bir video ona yalnızca İndir'e bastığınızda gider.
+- Hiçbir şey bilgisayarınızdan çıkmaz. Tek alıcı, sizin kurduğunuz Universal Downloader uygulamasıdır. Uygulama her videonun nasıl ineceğini siz bir şeye basmadan söyler, ama yalnızca İndir'e bastığınızda indirir.
 - DRM'yi aşmaz. Korumalı videolar "Korumalı" olarak işaretlenir ve düğmeleri olmaz; Netflix gibi servisler korumalı olarak gösterilir.
 
 NASIL ÇALIŞIR
@@ -143,7 +143,7 @@ Kullanıcının tarayıcısında oynayan videoları, aynı bilgisayardaki ve kul
 **İzin: webRequest**
 
 ```
-Bir sekmenin hangi videoları ve sesleri oynattığını görmek için. Eklenti, sekmelerin medya, XHR ve fetch yanıtlarının başlıklarına bakar (adres, içerik türü, boyut) ve video ya da ses taşıyanları — HLS ve DASH akışlarını, video ve ses dosyalarını — o sekmenin listesine ekler. İstekleri engellemez, değiştirmez veya yönlendirmez; yalnızca yanıt başlıklarını okur. Liste tarayıcının oturum deposunda tutulur, sekme başka bir sayfaya geçince veya kapanınca silinir ve kullanıcı İndir'e basmadıkça hiçbir yere gönderilmez.
+Bir sekmenin hangi videoları ve sesleri oynattığını görmek için. Eklenti, sekmelerin medya, XHR ve fetch yanıtlarının başlıklarına bakar (adres, içerik türü, boyut) ve video ya da ses taşıyanları — HLS ve DASH akışlarını, video ve ses dosyalarını — o sekmenin listesine ekler. İstekleri engellemez, değiştirmez veya yönlendirmez; yalnızca yanıt başlıklarını okur. Liste tarayıcının oturum deposunda tutulur, sekme başka bir sayfaya geçince veya kapanınca silinir ve aynı bilgisayardaki Universal Downloader uygulamasından başka hiçbir yere gönderilmez: açılır pencere açıkken, her birinin nasıl ineceğini söylemesi için listelenen ilk birkaç öğe; kullanıcı İndir'e bastığında da indirmesi için o öğe.
 ```
 
 **İzin: scripting**
@@ -167,7 +167,7 @@ Yalnızca youtube.com çerezleri ve yalnızca kullanıcı açılır penceredeki 
 **İzin: nativeMessaging**
 
 ```
-Bu eklentinin iletişim kurduğu tek kanaldır. Kullanıcının İndir'e bastığı videonun adresini ve — anahtar açıkken — YouTube oturumunu, Universal Downloader masaüstü uygulamasının kurduğu com.universaldownloader.bridge adlı yerel mesajlaşma sunucusuna Chrome'un stdio kanalı üzerinden gönderir. O sunucuyu Chrome'un kendisi başlatır ve yalnızca bu eklentinin kimliği için başlatır. Hiçbir ağ portu dinlenmez; eklentinin bir sunucusu yoktur.
+Bu eklentinin iletişim kurduğu tek kanaldır. Açılır pencerede listelenen ilk birkaç videonun adresini (uygulama her birinin hangi kalitede, hangi biçimde ve yaklaşık ne boyutta ineceğini söylesin diye), kullanıcının İndir'e bastığı videonun adresini ve — anahtar açıkken — YouTube oturumunu, Universal Downloader masaüstü uygulamasının kurduğu com.universaldownloader.bridge adlı yerel mesajlaşma sunucusuna Chrome'un stdio kanalı üzerinden gönderir. O sunucuyu Chrome'un kendisi başlatır ve yalnızca bu eklentinin kimliği için başlatır. Hiçbir ağ portu dinlenmez; eklentinin bir sunucusu yoktur.
 ```
 
 **İzin: storage**
@@ -205,7 +205,7 @@ onlara dokunmaz.
 Verinin ne için kullanıldığını soran kutuya:
 
 ```
-Sekmelerin oynattığı medyanın adresleri, eklentinin kendi açılır penceresinde listelenmek için tarayıcının oturum deposunda tutulur ve sekme kapanınca silinir. Kullanıcı İndir'e bastığında yalnızca o öğenin adresi ve türü, sayfanın adresi ve başlığı, isteğin yönlendiren adresi ve kökeni, tarayıcının kullanıcı aracısı dizesi ve önizleme görselinin adresi, Chrome'un yerel mesajlaşma kanalı üzerinden kullanıcının aynı bilgisayara kendisinin kurduğu masaüstü uygulamasına aktarılır. youtube.com kimlik doğrulama çerezleri yalnızca kullanıcı YouTube oturumu anahtarını açtığında aynı yolla aynı uygulamaya aktarılır. Hiçbiri geliştirici tarafından toplanmaz, hiçbir sunucuya iletilmez ve kimseyle paylaşılmaz.
+Sekmelerin oynattığı medyanın adresleri, eklentinin kendi açılır penceresinde listelenmek için tarayıcının oturum deposunda tutulur ve sekme kapanınca silinir. Açılır pencere açıkken, listelenen ilk birkaç öğe için aşağıdaki bilgiler, uygulama her birinin nasıl ineceğini söyleyebilsin diye aynı uygulamaya sorulur; uygulama bunun için hiçbir şey indirmez ve saklamaz. Kullanıcı İndir'e bastığında yalnızca o öğenin adresi ve türü, sayfanın adresi ve başlığı, isteğin yönlendiren adresi ve kökeni, tarayıcının kullanıcı aracısı dizesi ve önizleme görselinin adresi, Chrome'un yerel mesajlaşma kanalı üzerinden kullanıcının aynı bilgisayara kendisinin kurduğu masaüstü uygulamasına aktarılır. youtube.com kimlik doğrulama çerezleri yalnızca kullanıcı YouTube oturumu anahtarını açtığında aynı yolla aynı uygulamaya aktarılır. Hiçbiri geliştirici tarafından toplanmaz, hiçbir sunucuya iletilmez ve kimseyle paylaşılmaz.
 ```
 
 Üç beyanı da onaylayın; burada üçü de doğrudur:
@@ -256,7 +256,7 @@ Sending the videos playing in the user's browser to the Universal Downloader des
 **Permission: webRequest**
 
 ```
-To see which videos and sounds a tab plays. The extension looks at the response headers of tabs' media, XHR and fetch requests (address, content type, size) and adds the ones carrying video or audio — HLS and DASH streams, video and audio files — to that tab's list. It does not block, modify or redirect any request; it only reads response headers. The list is kept in the browser's session storage, dropped when the tab moves to another page or closes, and sent nowhere unless the user presses Get.
+To see which videos and sounds a tab plays. The extension looks at the response headers of tabs' media, XHR and fetch requests (address, content type, size) and adds the ones carrying video or audio — HLS and DASH streams, video and audio files — to that tab's list. It does not block, modify or redirect any request; it only reads response headers. The list is kept in the browser's session storage, dropped when the tab moves to another page or closes, and passed nowhere but to the Universal Downloader application on the same computer: the first few listed items while the popup is open, so the application can say how each would download, and an item the user presses Get on, to download it.
 ```
 
 **Permission: scripting**
@@ -280,7 +280,7 @@ youtube.com cookies only, and only when the user turns on the "YouTube session" 
 **Permission: nativeMessaging**
 
 ```
-The only channel this extension communicates over. It sends the address of the video the user pressed Get on and — while the switch is on — the YouTube session to com.universaldownloader.bridge, a native messaging host installed by the Universal Downloader desktop application, using Chrome's stdio channel. Chrome starts that host itself and only for this extension's ID. Nothing listens on a network port; the extension has no server.
+The only channel this extension communicates over. It sends the addresses of the first few videos listed in the popup (so the application can say at what quality, in what format and at roughly what size each would download), the address of the video the user pressed Get on and — while the switch is on — the YouTube session to com.universaldownloader.bridge, a native messaging host installed by the Universal Downloader desktop application, using Chrome's stdio channel. Chrome starts that host itself and only for this extension's ID. Nothing listens on a network port; the extension has no server.
 ```
 
 **Permission: storage**
@@ -306,5 +306,5 @@ All logic is contained in the uploaded package. The extension loads no scripts f
 Tick Authentication information, Web history, User activity and Website content.
 
 ```
-The addresses of the media tabs play are kept in the browser's session storage, to be listed in the extension's own popup, and dropped when the tab closes. When the user presses Get, only that item's address and kind, the page's address and title, the request's referrer and origin, the browser's user-agent string and the preview image's address are passed, over Chrome's native messaging channel, to a desktop application the user installed on the same computer. youtube.com authentication cookies are passed the same way to the same application only when the user turns the YouTube session switch on. None of it is collected by the developer, transmitted to any server or shared with anyone.
+The addresses of the media tabs play are kept in the browser's session storage, to be listed in the extension's own popup, and dropped when the tab closes. While the popup is open, the details below are passed for the first few listed items to the same application, so it can say how each would download; it downloads and keeps nothing for this. When the user presses Get, only that item's address and kind, the page's address and title, the request's referrer and origin, the browser's user-agent string and the preview image's address are passed, over Chrome's native messaging channel, to a desktop application the user installed on the same computer. youtube.com authentication cookies are passed the same way to the same application only when the user turns the YouTube session switch on. None of it is collected by the developer, transmitted to any server or shared with anyone.
 ```

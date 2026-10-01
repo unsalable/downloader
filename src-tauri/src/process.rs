@@ -213,6 +213,45 @@ pub async fn run(program: &std::path::Path, args: &[String]) -> AppResult<Captur
     })
 }
 
+/// [`run`], for a tool that starts tools of its own: if the caller stops
+/// waiting -- a timeout, an answer nobody wants any more -- everything the
+/// tool started is ended with it, instead of running on with nobody reading.
+///
+/// The engine is the tool this is for. yt-dlp on Windows is a launcher that
+/// unpacks itself and runs the real program as its child, and killing the
+/// launcher leaves that child running (measured). Left alone, a link given up
+/// on is still read to the end -- and a run that was lent the browser's
+/// session writes it back into its cookie file when it exits, after the lease
+/// has already removed that file and has no way to remove it again.
+pub async fn run_tree(program: &std::path::Path, args: &[String]) -> AppResult<CapturedOutput> {
+    let mut command = command(program);
+    command
+        .args(args)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true);
+    let child = command
+        .spawn()
+        .map_err(|err| AppError::Other(format!("could not start {}: {err}", program.display())))?;
+    let tree = into_tree(child);
+
+    // Held until the output is in. Dropped any sooner, it takes the family
+    // with it: the job ends everything in it when its last handle closes.
+    #[cfg(windows)]
+    let _family = tree.job;
+    let output = tree
+        .child
+        .wait_with_output()
+        .await
+        .map_err(|err| AppError::Other(format!("could not run {}: {err}", program.display())))?;
+
+    Ok(CapturedOutput {
+        status: output.status.code(),
+        stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
+        stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+    })
+}
+
 /// `run`, bounded: a tool that has not finished within `limit` is killed and
 /// reported as an error rather than stalling its caller indefinitely.
 pub async fn run_with_timeout(

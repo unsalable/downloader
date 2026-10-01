@@ -20,6 +20,7 @@ import {
   cleanTitle,
   dedupeKey,
   formatDuration,
+  formatEstimate,
   formatSize,
   headerMap,
   isNoise,
@@ -413,7 +414,8 @@ describe('rows', () => {
     const [page] = rows(state, [top]);
     assert.equal(page.title, 'New video');
     assert.equal(page.thumbnail, 'https://i.ytimg.com/vi/NEWNEWNEW01/mqdefault.jpg');
-    assert.deepEqual(page.meta.parts, ['3:32']);
+    // What the player is playing may be the advert; the app says how long the video is.
+    assert.deepEqual(page.meta.parts, []);
   });
 
   test('elsewhere, the page row only stands in for a player with nothing to list', () => {
@@ -526,7 +528,7 @@ describe('rows', () => {
     assert.deepEqual(list[1].meta, { label: 'protected', parts: [] });
   });
 
-  test('order: page, streams by height, videos by size, audio, protected', () => {
+  test('order: streams by height, videos by size, audio, protected', () => {
     const items = [
       item('https://cdn.example/song.mp3', 'audio', { size: 5e6 }),
       item('https://cdn.example/small.mp4', 'video', { size: 10e6 }),
@@ -536,20 +538,70 @@ describe('rows', () => {
       item('https://cdn.example/1080.m3u8', 'hls', { info: { master: true, variants: [], height: 1080, protected: false } }),
       item('https://cdn.example/unknown.mpd', 'dash'),
     ];
-    const list = rows({ url: 'https://vimeo.com/123456', sawMedia: true, items }, []);
+    // Three players in the page, so their streams are three videos and none
+    // is folded into another.
+    const players = frame({ href: PAGE, videos: [{ src: '' }, { src: '' }, { src: '' }] });
+    const list = rows({ url: PAGE, sawMedia: true, items }, [players]);
     assert.deepEqual(
       list.map((row) => row.url.replace('https://cdn.example/', '')),
-      ['https://vimeo.com/123456', '1080.m3u8', '720.m3u8', 'unknown.mpd', 'big.mp4', 'small.mp4', 'song.mp3', 'locked.m3u8'],
+      ['1080.m3u8', '720.m3u8', 'unknown.mpd', 'big.mp4', 'small.mp4', 'song.mp3', 'locked.m3u8'],
     );
+    assert.deepEqual(list[3].meta, { label: 'video', parts: ['47.7 MB'] });
+  });
+
+  test('a video page on a known site is one row, the page, whatever its player fetched', () => {
+    const items = [
+      item('https://cdn.example/1080.m3u8', 'hls', { info: { master: true, variants: [], height: 1080, protected: false } }),
+      item('https://cdn.example/big.mp4', 'video', { size: 50e6 }),
+    ];
+    const list = rows({ url: 'https://vimeo.com/123456', sawMedia: true, items }, []);
+    assert.deepEqual(list.map((row) => row.url), ['https://vimeo.com/123456']);
     assert.deepEqual(list[0].meta, { label: 'site', site: 'Vimeo', parts: [] });
-    assert.deepEqual(list[4].meta, { label: 'video', parts: ['48 MB'] });
+  });
+
+  test('a feed on a known site is no page row; what it played is listed instead', () => {
+    const items = [item('https://video.twimg.example/a.m3u8', 'hls', { info: { master: true, variants: [], height: 720, protected: false } })];
+    const list = rows({ url: 'https://x.com/home', sawMedia: true, items }, []);
+    assert.deepEqual(list.map((row) => row.kind), ['stream']);
+    assert.deepEqual(rows({ url: 'https://x.com/someone/status/123', sawMedia: true, items }, []).map((row) => row.kind), ['page']);
+  });
+
+  test('one player fetching the same video twice is one row, the better described', () => {
+    const items = [
+      item('https://cdn.example/a/master.m3u8', 'hls', { info: { master: true, variants: [], height: 720, protected: false } }),
+      item('https://cdn.example/a/manifest.mpd', 'dash', { info: { height: 1080, protected: false } }),
+    ];
+    const list = rows({ url: PAGE, sawMedia: true, items }, [frame({ href: PAGE, videos: [{ src: '' }] })]);
+    assert.deepEqual(list.map((row) => row.url), ['https://cdn.example/a/manifest.mpd']);
+  });
+
+  test('the og: tags YouTube leaves behind from its front page are not this video', () => {
+    const watch = 'https://www.youtube.com/watch?v=XFkzRNyygfk';
+    const top = frame({
+      href: watch,
+      title: '(3) Radiohead - Creep - YouTube',
+      ogTitle: 'YouTube',
+      ogImage: 'https://www.youtube.com/img/desktop/yt_1200.png',
+      ogUrl: '',
+      videos: [{ src: '', duration: 238 }],
+    });
+    const [row] = rows({ url: watch, sawMedia: true, items: [] }, [top]);
+    assert.equal(row.title, 'Radiohead - Creep');
+    assert.equal(row.thumbnail, 'https://i.ytimg.com/vi/XFkzRNyygfk/mqdefault.jpg');
+    assert.equal(row.payload.title, 'Radiohead - Creep');
+  });
+
+  test("Vimeo's own title suffix goes as the others' do", () => {
+    const url = 'https://vimeo.com/76979871';
+    const top = frame({ href: url, title: 'The New Vimeo Player on Vimeo', videos: [{ src: '' }] });
+    assert.equal(rows({ url, sawMedia: true, items: [] }, [top])[0].title, 'The New Vimeo Player');
   });
 
   test('Referer and Origin are what the browser sent, near enough', () => {
     const own = item('https://cdn.example/own.m3u8', 'hls', { initiator: 'https://site.example', isXhr: true });
     const embedded = item('https://cdn.example/embed.m3u8', 'hls', { initiator: 'https://player.example', isXhr: true, frameId: 3 });
     const element = item('https://cdn.example/file.mp4', 'video', { initiator: 'https://player.example', isXhr: false });
-    const unknown = item('https://cdn.example/unknown.m3u8', 'hls');
+    const unknown = item('https://cdn.example/unknown.m3u8', 'hls', { frameId: 5 });
     const list = rows({ url: PAGE, title: 'Bölüm 5', items: [own, embedded, element, unknown] }, [], { userAgent: UA });
     const by = (url) => list.find((row) => row.url === url).payload;
 
@@ -637,8 +689,13 @@ describe('payload, titles and formats', () => {
   });
 
   test('formatSize and formatDuration match the app', () => {
-    assert.equal(formatSize(24 * 1024 * 1024), '24 MB');
-    assert.equal(formatSize(4.2 * 1024 * 1024), '4.2 MB');
+    assert.equal(formatSize(24 * 1024 * 1024), '24.0 MB');
+    assert.equal(formatSize(85458944), '81.5 MB');
+    assert.equal(formatSize(4.2 * 1024 * 1024), '4.20 MB');
+    assert.equal(formatSize(1.5 * 1024 * 1024 * 1024), '1.50 GB');
+    assert.equal(formatEstimate(31 * 1024 * 1024), '~31 MB');
+    assert.equal(formatEstimate(1.24 * 1024 * 1024 * 1024), '~1.2 GB');
+    assert.equal(formatEstimate(0), '');
     assert.equal(formatSize(512 * 1024), '512 KB');
     assert.equal(formatDuration(1421), '23:41');
     assert.equal(formatDuration(65), '1:05');

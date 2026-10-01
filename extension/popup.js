@@ -10,7 +10,7 @@
 // into the DOM as text through textContent, and images load only from http
 // and https addresses; nothing here assigns HTML.
 
-import { displayHost, isHttpUrl } from './media.js';
+import { displayHost, formatDuration, formatEstimate, isHttpUrl } from './media.js';
 
 const t = (key) => chrome.i18n.getMessage(key);
 const el = (id) => document.getElementById(id);
@@ -29,6 +29,15 @@ const LABELS = {
 // Long enough to register as "it is doing something", short enough that a
 // helper which answers at once does not look slow.
 const MIN_SENDING_MS = 300;
+
+// Each detail costs the app's helper a run of the download engine, so only the
+// rows at the top are asked about, and two at a time.
+const PROBE_ROWS = 4;
+const PROBE_PARALLEL = 2;
+
+// The labels a plan falls back on when the source named no quality. They say
+// nothing the kind of the row does not already say.
+const VAGUE_QUALITY = new Set(['video', 'audio', 'image']);
 
 // What the app's answer means for this popup, as one of three sentences.
 // `forbidden`, `version` and `malformed` all come down to an app older than
@@ -96,27 +105,35 @@ const checkGlyph = () =>
     },
   ]);
 
-function thumb(src) {
-  const box = document.createElement('div');
-  box.className = 'thumb';
-  box.append(playGlyph());
-  if (isHttpUrl(src)) {
-    const img = document.createElement('img');
-    img.alt = '';
-    img.decoding = 'async';
-    img.referrerPolicy = 'no-referrer';
-    img.addEventListener('load', () => img.classList.add('loaded'));
-    // A broken image leaves the play tile it was covering, not a broken icon.
-    img.addEventListener('error', () => img.remove());
-    img.src = src;
-    box.append(img);
-  }
-  return box;
+// A picture over the play tile. A new one is laid over the old only once it
+// has loaded, so a sharper still replacing a blurry one never flashes the tile
+// in between, and one that fails to load leaves whatever was there.
+function showPicture(box, src) {
+  if (!isHttpUrl(src) || box.dataset.src === src) return;
+  box.dataset.src = src;
+  const img = document.createElement('img');
+  img.alt = '';
+  img.decoding = 'async';
+  img.referrerPolicy = 'no-referrer';
+  img.addEventListener('load', () => {
+    if (box.dataset.src !== src) {
+      img.remove();
+      return;
+    }
+    img.classList.add('loaded');
+    for (const old of box.querySelectorAll('img')) if (old !== img) old.remove();
+  });
+  img.addEventListener('error', () => img.remove());
+  img.src = src;
+  box.append(img);
 }
 
-function metaLine(meta) {
-  const label = meta.label === 'site' ? meta.site : t(LABELS[meta.label] ?? 'kindVideo');
-  return [label, ...(meta.parts ?? [])].filter(Boolean).join(' · ');
+function pictureBox(className, src) {
+  const box = document.createElement('div');
+  box.className = className;
+  box.append(playGlyph());
+  showPicture(box, src);
+  return box;
 }
 
 function line(className, text, id) {
@@ -125,6 +142,35 @@ function line(className, text, id) {
   p.textContent = text;
   if (id) p.id = id;
   return p;
+}
+
+// What the row knows before the app has said anything: its kind, and the
+// quality, size or length the page gave away.
+function firstMeta(meta) {
+  const label = meta.label === 'site' ? meta.site : t(LABELS[meta.label] ?? 'kindVideo');
+  return [label, ...(meta.parts ?? [])].filter(Boolean).join(' · ');
+}
+
+// What the app said it would download, in the order its own Home screen
+// says it -- "1080p - MKV" there, "1080p · MKV · ~82 MB" here. The length
+// is added on the large card, where there is room for it; in a row of the
+// list it would push the size out of sight.
+function detailMeta(preview, row, { withLength = false } = {}) {
+  const quality = preview.qualityLabel && !VAGUE_QUALITY.has(preview.qualityLabel.toLowerCase())
+    ? preview.qualityLabel
+    : null;
+  const length = withLength && !preview.isLive
+    ? formatDuration(preview.durationSec ?? row.durationSec ?? 0)
+    : '';
+  return [
+    preview.isLive ? t('kindLive') : null,
+    quality,
+    preview.container ? preview.container.toUpperCase() : null,
+    formatEstimate(preview.estimatedBytes) || null,
+    length || null,
+  ]
+    .filter(Boolean)
+    .join(' · ');
 }
 
 async function send(button, row) {
@@ -138,16 +184,40 @@ async function send(button, row) {
   const result = reply?.result ?? null;
   if (result?.ok) {
     // Sent stays sent: pressing it again would queue the same download twice.
+    // In a row of the list the check says it alone -- the word would take the
+    // room the row's details need -- and the word is still its name.
     button.dataset.state = 'sent';
-    const label = document.createElement('span');
-    label.textContent = t('btnSent');
-    button.replaceChildren(checkGlyph(), label);
+    button.setAttribute('aria-label', t('btnSent'));
+    if (button.closest('.row')) {
+      button.title = t('btnSent');
+      button.replaceChildren(checkGlyph());
+    } else {
+      const label = document.createElement('span');
+      label.textContent = t('btnSent');
+      button.replaceChildren(checkGlyph(), label);
+    }
     showProblem(null);
     return;
   }
   delete button.dataset.state;
   button.disabled = false;
   showProblem(problemOf(result) ?? 'unreachable');
+}
+
+function downloadButton(row, describedBy) {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'get';
+  button.textContent = t('btnDownload');
+  button.setAttribute('aria-describedby', describedBy);
+  button.disabled = problem !== null;
+  button.addEventListener('click', () => send(button, row));
+  return button;
+}
+
+// One row on the screen and the nodes the app's answer will change.
+function drawn(row, node, picture, title, meta, button, feature = false) {
+  return { row, node, picture, title, meta, button, feature };
 }
 
 function rowNode(row, index) {
@@ -157,21 +227,33 @@ function rowNode(row, index) {
   const text = document.createElement('div');
   text.className = 'text';
   const titleId = `row-${index}`;
-  text.append(line('title', row.title, titleId), line('meta', metaLine(row.meta)));
-  node.append(thumb(row.thumbnail), text);
+  const title = line('title', row.title, titleId);
+  const meta = line('meta', row.protected ? t('kindProtected') : firstMeta(row.meta));
+  text.append(title, meta);
+  const picture = pictureBox('thumb', row.thumbnail);
+  node.append(picture, text);
 
   // A protected row has nothing to press; its meta line says why.
-  if (!row.protected) {
-    const button = document.createElement('button');
-    button.type = 'button';
-    button.className = 'get';
-    button.textContent = t('btnDownload');
-    button.setAttribute('aria-describedby', titleId);
-    button.disabled = problem !== null;
-    button.addEventListener('click', () => send(button, row));
-    node.append(button);
-  }
-  return node;
+  const button = row.protected ? null : downloadButton(row, titleId);
+  if (button) node.append(button);
+  return drawn(row, node, picture, title, meta, button);
+}
+
+// The page is one video: shown the way the app shows one, its still large
+// above its title, and the button across the card's width.
+function featureNode(row) {
+  const node = document.createElement('div');
+  node.className = 'feature';
+  const picture = pictureBox('poster', row.thumbnail);
+  const title = line('title', row.title, 'row-0');
+  const meta = line('meta', row.protected ? t('kindProtected') : firstMeta(row.meta));
+  const text = document.createElement('div');
+  text.className = 'text';
+  text.append(title, meta);
+  node.append(picture, text);
+  const button = row.protected ? null : downloadButton(row, 'row-0');
+  if (button) node.append(button);
+  return drawn(row, node, picture, title, meta, button, true);
 }
 
 function emptyNode(titleKey, bodyKey) {
@@ -181,16 +263,66 @@ function emptyNode(titleKey, bodyKey) {
   return box;
 }
 
+// The app's answer, laid into a row. Its title and still go into what İndir
+// sends as well, so the download is named and pictured in the app the moment
+// it arrives rather than when it finishes.
+function apply(item, answer) {
+  item.meta.classList.remove('pending');
+  const { row } = item;
+  if (answer?.protected) {
+    item.button?.remove();
+    item.meta.textContent = t('kindProtected');
+    return;
+  }
+  const preview = answer?.preview;
+  if (!preview) {
+    item.meta.textContent = firstMeta(row.meta);
+    return;
+  }
+  if (preview.title) {
+    item.title.textContent = preview.title;
+    row.payload.title = preview.title;
+  }
+  if (preview.thumbnail) {
+    showPicture(item.picture, preview.thumbnail);
+    row.payload.thumbnail = preview.thumbnail;
+  }
+  item.meta.textContent = detailMeta(preview, row, { withLength: item.feature }) || firstMeta(row.meta);
+}
+
+// Ask about the rows at the top, a couple at a time, and fill each in as its
+// answer comes. Until then its meta line is a quiet placeholder, as the app
+// draws one while it reads a link.
+async function describe(items) {
+  const wanted = items.filter((item) => !item.row.protected).slice(0, PROBE_ROWS);
+  for (const item of wanted) item.meta.classList.add('pending');
+  const queue = [...wanted];
+  const worker = async () => {
+    for (let item = queue.shift(); item; item = queue.shift()) {
+      apply(item, await ask('probe', { payload: item.row.payload }));
+    }
+  };
+  await Promise.all(Array.from({ length: PROBE_PARALLEL }, worker));
+}
+
 function renderList(reply) {
   const list = el('list');
+  list.classList.remove('single');
+  let items = [];
   if (reply?.protectedService) {
     list.replaceChildren(emptyNode('protectedTitle', 'protectedBody'));
-  } else if (Array.isArray(reply?.rows) && reply.rows.length > 0) {
-    list.replaceChildren(...reply.rows.map(rowNode));
+  } else if (Array.isArray(reply?.rows) && reply.rows.length === 1) {
+    list.classList.add('single');
+    items = [featureNode(reply.rows[0])];
+    list.replaceChildren(items[0].node);
+  } else if (Array.isArray(reply?.rows) && reply.rows.length > 1) {
+    items = reply.rows.map(rowNode);
+    list.replaceChildren(...items.map((item) => item.node));
   } else {
     list.replaceChildren(emptyNode('emptyTitle', 'emptyBody'));
   }
   list.hidden = false;
+  if (items.length > 0) void describe(items);
 }
 
 // The switch is on when this profile holds the binding and the user has not

@@ -13,6 +13,7 @@
   "kindVideo": { "message": "Video" },
   "kindAudio": { "message": "Ses" },
   "kindPage": { "message": "Sayfa" },
+  "kindLive": { "message": "Canlı" },
   "kindProtected": { "message": "Korumalı" },
 
   "emptyTitle": { "message": "Bu sayfada video yok" },
@@ -49,6 +50,6 @@
     "message": "Chrome yeni eklentileri adres çubuğunun yanındaki yapboz parçası düğmesinin arkasına gizler. Ona, sonra Universal Downloader Connector'ın yanındaki raptiyeye tıklayın."
   },
   "privacyBody": {
-    "message": "Eklenti, bu bilgisayardaki Universal Downloader dışında hiçbir yere bir şey göndermez; bir videoyu da yalnızca İndir'e bastığınızda gönderir."
+    "message": "Eklenti, bu bilgisayardaki Universal Downloader dışında hiçbir yere bir şey göndermez; uygulama bir videoyu yalnızca İndir'e bastığınızda indirir."
   }
 }
