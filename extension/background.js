@@ -95,6 +95,7 @@ function profileId() {
 
 async function browserFamily() {
   const agent = navigator.userAgent;
+  if (/\bFirefox\//.test(agent)) return 'firefox';
   if (/\bEdg\//.test(agent)) return 'edge';
   if (/\bOPR\//.test(agent)) return 'opera';
   if (/\bVivaldi\//.test(agent)) return 'vivaldi';
@@ -416,6 +417,17 @@ function notePlaying(tabId) {
   });
 }
 
+// The origin of the document that made the request. Chrome names it
+// `initiator`; Firefox gives the address of that document as `originUrl`.
+function initiatorOf(details) {
+  if (typeof details.initiator === 'string') return details.initiator;
+  try {
+    return typeof details.originUrl === 'string' ? new URL(details.originUrl).origin : '';
+  } catch {
+    return '';
+  }
+}
+
 function onHeaders(details) {
   if (details.tabId < 0) return;
   if (details.statusCode < 200 || details.statusCode > 299) return;
@@ -448,7 +460,7 @@ function onHeaders(details) {
       url,
       kind,
       frameId: details.frameId >= 0 ? details.frameId : 0,
-      initiator: typeof details.initiator === 'string' ? details.initiator : '',
+      initiator: initiatorOf(details),
       isXhr: details.type === 'xmlhttprequest',
       contentType: headers['content-type'] ?? '',
       size: typeof size === 'number' ? size : null,

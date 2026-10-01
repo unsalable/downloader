@@ -43,6 +43,12 @@ const VENDORS: &[(&str, &str)] = &[
     ("Chromium", r"Software\Chromium\NativeMessagingHosts"),
 ];
 
+/// Firefox's key, which names a manifest of its own: Firefox lists the
+/// extensions it lets in under `allowed_extensions`, by id, where every
+/// Chromium reads `allowed_origins`, and neither family accepts the other's
+/// field in its place.
+const FIREFOX: (&str, &str) = ("Firefox", r"Software\Mozilla\NativeMessagingHosts");
+
 /// The manifest Chrome reads before it will start anything.
 #[derive(Serialize)]
 struct HostManifest {
@@ -55,8 +61,30 @@ struct HostManifest {
     allowed_origins: Vec<String>,
 }
 
+/// The manifest Firefox reads.
+#[derive(Serialize)]
+struct FirefoxManifest {
+    name: &'static str,
+    description: &'static str,
+    path: String,
+    #[serde(rename = "type")]
+    kind: &'static str,
+    allowed_extensions: Vec<String>,
+}
+
+const DESCRIPTION: &str =
+    "Lets this browser send videos to Universal Downloader, and lend it your YouTube session if you turn that on.";
+
 fn manifest_path() -> AppResult<PathBuf> {
     Ok(super::dir()?.join("host-manifest.json"))
+}
+
+fn firefox_manifest_path() -> AppResult<PathBuf> {
+    Ok(super::dir()?.join("host-manifest-firefox.json"))
+}
+
+fn firefox_extensions() -> Vec<String> {
+    vec![protocol::FIREFOX_EXTENSION_ID.to_string()]
 }
 
 /// Point every supported browser at `host`.
@@ -69,11 +97,17 @@ fn manifest_path() -> AppResult<PathBuf> {
 pub fn register(host: &Path) -> AppResult<()> {
     let manifest = HostManifest {
         name: protocol::HOST_NAME,
-        description:
-            "Lets this browser send videos to Universal Downloader, and lend it your YouTube session if you turn that on.",
+        description: DESCRIPTION,
         path: host.to_string_lossy().into_owned(),
         kind: "stdio",
         allowed_origins: protocol::allowed_origins(),
+    };
+    let firefox = FirefoxManifest {
+        name: protocol::HOST_NAME,
+        description: DESCRIPTION,
+        path: host.to_string_lossy().into_owned(),
+        kind: "stdio",
+        allowed_extensions: firefox_extensions(),
     };
 
     // Written through a temporary file like everything else under `bridge/`:
@@ -82,15 +116,22 @@ pub fn register(host: &Path) -> AppResult<()> {
     let path = manifest_path()?;
     let text = serde_json::to_string_pretty(&manifest)?;
     crate::bridge::state::write_atomic(&path, text.as_bytes())?;
+    let firefox_path = firefox_manifest_path()?;
+    let text = serde_json::to_string_pretty(&firefox)?;
+    crate::bridge::state::write_atomic(&firefox_path, text.as_bytes())?;
 
-    let value = path.to_string_lossy().into_owned();
     let hkcu = RegKey::predef(HKEY_CURRENT_USER);
     let mut failures = Vec::new();
 
-    for (vendor, subkey) in VENDORS {
+    let entries = VENDORS
+        .iter()
+        .map(|vendor| (*vendor, &path))
+        .chain(std::iter::once((FIREFOX, &firefox_path)));
+    for ((vendor, subkey), manifest) in entries {
         let key = format!(r"{subkey}\{}", protocol::HOST_NAME);
         // The default (unnamed) value is where a browser looks; a named one is
         // ignored, silently.
+        let value = manifest.to_string_lossy().into_owned();
         let written = hkcu
             .create_subkey(&key)
             .and_then(|(key, _)| key.set_value("", &value));
@@ -99,7 +140,7 @@ pub fn register(host: &Path) -> AppResult<()> {
         }
     }
 
-    if failures.len() == VENDORS.len() {
+    if failures.len() == VENDORS.len() + 1 {
         return Err(AppError::Other(format!(
             "no browser could be pointed at the bridge helper ({})",
             failures.join("; ")
@@ -124,33 +165,33 @@ pub fn register(host: &Path) -> AppResult<()> {
 /// manifest itself has to be there too -- a value naming a file that an
 /// uninstall took is registered and dead.
 pub fn is_registered() -> bool {
-    let Ok(expected) = manifest_path() else {
+    let (Ok(expected), Ok(firefox)) = (manifest_path(), firefox_manifest_path()) else {
         return false;
     };
-    if !expected.is_file() || !manifest_is_current() {
+    if !manifest_is_current(&expected, "allowed_origins", &protocol::allowed_origins())
+        || !manifest_is_current(&firefox, "allowed_extensions", &firefox_extensions())
+    {
         return false;
     }
 
     let hkcu = RegKey::predef(HKEY_CURRENT_USER);
-    VENDORS.iter().all(|(_, subkey)| {
+    let names = |subkey: &str, manifest: &Path| {
         let key = format!(r"{subkey}\{}", protocol::HOST_NAME);
         hkcu.open_subkey(&key)
             .and_then(|key| key.get_value::<String, _>(""))
-            .map(|value| same_path(&value, &expected))
+            .map(|value| same_path(&value, manifest))
             .unwrap_or(false)
-    })
+    };
+    VENDORS.iter().all(|(_, subkey)| names(subkey, &expected)) && names(FIREFOX.1, &firefox)
 }
 
-/// Whether the manifest on disk is the one this installation would write.
-fn manifest_is_current() -> bool {
-    let Ok(path) = manifest_path() else {
-        return false;
-    };
+/// Whether the manifest at `path` is the one this installation would write.
+fn manifest_is_current(path: &Path, field: &str, allowed: &[String]) -> bool {
     let Ok(text) = std::fs::read_to_string(path) else {
         return false;
     };
     super::host_path()
-        .map(|host| manifest_matches(&text, &host, &protocol::allowed_origins()))
+        .map(|host| manifest_lists(&text, &host, field, allowed))
         .unwrap_or(false)
 }
 
@@ -167,14 +208,21 @@ fn manifest_is_current() -> bool {
 /// other id before the host ever starts -- which is how the copy from the store
 /// was turned away while Settings called the link healthy. Order does not
 /// matter to Chrome, so it does not matter here either.
+#[cfg(test)]
 fn manifest_matches(text: &str, host: &Path, origins: &[String]) -> bool {
+    manifest_lists(text, host, "allowed_origins", origins)
+}
+
+/// `manifest_matches` for either family: Chrome's list is `allowed_origins`,
+/// Firefox's `allowed_extensions`.
+fn manifest_lists(text: &str, host: &Path, field: &str, origins: &[String]) -> bool {
     let Ok(body) = serde_json::from_str::<serde_json::Value>(text) else {
         return false;
     };
     let Some(named) = body.get("path").and_then(|value| value.as_str()) else {
         return false;
     };
-    let Some(listed) = body.get("allowed_origins").and_then(|value| value.as_array()) else {
+    let Some(listed) = body.get(field).and_then(|value| value.as_array()) else {
         return false;
     };
 
@@ -193,6 +241,7 @@ pub fn describe() -> Vec<(String, String)> {
     let hkcu = RegKey::predef(HKEY_CURRENT_USER);
     VENDORS
         .iter()
+        .chain(std::iter::once(&FIREFOX))
         .map(|(vendor, subkey)| {
             let key = format!(r"{subkey}\{}", protocol::HOST_NAME);
             let value = hkcu
@@ -208,12 +257,12 @@ pub fn describe() -> Vec<(String, String)> {
 /// helper at all.
 pub fn unregister() -> AppResult<()> {
     let hkcu = RegKey::predef(HKEY_CURRENT_USER);
-    for (_, subkey) in VENDORS {
+    for (_, subkey) in VENDORS.iter().chain(std::iter::once(&FIREFOX)) {
         let key = format!(r"{subkey}\{}", protocol::HOST_NAME);
         let _ = hkcu.delete_subkey(&key);
     }
 
-    if let Ok(path) = manifest_path() {
+    for path in [manifest_path(), firefox_manifest_path()].into_iter().flatten() {
         let _ = std::fs::remove_file(path);
     }
 
@@ -304,6 +353,25 @@ mod tests {
         assert!(!manifest_matches(&written(ours.clone(), r"C:\elsewhere\ud-bridge.exe"), &host, &ours));
         assert!(!manifest_matches(r#"{"path":"C:\\app\\ud-bridge.exe"}"#, &host, &ours));
         assert!(!manifest_matches("not json", &host, &ours));
+    }
+
+    #[test]
+    fn firefox_reads_its_own_manifest_shape() {
+        let host = PathBuf::from(r"C:\app\ud-bridge.exe");
+        let json = serde_json::to_string(&FirefoxManifest {
+            name: protocol::HOST_NAME,
+            description: "test",
+            path: r"C:\app\ud-bridge.exe".to_string(),
+            kind: "stdio",
+            allowed_extensions: firefox_extensions(),
+        })
+        .unwrap();
+        assert!(json.contains(r#""allowed_extensions":["connector@universaldownloader.app"]"#), "{json}");
+        assert!(!json.contains("allowed_origins"), "{json}");
+        assert!(manifest_lists(&json, &host, "allowed_extensions", &firefox_extensions()));
+        // A Chrome manifest is not a Firefox one, whatever its path says.
+        assert!(!manifest_lists(&json, &host, "allowed_origins", &firefox_extensions()));
+        assert!(FIREFOX.1.ends_with("NativeMessagingHosts"));
     }
 
     #[test]

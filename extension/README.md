@@ -102,6 +102,17 @@ publishes), `make-icons.mjs`, `.gitignore`, these notes, `PRIVACY.md`,
 `fonts/` included. It prints what it packed, so a file that should not ship is
 visible in the output rather than in the listing.
 
+`node scripts/pack-extension.mjs --firefox` writes `extension-firefox.zip` for
+addons.mozilla.org from the same files. Only the manifest differs: the
+background runs as a module script instead of a service worker, the id is
+`connector@universaldownloader.app` (`FIREFOX_EXTENSION_ID` in
+`src-tauri/src/bridge/protocol.rs`), and it declares that no data is collected.
+The app registers a second host manifest for Firefox under
+`HKCU\Software\Mozilla\NativeMessagingHosts`, with `allowed_extensions` where
+Chrome's has `allowed_origins`, and the host accepts Firefox's way of naming
+the caller -- the manifest path first, the extension id second. `npx web-ext
+lint` on the unpacked zip reports no errors or warnings.
+
 `node scripts/build-store-assets.mjs` photographs the real popup for the
 listing images in `store-assets/`, with headless Chrome and no user
 interaction.

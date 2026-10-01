@@ -38,15 +38,16 @@ use universal_downloader_lib::settings::Settings;
 use universal_downloader_lib::{db, log_debug, log_warn, logging, paths, tools};
 
 fn main() {
-    // Chrome passes the calling extension's origin as the first argument. This
-    // is authentication of the *caller*, by the browser, and it is worth being
-    // precise about what it proves: that the browser started us for that
-    // extension. It says nothing about this host being the one the user meant
-    // to run -- that is what the registry values and the host path in
-    // Settings' diagnostics are for.
-    let origin = std::env::args().nth(1).unwrap_or_default();
-    if !protocol::origin_allowed(&origin) {
-        log_warn!("bridge-host", "refused a caller claiming to be {origin}");
+    // The browser names the calling extension in the arguments: Chrome its
+    // origin first, Firefox its id second. This is authentication of the
+    // *caller*, by the browser, and it is worth being precise about what it
+    // proves: that the browser started us for that extension. It says nothing
+    // about this host being the one the user meant to run -- that is what the
+    // registry values and the host path in Settings' diagnostics are for.
+    let args: Vec<String> = std::env::args().collect();
+    if !protocol::caller_allowed(&args) {
+        let claimed = args.get(1..).map(|rest| rest.join(" ")).unwrap_or_default();
+        log_warn!("bridge-host", "refused a caller claiming to be {claimed}");
         return;
     }
 

@@ -34,3 +34,4 @@ scripts/intro-video/out/
 
 # Release files copied here for upload; they live on the `latest` release.
 /scripts/UniversalDownloader_*
+extension-firefox.zip

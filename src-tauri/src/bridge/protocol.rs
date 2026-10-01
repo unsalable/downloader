@@ -73,6 +73,49 @@ pub fn origin_allowed(origin: &str) -> bool {
     allowed_origins().iter().any(|allowed| allowed == origin)
 }
 
+/// The Firefox copy's id. Firefox takes it from the manifest's
+/// `browser_specific_settings` rather than deriving one, so the one id serves
+/// the listing on addons.mozilla.org and an unpacked copy alike. It is named in
+/// the Firefox host manifest's `allowed_extensions`, the field Firefox reads in
+/// place of Chrome's `allowed_origins`.
+pub const FIREFOX_EXTENSION_ID: &str = "connector@universaldownloader.app";
+
+/// Whether the browser started this host for one of our extensions, from the
+/// arguments it passed.
+///
+/// The two families say it differently. Chrome passes the caller's origin
+/// first. Firefox passes the path of the host manifest first and the
+/// extension's id second. Each is compared whole, as `origin_allowed` does.
+pub fn caller_allowed(args: &[String]) -> bool {
+    match args {
+        [_, first, ..] if origin_allowed(first) => true,
+        [_, _, second, ..] => second == FIREFOX_EXTENSION_ID,
+        _ => false,
+    }
+}
+
+#[cfg(test)]
+mod caller_tests {
+    use super::*;
+
+    fn args(list: &[&str]) -> Vec<String> {
+        list.iter().map(|arg| (*arg).to_string()).collect()
+    }
+
+    #[test]
+    fn chrome_and_firefox_each_name_the_caller_their_own_way() {
+        let exe = r"C:\app\ud-bridge.exe";
+        let store = format!("chrome-extension://{EXTENSION_ID_STORE}/");
+        assert!(caller_allowed(&args(&[exe, &store, "--parent-window=0"])));
+        assert!(caller_allowed(&args(&[exe, r"C:\x\host-manifest-firefox.json", FIREFOX_EXTENSION_ID])));
+
+        assert!(!caller_allowed(&args(&[exe, "chrome-extension://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/"])));
+        assert!(!caller_allowed(&args(&[exe, r"C:\x\m.json", "other@example.com"])));
+        assert!(!caller_allowed(&args(&[exe, r"C:\x\m.json", "connector@universaldownloader.appx"])));
+        assert!(!caller_allowed(&args(&[exe])));
+    }
+}
+
 /// A browser family, as the extension reports it. Used for display and to pick
 /// which registry hive to repair; never trusted for an access decision.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -84,6 +127,7 @@ pub enum Browser {
     Vivaldi,
     Opera,
     Chromium,
+    Firefox,
     Unknown,
 }
 
@@ -96,6 +140,7 @@ impl Browser {
             Self::Vivaldi => "Vivaldi",
             Self::Opera => "Opera",
             Self::Chromium => "Chromium",
+            Self::Firefox => "Firefox",
             Self::Unknown => "Browser",
         }
     }

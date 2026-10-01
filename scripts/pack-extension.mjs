@@ -26,7 +26,30 @@ import { fileURLToPath } from 'node:url';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const source = join(root, 'extension');
-const target = join(root, 'extension-upload.zip');
+
+// `--firefox` builds the addons.mozilla.org upload from the same files. Only the
+// manifest differs: Firefox runs the background as a script rather than a
+// service worker, needs an id of its own, and asks every new extension to
+// declare what data it collects -- none here: what the extension sends goes to
+// the app on the same computer, never off it.
+const FIREFOX = process.argv.includes('--firefox');
+const FIREFOX_ID = 'connector@universaldownloader.app';
+const target = join(root, FIREFOX ? 'extension-firefox.zip' : 'extension-upload.zip');
+
+function forFirefox(manifest) {
+  delete manifest.minimum_chrome_version;
+  manifest.background = { scripts: ['background.js'], type: 'module' };
+  manifest.browser_specific_settings = {
+    gecko: {
+      id: FIREFOX_ID,
+      // storage.session, scripting with world isolation and module
+      // background scripts all hold from here on.
+      strict_min_version: '128.0',
+      data_collection_permissions: { required: ['none'] },
+    },
+  };
+  return manifest;
+}
 
 const EXCLUDED = new Set([
   'key.pem',
@@ -48,8 +71,9 @@ function collect(dir) {
 function contentsOf(file) {
   if (relative(source, file) !== 'manifest.json') return readFileSync(file);
 
-  const manifest = JSON.parse(readFileSync(file, 'utf8'));
+  let manifest = JSON.parse(readFileSync(file, 'utf8'));
   delete manifest.key;
+  if (FIREFOX) manifest = forFirefox(manifest);
   return Buffer.from(`${JSON.stringify(manifest, null, 2)}\n`, 'utf8');
 }
 
