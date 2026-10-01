@@ -15,6 +15,7 @@ import { openLayers, onLayersChange } from '@/hooks/useBackLayer';
 import { useClipboardMonitor } from '@/hooks/useClipboardMonitor';
 import { useHotkeys } from '@/hooks/useHotkeys';
 import { cn } from '@/lib/cn';
+import { requestFromHandoff } from '@/lib/handoff';
 import {
   PHONE_SCREEN,
   PHONE_TAB_BAR,
@@ -38,7 +39,7 @@ import { selectEditing, useEditorStore } from '@/stores/useEditorStore';
 import { selectInFlightCount, useQueueStore } from '@/stores/useQueueStore';
 import { useSettingsStore } from '@/stores/useSettingsStore';
 import { useToolsStore } from '@/stores/useToolsStore';
-import type { ToolsState } from '@/types';
+import type { Handoff, ToolsState } from '@/types';
 
 const SIDEBAR_COLLAPSED_KEY = 'ud.sidebar.collapsed';
 
@@ -525,18 +526,22 @@ export function App() {
     }
   }, [tools]);
 
+  // The settings are read when it is called rather than closed over, so the
+  // listeners below that hold it are not torn down and set up again -- with a
+  // moment between in which nobody is listening -- every time a setting changes.
   const goHomeWithUrl = useCallback(
     (url: string) => {
       setRoute('home');
       setUrl(url);
-      if (!settings) return;
+      const current = useSettingsStore.getState().settings;
+      if (!current) return;
       void analyze(url, {
-        mode: settings.defaultMode,
-        quality: settings.defaultQuality,
-        container: settings.defaultContainer,
+        mode: current.defaultMode,
+        quality: current.defaultQuality,
+        container: current.defaultContainer,
       });
     },
-    [analyze, setUrl, settings, setRoute],
+    [analyze, setUrl, setRoute],
   );
 
   // A link shared from another app arrives through the Android side, which
@@ -566,6 +571,79 @@ export function App() {
     window.addEventListener(ipc.SHARED_TEXT_EVENT, take);
     return () => window.removeEventListener(ipc.SHARED_TEXT_EVENT, take);
   }, [goHomeWithUrl, settingsReady]);
+
+  // A video handed over by the browser extension waits in the bridge's inbox
+  // until the app takes it: once at start-up, for the press that launched the
+  // app, and again whenever the running app is told another has come in. Each
+  // one is queued straight away with the default options -- the user picked it
+  // in the browser and asked for it to download, so there is nothing left to
+  // ask -- one after another, in the order they arrived.
+  //
+  // One pull at a time: two at once would each queue whatever they found, and
+  // the order would be a race's. A signal that comes in meanwhile is
+  // remembered and answered by one more pull when this one is done.
+  const handoffPull = useRef({ busy: false, again: false });
+  useEffect(() => {
+    if (IS_MOBILE || !settingsReady) return;
+    const state = handoffPull.current;
+
+    const queue = async (handoffs: Handoff[]) => {
+      let queued = false;
+      let failed: string | null = null;
+      for (const handoff of handoffs) {
+        const current = useSettingsStore.getState().settings;
+        try {
+          if (!current) throw new Error('settings are not loaded');
+          await ipc.enqueueDownload(requestFromHandoff(handoff, current));
+          queued = true;
+        } catch {
+          failed ??= handoff.url;
+        }
+      }
+      // Out of the first run's way, as for a link shared in on a phone: the
+      // user has just asked for a download and is waiting on it, not on the
+      // welcome. Aside for this session only.
+      setIntroReplay(false);
+      setIntroDone(true);
+      // A link that could not be queued goes to Home instead, which analyses
+      // it and says beside it what is wrong -- the first such link, as Home
+      // holds one at a time. Whatever did queue is on Downloads all the same.
+      if (failed) goHomeWithUrl(failed);
+      else if (queued) goToDownloads();
+    };
+
+    const pull = async () => {
+      if (state.busy) {
+        state.again = true;
+        return;
+      }
+      state.busy = true;
+      try {
+        do {
+          state.again = false;
+          const handoffs = await ipc.takeHandoffs().catch((): Handoff[] => []);
+          if (handoffs.length > 0) await queue(handoffs);
+        } while (state.again);
+      } finally {
+        state.busy = false;
+      }
+    };
+
+    // Listening first and taking second: a handoff written between the two is
+    // still in the inbox when the pull reads it, where one written before the
+    // listener was in place would have waited for the next press.
+    const unlisten = ipc.onHandoff(() => void pull());
+    void unlisten.then(
+      () => pull(),
+      () => pull(),
+    );
+    return () => {
+      void unlisten.then(
+        (off) => off(),
+        () => {},
+      );
+    };
+  }, [goHomeWithUrl, goToDownloads, settingsReady]);
 
   // A link on the clipboard is only offered, under the empty field on Home.
   // It takes the user nowhere: they may be in the middle of something else.

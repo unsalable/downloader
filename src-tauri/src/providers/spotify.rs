@@ -600,7 +600,7 @@ async fn find_recording(song: &MusicTags, settings: &Settings) -> AppResult<Medi
 }
 
 async fn read_candidate(url: &str, settings: &Settings) -> AppResult<MediaMetadata> {
-    engine::EngineProvider.analyze(url, settings).await
+    engine::EngineProvider.analyze(url, settings, None).await
 }
 
 /// The words a song is searched for by: who made it, then its name without

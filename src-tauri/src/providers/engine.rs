@@ -22,7 +22,7 @@ use serde_json::Value;
 
 use crate::error::{AppError, AppResult};
 use crate::model::{
-    FormatKind, MediaFormat, MediaKind, MediaMetadata, PlatformId, WatermarkSupport,
+    FormatKind, MediaFormat, MediaKind, MediaMetadata, PlatformId, SourceContext, WatermarkSupport,
 };
 use crate::providers::{self, detect};
 use crate::settings::Settings;
@@ -43,7 +43,12 @@ impl EngineProvider {
         detect::classify(url).is_some()
     }
 
-    pub async fn analyze(&self, url: &str, settings: &Settings) -> AppResult<MediaMetadata> {
+    pub async fn analyze(
+        &self,
+        url: &str,
+        settings: &Settings,
+        source: Option<&SourceContext>,
+    ) -> AppResult<MediaMetadata> {
         let engine = tools::require_engine()?;
         let mut args = base_args(settings);
         // A post without a stream is reported rather than refused, so its
@@ -51,6 +56,12 @@ impl EngineProvider {
         // not started, DRM -- then arrives as a warning, and warnings are
         // what explain a link that turns out to have nothing to download.
         args.retain(|arg| arg != "--no-warnings");
+        // The page a handed-over link was playing on, asked for the way the
+        // browser asked. The engine then reports the same headers on every
+        // format it lists, which is what carries them on to a native download.
+        args.extend(header_args(
+            &source.map(SourceContext::headers).unwrap_or_default(),
+        ));
         args.push("--ignore-no-formats-error".into());
         args.push("--no-playlist".into());
         args.push("-J".into());
@@ -171,13 +182,14 @@ fn search_hits(root: &Value) -> Vec<SearchHit> {
 /// exactly the videos it was stored to reach.
 fn interpret(output: &process::CapturedOutput, url: &str) -> AppResult<MediaMetadata> {
     if !output.success() {
-        return Err(classify_engine_error(&output.stderr));
+        return Err(naming_the_site(classify_engine_error(&output.stderr), url));
     }
 
     let root: Value = serde_json::from_str(output.stdout.trim())
         .map_err(|err| AppError::Parse(format!("the engine returned unreadable JSON: {err}")))?;
 
-    parse_result(&root, url).map_err(|err| explain_missing_streams(err, &output.stderr))
+    parse_result(&root, url)
+        .map_err(|err| naming_the_site(explain_missing_streams(err, &output.stderr), url))
 }
 
 /// One engine run: the shared arguments, a cookie jar when the caller has one
@@ -234,6 +246,28 @@ pub fn session_for(err: &AppError, url: &str, settings: &Settings) -> Option<bri
         return None;
     }
     bridge::lease(settings)
+}
+
+/// Request headers as engine arguments: `--referer` for the page a stream
+/// belongs to and `--add-header Name:Value` for the rest.
+///
+/// Placed after `base_args`, never inside it: `search` shares those and has
+/// no page behind it. Being later also lets a browser's own User-Agent win
+/// over the one from Settings, because the engine keeps the last value it is
+/// given for a header -- and a stream a page fetched is the stream that
+/// browser was allowed to fetch.
+pub fn header_args(headers: &[(String, String)]) -> Vec<String> {
+    let mut args = Vec::new();
+    for (name, value) in headers {
+        if name.eq_ignore_ascii_case("referer") {
+            args.push("--referer".to_string());
+            args.push(value.clone());
+        } else {
+            args.push("--add-header".to_string());
+            args.push(format!("{name}:{value}"));
+        }
+    }
+    args
 }
 
 /// Arguments shared by every engine invocation.
@@ -373,6 +407,14 @@ pub fn classify_engine_error(stderr: &str) -> AppError {
         return AppError::Network(first_error_line(stderr));
     }
 
+    // Encryption the engine will not touch: Widevine, PlayReady, FairPlay.
+    // The same answer the services on `detect`'s list get before anything
+    // runs, and like theirs not one a retry changes. Whole phrases only -- the
+    // three letters alone turn up inside video ids.
+    if has(&["drm protected", "drm-protected", "drm protection", "protected by drm"]) {
+        return AppError::Protected(UNNAMED_SITE.to_string());
+    }
+
     if has(&[
         "http error 404",
         "http error 410",
@@ -469,6 +511,25 @@ pub fn classify_engine_error(stderr: &str) -> AppError {
     }
 
     AppError::Engine(first_error_line(stderr))
+}
+
+/// What a protection the engine reported is reported against until the caller,
+/// which knows the address, names the site.
+const UNNAMED_SITE: &str = "this site";
+
+/// Put the site's name on a protection the engine reported without one. Its
+/// own words never say which site it was reading.
+pub fn naming_the_site(err: AppError, url: &str) -> AppError {
+    match err {
+        AppError::Protected(name) if name == UNNAMED_SITE => AppError::Protected(site_name(url)),
+        other => other,
+    }
+}
+
+fn site_name(url: &str) -> String {
+    detect::classify(url)
+        .map(|info| info.host.trim_start_matches("www.").to_string())
+        .unwrap_or_else(|| UNNAMED_SITE.to_string())
 }
 
 /// Warnings the engine prints about any post without a stream. They say that
@@ -610,6 +671,12 @@ pub fn parse_metadata(node: &Value, requested_url: &str) -> AppResult<MediaMetad
             return Err(AppError::MembershipRequired {
                 detail: "this video is for members of the channel".into(),
             });
+        }
+
+        // A stream the engine found and will not decrypt. "No downloadable
+        // stream" would read as something to report; this is the real answer.
+        if node.get("_has_drm").and_then(Value::as_bool) == Some(true) {
+            return Err(AppError::Protected(site_name(requested_url)));
         }
 
         return Err(AppError::Unsupported(
@@ -901,7 +968,7 @@ fn parse_format(node: &Value) -> Option<MediaFormat> {
         .unwrap_or("bin")
         .to_string();
 
-    let has_video = match &video_track {
+    let mut has_video = match &video_track {
         Track::Named(_) => true,
         Track::Absent => false,
         Track::Unknown => height.is_some() && detect::is_video_extension(&container),
@@ -909,7 +976,7 @@ fn parse_format(node: &Value) -> Option<MediaFormat> {
     // An unnamed sound track is read the way yt-dlp reads it: present unless
     // the format says otherwise. A stream that states it has no picture is its
     // sound, and an unlabelled progressive video file carries its own.
-    let has_audio = match &audio_track {
+    let mut has_audio = match &audio_track {
         Track::Named(_) => true,
         Track::Absent => false,
         Track::Unknown => match video_track {
@@ -917,6 +984,21 @@ fn parse_format(node: &Value) -> Option<MediaFormat> {
             _ => has_video,
         },
     };
+
+    // Neither codec named and no size given is how the engine reports a bare
+    // HLS media playlist -- the address a page's player actually fetches, and
+    // so the one the browser extension hands over. Read as carrying nothing,
+    // it left such a link with no stream at all. What it is delivered as says
+    // what it holds: sound in a sound container, otherwise a stream or a video
+    // file carries both.
+    let unlabelled = matches!(video_track, Track::Unknown)
+        && matches!(audio_track, Track::Unknown)
+        && height.is_none();
+    if unlabelled && detect::is_audio_extension(&container) {
+        (has_video, has_audio) = (false, true);
+    } else if unlabelled && (is_segmented(&protocol) || detect::is_video_extension(&container)) {
+        (has_video, has_audio) = (true, true);
+    }
     let is_image = !has_video && !has_audio && detect::is_image_extension(&container);
     let vcodec = video_track.name();
     let acodec = audio_track.name();
@@ -1855,5 +1937,121 @@ mod tests {
         let meta = parse_metadata(&node, "https://example.test/x").unwrap();
         let heights: Vec<_> = meta.formats.iter().map(|f| f.height).collect();
         assert_eq!(heights, vec![Some(1080), Some(720), Some(360)]);
+    }
+
+    /// A bare HLS media playlist as the engine's generic reader lists it
+    /// (2026.08.19): no codecs, no resolution, only how it is delivered.
+    #[test]
+    fn a_stream_that_names_nothing_about_itself_is_still_a_stream() {
+        let playlist = serde_json::json!({
+            "format_id": "0", "url": "https://cdn.example/hls/index.m3u8",
+            "protocol": "m3u8_native", "ext": "mp4",
+        });
+        let format = parse_format(&playlist).unwrap();
+        assert_eq!(format.kind, FormatKind::Muxed);
+        assert!(format.has_video && format.has_audio);
+        assert!(format.needs_engine_download);
+
+        // The same for a plain file in a video container, and sound in a
+        // sound container is sound, however it is delivered.
+        let file = serde_json::json!({ "format_id": "f", "url": "https://cdn.example/v.webm", "ext": "webm" });
+        assert_eq!(parse_format(&file).unwrap().kind, FormatKind::Muxed);
+        let sound = serde_json::json!({
+            "format_id": "a", "url": "https://cdn.example/a.m3u8", "protocol": "m3u8_native", "ext": "m4a",
+        });
+        let sound = parse_format(&sound).unwrap();
+        assert_eq!(sound.kind, FormatKind::Audio);
+        assert!(!sound.has_video);
+
+        // Something that is none of those is still not offered.
+        let unknown = serde_json::json!({ "format_id": "x", "url": "https://cdn.example/x", "ext": "bin" });
+        assert!(parse_format(&unknown).is_none());
+
+        // And the whole link now has something to download.
+        let node = serde_json::json!({ "title": "index", "formats": [playlist] });
+        let meta = parse_metadata(&node, "https://cdn.example/hls/index.m3u8").unwrap();
+        assert_eq!(meta.media_kind, MediaKind::Video);
+        let plan = crate::downloader::plan::build(
+            &meta,
+            crate::model::DownloadMode::Video,
+            crate::model::QualityPreference::Best,
+            None,
+            None,
+            None,
+            crate::model::WatermarkPreference::Any,
+        )
+        .unwrap();
+        assert!(plan.needs_engine);
+        assert_eq!(plan.selector_for_engine(), "0");
+    }
+
+    #[test]
+    fn drm_is_protection_and_not_something_that_went_wrong() {
+        for stderr in [
+            "ERROR: [generic] master: This video is DRM protected",
+            "ERROR: [DRM] The requested site is known to use DRM protection. It will NOT be supported.",
+            "ERROR: [SomeSite] 12345: This content is DRM-protected and cannot be downloaded",
+        ] {
+            let err = classify_engine_error(stderr);
+            assert_eq!(err.code(), "protected", "misclassified: {stderr}");
+            assert!(!err.retryable(), "{stderr}");
+        }
+
+        // The three letters inside an id are not a protection.
+        assert_eq!(
+            classify_engine_error("ERROR: [youtube] xDRMab12345: Video unavailable").code(),
+            "notFound"
+        );
+    }
+
+    #[test]
+    fn a_protected_stream_is_reported_against_the_site_it_came_from() {
+        let named = naming_the_site(
+            classify_engine_error("ERROR: [generic] master: This video is DRM protected"),
+            "https://www.stream.example/watch/5",
+        );
+        assert!(matches!(&named, AppError::Protected(site) if site == "stream.example"), "{named:?}");
+
+        // A protection that already names its service keeps that name, and
+        // nothing else is touched.
+        let netflix = naming_the_site(AppError::Protected("Netflix".into()), "https://www.netflix.com/x");
+        assert!(matches!(&netflix, AppError::Protected(site) if site == "Netflix"));
+        let other = naming_the_site(AppError::Network("x".into()), "https://a.example/");
+        assert_eq!(other.code(), "network");
+
+        // Reported as a warning on a run told to list what it found.
+        let stderr = "WARNING: [generic] master: This video is DRM protected\n\
+                      WARNING: No video formats found!\n";
+        let err = explain_missing_streams(
+            AppError::Unsupported("the source offered no downloadable stream".into()),
+            stderr,
+        );
+        assert_eq!(err.code(), "protected");
+
+        // Or in a field of its own.
+        let node = serde_json::json!({ "id": "x", "title": "Film", "formats": [], "_has_drm": true });
+        let err = parse_metadata(&node, "https://player.example/film").unwrap_err();
+        assert!(matches!(&err, AppError::Protected(site) if site == "player.example"), "{err:?}");
+    }
+
+    #[test]
+    fn headers_become_engine_arguments() {
+        let args = header_args(&[
+            ("Referer".to_string(), "https://site.example/".to_string()),
+            ("Origin".to_string(), "https://site.example".to_string()),
+            ("User-Agent".to_string(), "Mozilla/5.0".to_string()),
+        ]);
+        assert_eq!(
+            args,
+            [
+                "--referer",
+                "https://site.example/",
+                "--add-header",
+                "Origin:https://site.example",
+                "--add-header",
+                "User-Agent:Mozilla/5.0",
+            ]
+        );
+        assert!(header_args(&[]).is_empty());
     }
 }

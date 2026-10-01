@@ -1,5 +1,6 @@
 //! The browser link: letting a signed-in browser lend the app its YouTube
-//! session, so content the user already pays for can be downloaded.
+//! session, so content the user already pays for can be downloaded, and
+//! letting the user send what a page is playing to the app to download.
 //!
 //! The browser never hands cookies to the app directly. A small extension reads
 //! them with `chrome.cookies` and pushes them through Chrome's own native
@@ -29,10 +30,13 @@
 //!   deleted when the run ends. Deliberately not `temp_dir()`: the
 //!   `sweep_temp_files` command clears that on demand and would pull the jar
 //!   out from under a live download.
+//! * `inbox/` -- links the user sent from the browser to download, one file
+//!   each, left by the host and taken by the app (see `handoff`).
 //!
 //! Both processes write `state.json`, so every write is a write-then-rename and
 //! every read tolerates a torn or missing file by falling back to defaults.
 
+pub mod handoff;
 pub mod protocol;
 
 mod cookies;
@@ -232,8 +236,13 @@ pub fn register() -> AppResult<()> {
     }
 }
 
-/// Remove the registry values. Called when the user turns the link off, so a
-/// disabled feature leaves nothing behind that a browser could still start.
+/// Remove the registry values.
+///
+/// No longer called when the user turns the YouTube session off. The host
+/// also carries the links the extension sends to download, which have nothing
+/// to do with that session, so it stays registered and the toggle only stops
+/// the host storing cookies. Kept for a path that really is leaving, such as
+/// an uninstall.
 pub fn unregister() -> AppResult<()> {
     #[cfg(windows)]
     {

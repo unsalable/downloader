@@ -674,6 +674,7 @@ mod tests {
                 platform: None,
                 entry: None,
                 audio_language: None,
+                source: None,
             },
         }
     }

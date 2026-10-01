@@ -3,64 +3,126 @@
 // The popup is rendered for real -- its own HTML, CSS and JavaScript, with the
 // handful of chrome.* calls it makes standing in -- inside a frame the exact
 // size the store wants, and photographed with headless Chrome. Nothing here is
-// a mock-up of the interface; it is the interface.
+// a mock-up of the interface; it is the interface. Even the rows are the real
+// thing: they come out of extension/media.js, fed the requests a page playing a
+// stream would have made, exactly as the service worker feeds it.
 //
 // Throwaway tooling: it writes to store-assets/ and keeps nothing else.
 
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, readFileSync, writeFileSync, existsSync, rmSync } from 'node:fs';
+import { cpSync, mkdirSync, readFileSync, writeFileSync, existsSync, rmSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { rows } from '../extension/media.js';
+
 const repo = join(dirname(fileURLToPath(import.meta.url)), '..');
+const extension = join(repo, 'extension');
 const work = join(repo, '.store-build');
 const outRoot = join(repo, 'store-assets');
 const CHROME = 'C:/Program Files/Google/Chrome/Application/chrome.exe';
 
-const HOST = String.raw`C:\Program Files\Universal Downloader\ud-bridge.exe`;
-const now = Math.floor(Date.now() / 1000);
-const base = { appVersion: '1.0.0', hostPath: HOST, enabled: true };
+const { version } = JSON.parse(readFileSync(join(extension, 'manifest.json'), 'utf8'));
+const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36';
 
-const REPLIES = {
-  connected: {
-    signedIn: true,
-    result: { ok: true, status: { ...base, bound: true, session: 'fresh', accountHint: 'm•••@gmail.com', lastPushAt: now - 120 } },
+// What the host says about itself, as the popup receives it from the worker.
+const status = (fields) => ({
+  ok: true,
+  status: {
+    appVersion: '1.0.0',
+    hostPath: 'C:\\Program Files\\Universal Downloader\\ud-bridge.exe',
+    enabled: true,
+    bound: false,
+    session: 'none',
+    canDownload: true,
+    ...fields,
   },
-  unpaired: {
-    signedIn: true,
-    result: { ok: true, status: { ...base, bound: false, session: 'none' } },
-  },
+});
+const LINK_OFF = { result: status({}), signedIn: true, linkOff: false };
+const LINK_ON = { result: status({ bound: true, session: 'fresh' }), signedIn: true, linkOff: false };
+
+// The made-up pages the screenshots show. Titles are the page's, so they are
+// given per language; the addresses are reserved example domains.
+const PAGES = {
+  en: { series: 'The Long Road — Episode 5', concert: 'Live at the Harbour — Full Concert' },
+  tr: { series: 'Uzun Yol — 5. Bölüm', concert: 'Limanda Canlı — Konserin Tamamı' },
 };
 
-// The application's six-blade aperture, the same shape extension/popup.html
-// carries and half the size of the 48-unit box src/components/layout/Logo.tsx
-// draws it in. It goes into two documents below, never twice into the same
-// one, so a single mask id is enough.
-const MARK = `<svg viewBox="0 0 24 24" aria-hidden="true">
-    <mask id="markMask">
-      <rect width="24" height="24" fill="black"/>
-      <circle cx="12" cy="12" r="10" fill="white"/>
-      <path d="M12 5.3 17.8 8.65 17.8 15.35 12 18.7 6.2 15.35 6.2 8.65Z" fill="black"/>
-      <g stroke="black" stroke-width="1.7" stroke-linecap="round">
-        <path d="M12 5.3 25 12.8"/><path d="M17.8 8.65 17.8 23.65"/>
-        <path d="M17.8 15.35 4.8 22.85"/><path d="M12 18.7 -1 11.2"/>
-        <path d="M6.2 15.35 6.2 0.35"/><path d="M6.2 8.65 19.2 1.15"/>
-      </g>
-    </mask>
-    <circle cx="12" cy="12" r="10" fill="currentColor" mask="url(#markMask)"/>
-  </svg>`;
+let id = 0;
+const item = (url, kind, extra = {}) => ({
+  id: `s${(id += 1)}`,
+  url,
+  kind,
+  frameId: 0,
+  initiator: 'https://player.example',
+  isXhr: kind === 'hls' || kind === 'dash',
+  contentType: '',
+  size: null,
+  seenOn: '',
+  at: id,
+  ...extra,
+});
+
+function seriesRows(title) {
+  const page = 'https://tv.example/series/the-long-road/5';
+  const state = {
+    url: page,
+    title,
+    sawMedia: true,
+    items: [
+      item('https://cdn.example/hls/the-long-road-5/master.m3u8', 'hls', {
+        info: { master: true, variants: [], height: 1080, protected: false },
+      }),
+      item('https://cdn.example/files/the-long-road-5-trailer.mp4', 'video', { size: 48 * 1024 * 1024 }),
+      item('https://cdn.example/podcast/the-long-road-commentary.mp3', 'audio', { size: 31 * 1024 * 1024 }),
+    ],
+  };
+  const top = {
+    frameId: 0,
+    href: page,
+    isTop: true,
+    title,
+    ogTitle: title,
+    ogImage: '',
+    ogUrl: '',
+    videos: [{ src: '', poster: '', duration: 1421, width: 1920, height: 1080, drm: false }],
+    audios: [],
+  };
+  return rows(state, [top], { userAgent: UA });
+}
+
+function concertRows(title) {
+  const page = 'https://www.youtube.com/watch?v=StoreShot01';
+  const top = {
+    frameId: 0,
+    href: page,
+    isTop: true,
+    title: `${title} - YouTube`,
+    ogTitle: '',
+    ogImage: '',
+    ogUrl: '',
+    videos: [{ src: '', poster: '', duration: 5468, width: 1920, height: 1080, drm: false }],
+    audios: [],
+  };
+  return rows({ url: page, title, sawMedia: true, items: [] }, [top], { userAgent: UA });
+}
+
+// Thumbnails stay out of the photographs: they would have to be fetched from
+// the network mid-shot, and a listing image that depends on a server
+// answering is not reproducible. The popup draws its own tile without one.
+const still = (list) => list.map((row) => ({ ...row, thumbnail: '' }));
 
 const COPY = {
   en: {
-    connected: ['Your YouTube sign-in, lent to your own computer', 'The app can now download what your membership already gives you access to.'],
-    unpaired: ['One button, and it is connected', 'No codes to copy, no files to edit, no timer to beat.'],
-    details: ['Nothing leaves your machine', 'No server, no analytics, no account. The session goes to the app on your own computer and nowhere else.'],
+    videos: ['Every video on the page, one button away', 'Play it, press Get, and Universal Downloader takes it from there.'],
+    sites: ['Works on the sites you already use', 'YouTube, Vimeo, X and more go straight to the app at your default quality.'],
+    privacy: ['Nothing leaves your computer', 'No server, no analytics, no account. A video goes to the app on this computer, and only when you press Get.'],
     tile: ['Universal Downloader', 'Connector'],
   },
   tr: {
-    connected: ['YouTube oturumunuz, kendi bilgisayarınıza ödünç', 'Uygulama artık üyeliğinizin zaten erişim verdiği içeriği indirebilir.'],
-    unpaired: ['Tek düğme, bağlantı kuruldu', 'Kopyalanacak kod, düzenlenecek dosya, yetişilecek sayaç yok.'],
-    details: ['Hiçbir şey bilgisayarınızdan çıkmaz', 'Sunucu yok, analitik yok, hesap yok. Oturum yalnızca kendi bilgisayarınızdaki uygulamaya gider.'],
+    videos: ['Sayfadaki her video, bir düğme uzağınızda', "Oynatın, İndir'e basın; gerisini Universal Downloader halleder."],
+    sites: ['Zaten kullandığınız sitelerde çalışır', 'YouTube, Vimeo, X ve daha fazlası varsayılan kalitenizle doğrudan uygulamaya gider.'],
+    privacy: ['Hiçbir şey bilgisayarınızdan çıkmaz', "Sunucu yok, analitik yok, hesap yok. Video yalnızca bu bilgisayardaki uygulamaya ve yalnızca İndir'e bastığınızda gider."],
     tile: ['Universal Downloader', 'Connector'],
   },
 };
@@ -70,22 +132,28 @@ const COPY = {
 if (existsSync(work)) rmSync(work, { recursive: true, force: true });
 mkdirSync(work, { recursive: true });
 
-for (const file of ['popup.html', 'popup.css', 'theme.css', 'popup.js', 'i18n.js']) {
-  writeFileSync(join(work, file), readFileSync(join(repo, 'extension', file)));
+for (const file of ['popup.html', 'popup.css', 'theme.css', 'popup.js', 'i18n.js', 'media.js']) {
+  writeFileSync(join(work, file), readFileSync(join(extension, file)));
 }
+cpSync(join(extension, 'fonts'), join(work, 'fonts'), { recursive: true });
 
 const shots = [];
 
 for (const locale of ['en', 'tr']) {
-  const raw = JSON.parse(readFileSync(join(repo, `extension/_locales/${locale}/messages.json`), 'utf8'));
+  const raw = JSON.parse(readFileSync(join(extension, `_locales/${locale}/messages.json`), 'utf8'));
+  const titles = PAGES[locale];
 
-  for (const [state, reply] of Object.entries(REPLIES)) {
+  const states = {
+    videos: { url: 'https://tv.example/series/the-long-road/5', scan: still(seriesRows(titles.series)), link: LINK_OFF },
+    sites: { url: 'https://www.youtube.com/watch?v=StoreShot01', scan: still(concertRows(titles.concert)), link: LINK_ON },
+  };
+
+  for (const [state, setup] of Object.entries(states)) {
     // The whole message entry, placeholders included, rather than just the
-    // string: "$COUNT$ dakika once" reaching a listing image unsubstituted is
-    // the kind of detail that makes a product look unfinished, and it is the
-    // substitution that has to be stood in for, not the lookup.
+    // string, so a message that ever grows a placeholder still renders whole.
     const mock = `const ENTRIES = ${JSON.stringify(raw)};
-const REPLY = ${JSON.stringify(reply)};
+const SETUP = ${JSON.stringify(setup)};
+const area = () => ({ get: async () => ({}), set: async () => {}, remove: async () => {} });
 window.chrome = {
   i18n: {
     getMessage: (key, subs) => {
@@ -101,88 +169,85 @@ window.chrome = {
     },
     getUILanguage: () => '${locale}',
   },
-  runtime: { getManifest: () => ({ version: '1.0.1' }), sendMessage: async () => REPLY },
-  permissions: { contains: async () => false, request: async () => true },
+  runtime: {
+    id: 'store-shot',
+    getManifest: () => ({ version: '${version}' }),
+    sendMessage: async (message) => {
+      switch (message.action) {
+        case 'scan': return { ok: true, url: SETUP.url, protectedService: null, rows: SETUP.scan };
+        case 'download': return { result: SETUP.link.result };
+        default: return SETUP.link;
+      }
+    },
+  },
+  tabs: { query: async () => [{ id: 1, url: SETUP.url }] },
+  storage: { local: area(), session: area() },
 };`;
     writeFileSync(join(work, `mock-${locale}-${state}.js`), mock);
 
-    // Two things the real popup gets from its surroundings and a photograph
-    // has to be given. The dark palette, because headless Chrome reports a
-    // light preference and the app itself defaults to dark, so a light popup
-    // would be the odd one out beside its own window. And stillness: the
-    // entrance animation is caught part-way through by a screenshot, which is
-    // how a title ends up half-faded. Both are states the popup genuinely has
-    // -- a user with a dark browser and reduced motion sees exactly this.
+    // Stillness: the list's entrance and the switch's slide are caught part-way
+    // through by a screenshot. A user with reduced motion sees exactly this.
     const forScreenshot = `<style>
-      :root {
-        --bg:#0c0b09; --surface:#15130f; --surface-sunken:#100e0b;
-        --border:rgb(255 244 228 / 0.09); --border-strong:rgb(255 244 228 / 0.18);
-        --text-primary:#f4efe5; --text-secondary:#a69c8c; --text-tertiary:#8b8173;
-        --accent:#ff7a3d; --accent-hover:#ff9059; --accent-fg:#1a0c04;
-        --accent-soft:rgb(255 122 61 / 0.14); --accent-ring:rgb(255 122 61 / 0.4);
-        --success:#58cd8e; --warning:#efc059; --error:#ff6f5e;
-      }
-      html, body { width: 360px; margin: 0; }
+      html, body { margin: 0; }
       *, *::before, *::after { animation: none !important; transition: none !important; }
     </style>`;
 
-    const page = readFileSync(join(repo, 'extension/popup.html'), 'utf8')
+    const page = readFileSync(join(extension, 'popup.html'), 'utf8')
       .replace('<script src="i18n.js"></script>', `<script src="mock-${locale}-${state}.js"></script>\n<script src="i18n.js"></script>`)
       .replace('</head>', `${forScreenshot}</head>`);
     writeFileSync(join(work, `popup-${locale}-${state}.html`), page);
   }
 
   const frames = [
-    { name: '1-connected', state: 'connected', copy: COPY[locale].connected, open: false },
-    { name: '2-connect', state: 'unpaired', copy: COPY[locale].unpaired, open: false },
-    { name: '3-privacy', state: 'connected', copy: COPY[locale].details, open: true },
+    { name: '1-videos', state: 'videos', copy: COPY[locale].videos, press: false },
+    { name: '2-sites', state: 'sites', copy: COPY[locale].sites, press: false },
+    { name: '3-privacy', state: 'videos', copy: COPY[locale].privacy, press: true },
   ];
 
   for (const frame of frames) {
+    // The app's light palette, flat: the user's taste rules out decorative
+    // gradients, and the popup is the only thing in the picture that floats.
     const html = `<!doctype html><html lang="${locale}"><head><meta charset="utf-8">
 <style>
-  :root { color-scheme: dark; }
+  @font-face { font-family: "InterVariable"; font-weight: 100 900; src: url("fonts/InterVariable.woff2") format("woff2"); }
+  :root { color-scheme: light; }
   html, body { margin: 0; width: 1280px; height: 800px; overflow: hidden; }
   body {
-    background: radial-gradient(120% 90% at 18% 8%, #241a13 0%, #16110d 55%, #100c09 100%);
-    font-family: ui-sans-serif, system-ui, "Segoe UI", Roboto, sans-serif;
-    display: grid; grid-template-columns: 1fr 440px; align-items: center;
-    padding: 0 84px; box-sizing: border-box; gap: 48px;
+    background: #ededf0;
+    font-family: "InterVariable", -apple-system, "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    display: grid; grid-template-columns: 1fr 420px; align-items: center;
+    padding: 0 96px; box-sizing: border-box; gap: 64px;
   }
-  h1 { color: #f6efe6; font-size: 46px; line-height: 1.15; letter-spacing: -0.02em; margin: 0 0 20px; font-weight: 600; max-width: 15ch; }
-  p { color: #b3a695; font-size: 21px; line-height: 1.5; margin: 0; max-width: 34ch; }
-  .brand { display: flex; align-items: center; gap: 10px; margin-bottom: 30px; color: #bd4a0c; font-size: 15px; letter-spacing: 0.10em; text-transform: uppercase; font-weight: 600; }
-  .brand svg { width: 20px; height: 20px; }
-  .shot { justify-self: center; width: 360px; border-radius: 14px; overflow: hidden;
-          box-shadow: 0 40px 90px rgb(0 0 0 / 0.55), 0 0 0 1px rgb(255 255 255 / 0.07); }
-  iframe { width: 360px; height: 420px; border: 0; display: block; background: #0c0b09; }
+  .brand { color: #ac440b; font-size: 16px; font-weight: 600; margin-bottom: 22px; }
+  h1 { color: #1d1d1f; font-size: 46px; line-height: 1.12; letter-spacing: -0.025em; margin: 0 0 20px; font-weight: 650; max-width: 15ch; }
+  p { color: #636366; font-size: 21px; line-height: 1.5; margin: 0; max-width: 32ch; }
+  .shot { justify-self: center; width: 340px; border-radius: 12px; overflow: hidden;
+          box-shadow: 0 24px 60px -12px rgb(0 0 0 / 0.18), 0 2px 8px rgb(0 0 0 / 0.06); }
+  iframe { width: 340px; height: 420px; border: 0; display: block; background: #f5f5f7; }
 </style></head><body>
 <div>
-  <div class="brand">
-    ${MARK}
-    <span>Universal Downloader</span>
-  </div>
+  <div class="brand">Universal Downloader</div>
   <h1>${frame.copy[0]}</h1>
   <p>${frame.copy[1]}</p>
 </div>
 <div class="shot"><iframe id="f" src="popup-${locale}-${frame.state}.html"></iframe></div>
 <script>
   // The frame is sized to whatever the popup turns out to be, rather than to a
-  // guess: a fixed height leaves an empty band under the shorter states, and
-  // that band is the first thing the eye lands on in a listing image.
+  // guess: a fixed height leaves an empty band under the shorter states.
   const frame = document.getElementById('f');
   frame.addEventListener('load', () => {
     const d = frame.contentDocument;
-    ${frame.open ? "d.getElementById('detailsHead')?.click();" : ''}
+    ${frame.press ? "setTimeout(() => d.querySelector('.get')?.click(), 200);" : ''}
     // Measured from where the content actually stops, not from scrollHeight:
-    // the document keeps reporting the height the frame gives it, so asking it
-    // would just hand back the guess it was seeded with.
+    // the document keeps reporting the height the frame gives it.
     setTimeout(() => {
+      const style = getComputedStyle(d.body);
       const bottom = [...d.body.children]
-        .filter((node) => !node.hidden)
+        .filter((node) => !node.hidden && node.tagName !== 'SCRIPT')
         .reduce((low, node) => Math.max(low, node.getBoundingClientRect().bottom), 0);
-      frame.style.height = Math.ceil(bottom) + 'px';
-    }, 250);
+      frame.style.height = Math.ceil(bottom + parseFloat(style.paddingBottom)) + 'px';
+    }, 900);
   });
 </script>
 </body></html>`;
@@ -192,15 +257,16 @@ window.chrome = {
   }
 
   const tile = `<!doctype html><html><head><meta charset="utf-8"><style>
+  @font-face { font-family: "InterVariable"; font-weight: 100 900; src: url("fonts/InterVariable.woff2") format("woff2"); }
   html, body { margin: 0; width: 440px; height: 280px; overflow: hidden; }
-  body { background: radial-gradient(120% 120% at 20% 0%, #2a1e14 0%, #15100c 70%);
-         font-family: ui-sans-serif, system-ui, "Segoe UI", Roboto, sans-serif;
-         display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px; }
-  svg { width: 62px; height: 62px; color: #bd4a0c; }
-  strong { color: #f6efe6; font-size: 25px; font-weight: 600; letter-spacing: -0.01em; }
-  span { color: #9c8f7f; font-size: 16px; letter-spacing: 0.16em; text-transform: uppercase; }
+  body { background: #f5f5f7; font-family: "InterVariable", -apple-system, "Segoe UI", system-ui, sans-serif;
+         -webkit-font-smoothing: antialiased;
+         display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; }
+  img { width: 64px; height: 64px; margin-bottom: 14px; }
+  strong { color: #1d1d1f; font-size: 25px; font-weight: 650; letter-spacing: -0.02em; }
+  span { color: #636366; font-size: 17px; }
 </style></head><body>
-  ${MARK}
+  <img src="icon128.png" alt="">
   <strong>${COPY[locale].tile[0]}</strong>
   <span>${COPY[locale].tile[1]}</span>
 </body></html>`;
@@ -208,11 +274,16 @@ window.chrome = {
   shots.push({ file: `tile-${locale}.html`, out: join(outRoot, locale, 'promo-tile-440x280.png'), w: 440, h: 280 });
 }
 
+// The tile shows the toolbar icon itself, the one Chrome shows next to the
+// address bar, rather than a second drawing of the mark.
+writeFileSync(join(work, 'icon128.png'), readFileSync(join(extension, 'icons', 'icon128.png')));
+
 // ------------------------------------------------------------------- capture
 
 // Served straight off disk rather than over a local HTTP server: a server is
 // one more thing that can fail to bind or fail to be reached, and an iframe of
-// a sibling file is exactly what --allow-file-access-from-files is for.
+// a sibling file -- and the module scripts inside it -- is exactly what
+// --allow-file-access-from-files is for.
 
 // A headless run must be given a profile directory of its own. Without one it
 // reaches for the default profile, which the user's own Chrome already holds

@@ -9,10 +9,14 @@
  *   ?empty=1            no downloads, conversions or history
  *   ?welcome=1          show the first-run screen
  *   ?update=1           pretend a newer build has been released
+ *   ?handoff=1          a video from the browser extension waits at load
+ *   ?unregistered=1     the browsers cannot start the bridge's helper
  *   ?raf=timers         run animation frames off timers (see below)
  *
  * From the console, `__UD_MOCK__.emit(event, payload)` delivers a backend
  * event and `__UD_MOCK__.calls` lists every command the app has invoked.
+ * `__UD_MOCK__.handoff(item?)` hands over a video as the extension's İndir
+ * does, the sample stream with `item`'s fields over it.
  * `__UD_MOCK__.picked` is what the phone's file picker returns next, and
  * `__UD_MOCK__.clipboard` the last text the app wrote to the clipboard.
  */
@@ -472,6 +476,32 @@
     publishedAt: new Date(now - 3_600_000).toISOString(),
   };
 
+  /**
+   * A video the browser extension handed over, as the native host writes it
+   * into the inbox: a stream off a page the app has no provider for. The
+   * picture is one of the fixtures above, since this file fetches nothing.
+   */
+  const handoffItem = (over = {}) => ({
+    url: 'https://cdn.dizikanal.example/hls/kiyidaki-ev/s01e05/master.m3u8',
+    kind: 'stream',
+    title: 'Kıyıdaki Ev – 5. Bölüm',
+    pageUrl: 'https://www.dizikanal.example/kiyidaki-ev/1-sezon/5-bolum',
+    referer: 'https://player.dizikanal.example/',
+    origin: 'https://player.dizikanal.example',
+    userAgent: navigator.userAgent,
+    thumbnail: 'thumb:41',
+    receivedAt: Math.floor(Date.now() / 1000),
+    ...over,
+  });
+
+  // What `take_handoffs` hands over next. `?handoff=1` has one waiting at
+  // load, as when a press in the browser is what started the app.
+  const inbox = params.has('handoff') ? [handoffItem()] : [];
+
+  // `?unregistered=1`: the browsers can no longer start the helper, until
+  // Repair is pressed in Settings.
+  const bridge = { registered: !params.has('unregistered') };
+
   // -- events ----------------------------------------------------------------
 
   const listeners = new Map();
@@ -644,21 +674,29 @@
       supported: platform === 'windows',
       storeListed: true,
       enabled: true,
-      registered: true,
+      registered: bridge.registered,
       connected: true,
       browser: 'Chrome',
       profileLabel: 'Melih',
       accountHint: 'm•••@gmail.com',
-      extensionVersion: '1.0.0',
+      extensionVersion: '1.0.3',
       lastPushAt: Math.floor(now / 1000) - 600,
       session: 'fresh',
       hostPath: 'C:\\Users\\melik\\AppData\\Local\\Universal Downloader\\ud-bridge.exe',
       appVersion: '1.0.0',
-      extensionId: 'abcdefghijklmnopabcdefghijklmnop',
+      extensionId: 'oikcjjcihkfmgmmmjagilnfgnfilghic',
     }),
-    bridge_repair: () => commands.bridge_status(),
+    // Repair works here, and says so the way the real one does: by the event.
+    bridge_repair: async () => {
+      await wait(600);
+      bridge.registered = true;
+      emit('bridge://changed', null);
+      return commands.bridge_status();
+    },
     bridge_disconnect: () => commands.bridge_status(),
     bridge_diagnostics: () => 'bridge: ok',
+    // Empties the inbox, as the real one deletes each file it read.
+    take_handoffs: () => inbox.splice(0),
 
     detect_platform: ({ url }) => detect(url),
     analyze_url: async ({ url }) => {
@@ -727,8 +765,13 @@
     }),
 
     list_downloads: () => tasks,
+    // Kept as asked, `source` and all, so `__UD_MOCK__.tasks` shows what a
+    // handoff from the browser turned into.
     enqueue_download: ({ request: asked }) => {
-      const added = task(asked.platform ?? 'generic', asked.title ?? asked.url, 'downloading', {
+      const platformId = asked.platform ?? detect(asked.url);
+      const added = task(platformId, asked.title ?? asked.url, 'downloading', {
+        url: asked.url,
+        request: asked,
         createdAt: Date.now(),
         thumbnailUrl: asked.thumbnailUrl,
         progress: progress({ totalBytes: 115_000_000, percent: 0, stage: 'video' }),
@@ -1131,6 +1174,11 @@
     emit,
     calls,
     settings,
+    /** A press of İndir in the extension, with the sample changed by `item`. */
+    handoff(item = {}) {
+      inbox.push(handoffItem(item));
+      emit('bridge://handoff', null);
+    },
     get tasks() { return tasks; },
     get picked() { return picker.picked; },
     set picked(paths) { picker.picked = paths; },

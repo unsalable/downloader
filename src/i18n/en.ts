@@ -197,7 +197,7 @@ export const en = {
   'settings.hotkeys': 'Shortcuts',
   'settings.generalSummary': 'Clipboard, notifications',
   'settings.downloadsSummary': 'Folder, quality, simultaneous downloads',
-  'settings.connectionSummary': 'Browser link for your YouTube sign-in',
+  'settings.connectionSummary': 'Browser extension and YouTube sign-in',
   'settings.appearanceSummary': 'Theme, language, motion',
   'settings.performanceSummary': 'Low resource mode, cache',
   'settings.advancedSummary': 'Download engine, network, reset',
@@ -233,15 +233,18 @@ export const en = {
     'Available: {title}, {creator}, {quality}, {platform}, {date}, {ext}',
   'settings.filenamePreview': 'Preview',
 
-  'settings.browserLink': 'Browser link',
+  'settings.browserExtension': 'Browser extension',
+  'settings.browserExtensionHint':
+    'Sends the videos playing in your browser to this app with one click.',
+  'settings.browserLink': 'YouTube sign-in',
   'settings.browserLinkHint':
-    'Lets the app use your YouTube sign-in from a browser you are already signed in to, so anything your account can watch is something it can download. A small extension hands the session over; it is kept encrypted on this PC and written out only for the one download that needs it.',
+    'Uses your browser’s YouTube sign-in for videos only your account can watch. It stays encrypted on this PC.',
   'settings.linkBroken': 'Browsers cannot start the helper',
   'settings.linkBrokenHint':
-    'The entry that lets a browser hand the session over is missing, or it points somewhere else. A browser update, a cleanup tool or a second copy of the app can do that. Repair writes it back.',
+    'The entry that lets the extension reach this app is missing, or it points somewhere else. A browser update, a cleanup tool or a second copy of the app can do that. Repair writes it back.',
   'settings.linkWaiting': 'No browser connected yet',
   'settings.linkWaitingHint':
-    'Install the extension in the browser you are signed in to YouTube with. New extensions hide behind the puzzle-piece button next to the address bar: open it, press the pin beside Universal Downloader, then open the extension and press Connect.',
+    'In the browser you are signed in to YouTube with, click the extension and turn on its "YouTube session" switch.',
   'settings.linkSignedOut': 'No sign-in stored',
   'settings.linkSignedOutHint':
     '{browser} is linked, but it is not signed in to YouTube -- or the sign-in was cleared. Sign in there and the extension hands the session over on its own.',
@@ -306,7 +309,7 @@ export const en = {
   'settings.jsRuntimeHint':
     'A small JavaScript engine, about 40 MB, downloaded once. YouTube answers a signed-in request with scrambled video formats, and this is what unscrambles them before a download can start.',
   'settings.jsRuntimeOptional':
-    'Ordinary downloads never need it. Install it if you use the browser connection: without it a video your account can watch may fail with a message about only images being available.',
+    'Ordinary downloads never need it. Install it if you use the YouTube sign-in: without it a video your account can watch may fail with a message about only images being available.',
   'settings.toolInstall': 'Install',
   'settings.toolUpdate': 'Check for update',
   'settings.toolChecking': 'Checking…',

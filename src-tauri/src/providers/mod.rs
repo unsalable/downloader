@@ -27,7 +27,7 @@ use std::time::{Duration, Instant};
 use once_cell::sync::Lazy;
 
 use crate::error::{AppError, AppResult};
-use crate::model::{FormatKind, MediaFormat, MediaKind, MediaMetadata, PlatformId};
+use crate::model::{FormatKind, MediaFormat, MediaKind, MediaMetadata, PlatformId, SourceContext};
 use crate::settings::Settings;
 use crate::{log_debug, log_warn, tools};
 
@@ -45,8 +45,14 @@ pub trait MediaProvider {
     fn can_handle(&self, url: &str) -> bool;
 
     /// Read whatever the source publishes: title, creator, thumbnail and the
-    /// list of streams that can actually be fetched.
-    async fn analyze(&self, url: &str, settings: &Settings) -> AppResult<MediaMetadata>;
+    /// list of streams that can actually be fetched. `source` is the page and
+    /// headers the browser found the link with, when it came from there.
+    async fn analyze(
+        &self,
+        url: &str,
+        settings: &Settings,
+        source: Option<&SourceContext>,
+    ) -> AppResult<MediaMetadata>;
 }
 
 impl MediaProvider for DirectProvider {
@@ -56,8 +62,13 @@ impl MediaProvider for DirectProvider {
     fn can_handle(&self, url: &str) -> bool {
         DirectProvider::can_handle(self, url)
     }
-    async fn analyze(&self, url: &str, settings: &Settings) -> AppResult<MediaMetadata> {
-        DirectProvider::analyze(self, url, settings).await
+    async fn analyze(
+        &self,
+        url: &str,
+        settings: &Settings,
+        source: Option<&SourceContext>,
+    ) -> AppResult<MediaMetadata> {
+        DirectProvider::analyze(self, url, settings, source).await
     }
 }
 
@@ -68,8 +79,13 @@ impl MediaProvider for EngineProvider {
     fn can_handle(&self, url: &str) -> bool {
         EngineProvider::can_handle(self, url)
     }
-    async fn analyze(&self, url: &str, settings: &Settings) -> AppResult<MediaMetadata> {
-        EngineProvider::analyze(self, url, settings).await
+    async fn analyze(
+        &self,
+        url: &str,
+        settings: &Settings,
+        source: Option<&SourceContext>,
+    ) -> AppResult<MediaMetadata> {
+        EngineProvider::analyze(self, url, settings, source).await
     }
 }
 
@@ -80,8 +96,13 @@ impl MediaProvider for GenericProvider {
     fn can_handle(&self, url: &str) -> bool {
         GenericProvider::can_handle(self, url)
     }
-    async fn analyze(&self, url: &str, settings: &Settings) -> AppResult<MediaMetadata> {
-        GenericProvider::analyze(self, url, settings).await
+    async fn analyze(
+        &self,
+        url: &str,
+        settings: &Settings,
+        source: Option<&SourceContext>,
+    ) -> AppResult<MediaMetadata> {
+        GenericProvider::analyze(self, url, settings, source).await
     }
 }
 
@@ -94,6 +115,18 @@ impl MediaProvider for GenericProvider {
 ///   4. the generic page reader
 ///   5. unsupported
 pub async fn analyze(url: &str, settings: &Settings) -> AppResult<MediaMetadata> {
+    analyze_with_source(url, settings, None).await
+}
+
+/// [`analyze`], for a link the browser extension handed over with the page and
+/// headers it was playing under. The providers that fetch the link themselves
+/// send those along; the photo readers and Spotify, which only ever read pages
+/// of their own platforms, have no use for them.
+pub async fn analyze_with_source(
+    url: &str,
+    settings: &Settings,
+    source: Option<&SourceContext>,
+) -> AppResult<MediaMetadata> {
     let info = detect::classify(url)
         .ok_or_else(|| AppError::InvalidUrl(format!("not an http(s) address: {url}")))?;
 
@@ -107,7 +140,7 @@ pub async fn analyze(url: &str, settings: &Settings) -> AppResult<MediaMetadata>
     let direct = DirectProvider;
     if MediaProvider::can_handle(&direct, url) {
         log_debug!("providers", "trying direct for {}", info.host);
-        match MediaProvider::analyze(&direct, url, settings).await {
+        match MediaProvider::analyze(&direct, url, settings, source).await {
             Ok(metadata) => return Ok(metadata),
             Err(err) => {
                 // A file that 404s is a real answer; only fall through when the
@@ -138,7 +171,7 @@ pub async fn analyze(url: &str, settings: &Settings) -> AppResult<MediaMetadata>
         let engine = EngineProvider;
         if MediaProvider::can_handle(&engine, url) {
             log_debug!("providers", "trying engine for {}", info.host);
-            match MediaProvider::analyze(&engine, url, settings).await {
+            match MediaProvider::analyze(&engine, url, settings, source).await {
                 Ok(metadata) => return Ok(photos::complete(metadata, mixed, settings).await),
                 Err(AppError::Unsupported(detail)) => {
                     log_debug!("providers", "engine does not know {}: {detail}", info.host);
@@ -155,7 +188,7 @@ pub async fn analyze(url: &str, settings: &Settings) -> AppResult<MediaMetadata>
     let generic = GenericProvider;
     if MediaProvider::can_handle(&generic, url) {
         log_debug!("providers", "trying generic for {}", info.host);
-        match MediaProvider::analyze(&generic, url, settings).await {
+        match MediaProvider::analyze(&generic, url, settings, source).await {
             Ok(metadata) => return Ok(metadata),
             Err(err) => {
                 log_debug!("providers", "generic provider failed: {err}");

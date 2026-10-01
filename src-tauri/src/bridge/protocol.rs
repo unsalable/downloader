@@ -37,15 +37,15 @@ pub const MAX_MESSAGE_BYTES: usize = 1024 * 1024;
 ///
 /// `DEV` is derived from `extension/key.pem`, which is what pins the id of an
 /// unpacked install; regenerating that key changes this constant. `STORE` is
-/// filled in once the listing is approved -- until then it is empty and is
-/// skipped, and `store_listed()` keeps the Settings section from offering a
-/// listing that does not exist yet.
+/// the id the Chrome Web Store gave the published listing. An empty one is
+/// skipped, which is how a build made before a listing existed behaved.
 pub const EXTENSION_ID_DEV: &str = "bkoicficlaelgjpjhlddhloepoocpfoj";
-pub const EXTENSION_ID_STORE: &str = "";
+pub const EXTENSION_ID_STORE: &str = "oikcjjcihkfmgmmmjagilnfgnfilghic";
 
-/// Whether the published listing exists yet. The Connection section stays out
-/// of Settings until it does: its only call to action is "get the extension",
-/// and a button that opens a dead store page is worse than no section.
+/// Whether there is a published listing to point the user at. Settings shows
+/// the Connection section either way; this decides whether it offers "get the
+/// extension" or says the listing is on its way, because a button that opens
+/// a dead store page is worse than no button.
 pub fn store_listed() -> bool {
     !EXTENSION_ID_STORE.is_empty()
 }
@@ -131,9 +131,48 @@ pub enum Request {
     /// The user turned the connection off from the popup. Deletes the stored
     /// session immediately, whether or not the app is running.
     Forget(Peer),
-    /// Raise the app's window, for the popup's "Open Universal Downloader"
-    /// button. Carries nothing and returns nothing but a status.
+    /// Raise the app's window. The 1.0 popup sent this from its "Open
+    /// Universal Downloader" button; 1.0.3 no longer does, and it stays for the
+    /// copies that have not updated yet. Carries nothing and returns nothing
+    /// but a status.
     OpenApp(Peer),
+    /// The user pressed Download on something playing in a tab. The host
+    /// leaves it in the app's inbox and starts the app, which downloads it.
+    Download(Download),
+}
+
+/// A video or sound the extension saw a page play, as it arrives on the wire.
+///
+/// Everything but the address is optional and everything is untrusted: it is
+/// checked and cut down by `handoff::validate` before any of it is written
+/// anywhere, and an older extension that sends less still gets its download.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Download {
+    #[serde(flatten)]
+    pub peer: Peer,
+    pub url: String,
+    /// `page`, `stream`, `video` or `audio`. Anything else, or nothing, is
+    /// read as `page`: the app analyses a page the most carefully.
+    #[serde(default)]
+    pub kind: Option<String>,
+    #[serde(default)]
+    pub title: Option<String>,
+    /// The address of the tab the media was playing in.
+    #[serde(default)]
+    pub page_url: Option<String>,
+    /// The `Referer` the browser sent for the media, or the extension's best
+    /// reading of it.
+    #[serde(default)]
+    pub referer: Option<String>,
+    /// The `Origin` the browser sent, which it only does for a script's
+    /// request -- the shape a stream player's requests take.
+    #[serde(default)]
+    pub origin: Option<String>,
+    #[serde(default)]
+    pub user_agent: Option<String>,
+    #[serde(default)]
+    pub thumbnail: Option<String>,
 }
 
 /// Who is speaking. Present on every request so the host can bind, and check,
@@ -246,7 +285,8 @@ pub struct HostStatus {
     pub app_version: String,
     /// The host's own executable path. The only tell a user has that the
     /// registry entry still points at the real app and not at something that
-    /// overwrote it, so the popup displays it.
+    /// overwrote it. The 1.0 popup displayed it; Settings' diagnostics still
+    /// carry the same path.
     pub host_path: String,
     pub enabled: bool,
     /// Whether the profile that asked is the bound one.
@@ -260,6 +300,11 @@ pub struct HostStatus {
     pub account_hint: Option<String>,
     #[serde(default)]
     pub last_push_at: Option<i64>,
+    /// Whether this host understands `download`. Always true from this one;
+    /// the field is what lets the popup tell an app too old to take a link,
+    /// which leaves it out, from one that simply has not been asked yet.
+    #[serde(default)]
+    pub can_download: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

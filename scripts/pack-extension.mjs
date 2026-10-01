@@ -8,10 +8,12 @@
 // it is removed from the copy that ships and left alone in the working tree.
 //
 // The directory also holds things that must not be published: the private half
-// of that key, the icon generator, and the developer README. An allow-list of
-// what belongs in a release would rot every time a file is added, so this
-// excludes by name and prints what it packed -- a wrong file is then visible in
-// the output rather than in the listing.
+// of that key, the icon generator, and the developer and store notes. An
+// allow-list of what belongs in a release would rot every time a file is added
+// (media.js and fonts/ ship because they are there), so this excludes by name
+// and prints what it packed -- a wrong file is then visible in the output
+// rather than in the listing. The tests live in scripts/extension/, outside
+// the folder, and a test file that strays into it is left out all the same.
 //
 // The zip is written by hand because Node has no archiver and PowerShell's
 // Compress-Archive has been inconsistent about path separators, which is not a
@@ -38,7 +40,7 @@ const EXCLUDED = new Set([
 function collect(dir) {
   return readdirSync(dir).flatMap((name) => {
     const full = join(dir, name);
-    if (EXCLUDED.has(name) || name.endsWith('.zip')) return [];
+    if (EXCLUDED.has(name) || name.endsWith('.zip') || /\.test\.[cm]?js$/.test(name)) return [];
     return statSync(full).isDirectory() ? collect(full) : [full];
   });
 }
@@ -110,5 +112,6 @@ end.writeUInt32LE(offset, 16);
 
 writeFileSync(target, Buffer.concat([...locals, directory, end]));
 
-console.log(`\npacked ${files.length} files -> ${target}`);
+const { version } = JSON.parse(readFileSync(join(source, 'manifest.json'), 'utf8'));
+console.log(`\npacked ${files.length} files, version ${version} -> ${target}`);
 console.log('the signing key and the developer notes are not in it');

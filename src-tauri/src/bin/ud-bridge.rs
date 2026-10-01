@@ -6,7 +6,9 @@
 //! encrypt the cookie database with a key bound to the browser's own
 //! executable, so reading it from outside is no longer possible -- and should
 //! not be. An extension the user installed, pushing through a channel the
-//! browser owns, is the honest version of the same thing.
+//! browser owns, is the honest version of the same thing. The same channel
+//! carries the videos the user sends from a page to download, which this
+//! program leaves in the app's inbox before starting the app.
 //!
 //! The app is usually closed while this runs, which shapes everything here: it
 //! holds no state of its own, takes every decision from the files under
@@ -20,8 +22,9 @@
 use std::io::{ErrorKind, Read, Write};
 use std::path::PathBuf;
 
+use universal_downloader_lib::bridge::handoff;
 use universal_downloader_lib::bridge::protocol::{
-    self, ErrorCode, HostStatus, Peer, Push, Request, Response,
+    self, Download, ErrorCode, HostStatus, Peer, Push, Request, Response,
 };
 use universal_downloader_lib::bridge::LinkState;
 use universal_downloader_lib::log_warn;
@@ -31,8 +34,8 @@ fn main() {
     // is authentication of the *caller*, by the browser, and it is worth being
     // precise about what it proves: that the browser started us for that
     // extension. It says nothing about this host being the one the user meant
-    // to run -- that is what the registry values and the path shown in the
-    // popup are for.
+    // to run -- that is what the registry values and the host path in
+    // Settings' diagnostics are for.
     let origin = std::env::args().nth(1).unwrap_or_default();
     if !protocol::origin_allowed(&origin) {
         log_warn!("bridge-host", "refused a caller claiming to be {origin}");
@@ -135,6 +138,7 @@ fn send(output: &mut impl Write, response: &Response) -> std::io::Result<()> {
 fn handle(request: Request) -> Response {
     let version = match &request {
         Request::Push(push) => push.peer.v,
+        Request::Download(download) => download.peer.v,
         Request::Status(peer)
         | Request::Claim(peer)
         | Request::Forget(peer)
@@ -163,9 +167,14 @@ fn handle(request: Request) -> Response {
         // Not gated on the toggle either. Refusing to raise a window is not
         // enforcement of anything, and the window is where the toggle lives.
         Request::OpenApp(peer) => {
-            open_app();
+            open_app(&[]);
             Response::ok(status(&state, &peer))
         }
+
+        // Nor is a download. The toggle is about lending the app a YouTube
+        // session, and a link the user pressed Download on lends nothing: the
+        // app fetches it as it would one pasted into its own window.
+        Request::Download(download) => hand_over(&state, &download),
 
         // Nor is deleting. A user who turns the link off in the app and then
         // presses Forget in the popup is asking for the same thing twice, and
@@ -242,6 +251,27 @@ fn accept(state: &LinkState, push: &Push) -> Response {
     }
 }
 
+/// Leave the link in the app's inbox and start the app to take it.
+///
+/// The inbox rather than the command line: a command line is split on `|` by
+/// the single-instance plugin, capped in length, and readable by every other
+/// program the user runs, and a signed media address is none of their
+/// business. The argument only says that something is waiting.
+fn hand_over(state: &LinkState, download: &Download) -> Response {
+    let handoff = match handoff::validate(download, chrono::Utc::now().timestamp()) {
+        Ok(handoff) => handoff,
+        Err(reason) => return Response::err(ErrorCode::Malformed, reason),
+    };
+
+    if let Err(err) = handoff::deposit(&handoff) {
+        log_warn!("bridge-host", "could not leave a link for the app: {err}");
+        return Response::err(ErrorCode::Internal, "the app could not take the link");
+    }
+
+    open_app(&[handoff::LAUNCH_ARG]);
+    Response::ok(status(state, &download.peer))
+}
+
 fn disabled() -> Response {
     Response::err(
         ErrorCode::Disabled,
@@ -277,17 +307,18 @@ fn status(state: &LinkState, peer: &Peer) -> HostStatus {
             None
         },
         last_push_at: state.last_push_at,
+        can_download: true,
     }
 }
 
-/// Raise the app's window by starting the app.
+/// Raise the app's window by starting the app with `args`.
 ///
 /// There is no need for anything cleverer: the desktop build registers
 /// `tauri-plugin-single-instance`, so a second launch never becomes a second
 /// app -- it hands its arguments to the copy already running, which shows its
 /// window and exits. If no copy is running, the user gets the app they asked
 /// for. One spawn covers both.
-fn open_app() {
+fn open_app(args: &[&str]) {
     let Some(exe) = app_exe() else {
         log_warn!("bridge-host", "could not find the app beside the helper");
         return;
@@ -295,6 +326,7 @@ fn open_app() {
 
     let mut command = std::process::Command::new(exe);
     command
+        .args(args)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null());
@@ -357,5 +389,43 @@ fn scrub(push: &mut Push) {
     for cookie in &mut push.cookies {
         // Zero bytes are valid UTF-8, so the string stays well formed.
         unsafe { cookie.value.as_bytes_mut() }.fill(0);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn request(body: serde_json::Value) -> Request {
+        serde_json::from_value(body).unwrap()
+    }
+
+    fn code(response: &Response) -> Option<ErrorCode> {
+        response.error.as_ref().map(|error| error.code)
+    }
+
+    /// The version is checked before anything is read or written, for a
+    /// download as for everything else.
+    #[test]
+    fn a_download_from_a_newer_extension_asks_for_an_update() {
+        let newer = request(serde_json::json!({
+            "type": "download", "v": 2, "profileId": "p", "extensionVersion": "9.0.0",
+            "url": "https://cdn.example/a.mp4",
+        }));
+        assert_eq!(code(&handle(newer)), Some(ErrorCode::Version));
+    }
+
+    /// Refused before the inbox or the app are touched.
+    #[test]
+    fn a_link_that_is_not_a_web_address_is_malformed() {
+        let Request::Download(download) = request(serde_json::json!({
+            "type": "download", "v": 1, "profileId": "p", "extensionVersion": "1.0.3",
+            "url": "javascript:alert(1)",
+        })) else {
+            panic!("not read as a download");
+        };
+        let response = hand_over(&LinkState::default(), &download);
+        assert!(!response.ok);
+        assert_eq!(code(&response), Some(ErrorCode::Malformed));
     }
 }

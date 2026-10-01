@@ -70,6 +70,7 @@ async fn download(url: &str, entry: Option<u32>, mode: DownloadMode) -> Download
         platform: None,
         entry,
         audio_language: None,
+        source: None,
     };
 
     let task = format!("photo-test-{}", std::process::id());

@@ -361,6 +361,7 @@ async fn downloads_a_spotify_song_as_that_song() {
         platform: None,
         entry: Some(2),
         audio_language: None,
+        source: None,
     };
     providers::remember_analysis(&request.url, &settings, &album);
     let mut sink = |_progress| {};

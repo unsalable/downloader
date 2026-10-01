@@ -1437,6 +1437,7 @@ mod tests {
             platform: None,
             entry: None,
             audio_language: audio_language.map(str::to_string),
+            source: None,
         }
     }
 

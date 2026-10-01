@@ -1,293 +1,307 @@
-/* 360px is as wide as Chrome will let a popup be without it feeling like a
-   window, and everything here has to stay readable at that width without the
-   user scrolling to find the button. That budget is also why the diagnostics
-   sit in a fold: the host path alone was taller than the sentence it was
-   printed under, and it is read once a year. */
+/* The popup: a heading, the list, one switch. Everything the app's grouped
+   lists do, at the size of a toolbar popup. */
 
 body {
-  width: 360px;
+  width: 340px;
+  padding: 12px;
   font-size: 13px;
-  line-height: 1.5;
+  line-height: 1.4;
+  display: grid;
+  gap: 12px;
+  user-select: none;
+  cursor: default;
 }
 
-.head {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 12px 16px;
-  border-bottom: 1px solid var(--border);
+header {
+  padding: 2px 4px 0;
+  min-width: 0;
 }
 
-.head .mark {
-  width: 16px;
-  height: 16px;
-  color: var(--accent);
-  flex: none;
-}
-
-.head .name {
+h1 {
+  font-size: 15px;
   font-weight: 600;
-  font-size: 13px;
-  letter-spacing: -0.005em;
+  letter-spacing: -0.01em;
+  line-height: 20px;
 }
 
-.dot {
-  margin-inline-start: auto;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
+.host {
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* An error said next to what it is about, as InlineNotice does in the app. */
+.notice {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 0 4px;
+  font-size: 12.5px;
+  line-height: 1.4;
+  color: var(--error);
+}
+
+.notice svg {
+  width: 14px;
+  height: 14px;
   flex: none;
-  background: var(--text-tertiary);
-  transition: background-color var(--t-micro) var(--ease-out);
+  margin-top: 1.5px;
 }
 
-.dot[data-tone='ok'] {
-  background: var(--success);
+.link {
+  border: 0;
+  padding: 0;
+  margin-left: 2px;
+  background: none;
+  color: var(--accent);
+  font-weight: 500;
+  cursor: pointer;
+  border-radius: 4px;
 }
 
-.dot[data-tone='warn'] {
-  background: var(--warning);
+.link:hover {
+  color: var(--accent-hover);
 }
 
-.dot[data-tone='bad'] {
-  background: var(--error);
+.card {
+  background: var(--surface);
+  border: 1px solid var(--card-edge);
+  border-radius: var(--radius-card);
+  overflow: hidden;
 }
 
-/* -- motion ---------------------------------------------------------------
-   One movement, and everything that arrives uses it: the answer settling into
-   the card, the confirmation taking the buttons' place, the buttons coming
-   back. Same duration and same curve as the desktop app's `component` tier,
-   so the popup and the window it talks to move at one speed. */
+.list {
+  max-height: 380px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  animation: settle var(--t-component) var(--ease-out) both;
+}
 
 @keyframes settle {
   from {
     opacity: 0;
-    transform: translateY(5px);
+    transform: translateY(4px);
   }
 }
 
-.enter {
-  animation: settle var(--t-component) var(--ease-out) both;
-}
-
-.panel {
-  padding: 16px;
-}
-
-.title {
-  font-size: 15px;
-  font-weight: 600;
-  letter-spacing: -0.01em;
-}
-
-.body {
-  margin-top: 6px;
-  color: var(--text-secondary);
-}
-
-.actions {
-  margin-top: 14px;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
-/* The way out of the state fills the row; the way round it takes only the
-   width of its own label, so which of the two is the answer is legible before
-   either is read. */
-.actions button {
-  flex: 1 1 auto;
-  min-width: 120px;
-}
-
-.actions button.quiet {
-  flex: 0 0 auto;
-  min-width: 0;
-}
-
-.confirm .ask {
-  margin-top: 14px;
-  font-weight: 600;
-}
-
-.confirm .actions {
-  margin-top: 8px;
-}
-
-/* -- folds ----------------------------------------------------------------
-   Opened by animating the grid row from 0fr to 1fr, which is the one way to
-   transition to a height nobody has measured. The inner element is what
-   clips, and hiding it outright while closed keeps the buttons inside out of
-   the tab order. */
-
-.fold {
-  border-top: 1px solid var(--border);
-}
-
-.fold-head {
-  width: 100%;
+/* Rows bring no border of their own. The hairline between two is painted as
+   the lower one's background, starting where the text does (12 padding + 56
+   thumbnail + 12 gap), exactly as `.list-group` draws it in the app. */
+.row {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 11px 16px;
-  border: 0;
-  border-radius: 0;
-  background: transparent;
-  color: var(--text-secondary);
-  font-size: 12px;
-  text-align: start;
-  transition: background-color var(--t-micro) var(--ease-out),
-    color var(--t-micro) var(--ease-out);
+  gap: 12px;
+  padding: 10px 12px;
 }
 
-.fold-head:hover {
-  background: var(--surface);
-  color: var(--text-primary);
+.row + .row {
+  background-image: linear-gradient(var(--border), var(--border));
+  background-size: calc(100% - 80px) 1px;
+  background-position: right top;
+  background-repeat: no-repeat;
 }
 
-.fold-head:focus-visible {
+.list :focus-visible {
   outline-offset: -2px;
 }
 
-.fold-head .chev {
-  width: 14px;
-  height: 14px;
+.thumb {
+  position: relative;
   flex: none;
-  margin-inline-start: auto;
-  color: var(--text-tertiary);
-  transition: transform var(--t-micro) var(--ease-out);
-}
-
-.fold[data-open] .fold-head .chev {
-  transform: rotate(180deg);
-}
-
-.fold-wrap {
-  display: grid;
-  grid-template-rows: 0fr;
-  transition: grid-template-rows var(--t-component) var(--ease-out);
-}
-
-.fold[data-open] .fold-wrap {
-  grid-template-rows: 1fr;
-}
-
-.fold-body {
+  width: 56px;
+  height: 32px;
+  border-radius: 6px;
   overflow: hidden;
-  min-height: 0;
-  visibility: hidden;
-  opacity: 0;
-  transition: opacity var(--t-component-out) var(--ease-in),
-    visibility 0s linear var(--t-component-out);
-}
-
-.fold[data-open] .fold-body {
-  visibility: visible;
-  opacity: 1;
-  transition: opacity var(--t-component) var(--ease-out) 40ms, visibility 0s;
-}
-
-.facts {
-  margin: 0;
-  padding: 2px 16px 14px;
+  background: var(--fill);
+  color: var(--text-tertiary);
   display: grid;
-  grid-template-columns: auto 1fr;
-  gap: 6px 14px;
-  align-items: baseline;
+  place-items: center;
 }
 
-/* The rows carry the pairing; the grid carries the alignment, so a label and
-   its value stay in one column down the whole list however long either gets. */
-.fact {
-  display: contents;
+.thumb svg {
+  width: 12px;
+  height: 12px;
 }
 
-.fact dt {
-  color: var(--text-tertiary);
+.thumb img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  opacity: 0;
+  transition: opacity var(--t-micro) var(--ease-out);
 }
 
-.fact dd {
-  margin: 0;
+.thumb img.loaded {
+  opacity: 1;
 }
 
-/* The host path is the one thing on this page a user is meant to read
-   character by character, so it gets the full width and a font that does not
-   turn l into 1. */
-.fact-path dt,
-.fact-path dd {
-  grid-column: 1 / -1;
+.text {
+  flex: 1;
+  min-width: 0;
 }
 
-.fact-path dt {
-  margin-top: 4px;
+.title,
+.meta,
+.line {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
-.fact-path code {
-  font-family: var(--mono);
-  font-size: 11px;
+.title {
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 18px;
+}
+
+.meta,
+.line {
+  font-size: 12px;
+  line-height: 16px;
   color: var(--text-secondary);
-  background: var(--surface-sunken);
-  border: 1px solid var(--border);
+}
+
+/* Even figures where the line is figures -- 1080p, 24 MB, 23:41 -- and only
+   there: Inter's tabular set also widens the hyphen, which opens a gap in the
+   middle of "members-only". */
+.row .meta {
+  font-variant-numeric: tabular-nums;
+}
+
+/* The app's small primary button: accent fill, no border, a slight give. */
+.get {
+  position: relative;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  height: 28px;
+  padding: 0 12px;
+  border: 0;
   border-radius: 8px;
-  padding: 7px 9px;
-  display: block;
-  word-break: break-all;
+  background: var(--accent);
+  color: var(--accent-fg);
+  font-size: 12.5px;
+  font-weight: 500;
+  cursor: pointer;
+  transition-property: transform, background-color, color, opacity;
+  transition-duration: var(--t-micro);
+  transition-timing-function: var(--ease-out);
 }
 
-.hint {
-  padding: 0 16px 14px;
-  font-size: 11.5px;
-  color: var(--text-tertiary);
+/* A button that cannot be pressed -- disabled, sending, sent -- does not
+   answer the pointer either. */
+.get:hover:not(:disabled) {
+  background: var(--accent-hover);
 }
 
-.grant {
-  padding: 2px 16px 14px;
+.get:active:not(:disabled) {
+  transform: scale(0.98);
 }
 
-.grant h3 {
-  font-size: 12px;
-  font-weight: 600;
+.get:disabled {
+  opacity: 0.45;
+  cursor: default;
 }
 
-.grant p {
-  margin-top: 3px;
-  font-size: 12px;
-  color: var(--text-secondary);
+/* Sending: the label stays to hold the width, invisible, under a small ring. */
+.get[data-state="sending"] {
+  opacity: 1;
+  color: transparent;
 }
 
-.grant button {
-  margin-top: 8px;
-  padding: 6px 10px;
-  font-size: 12px;
+.get[data-state="sending"]::after {
+  content: "";
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 1.5px solid var(--accent-fg);
+  border-right-color: transparent;
+  animation: spin 700ms linear infinite;
 }
 
-.grant .granted {
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.get[data-state="sent"] {
+  opacity: 1;
+  padding: 0 2px;
+  background: none;
   color: var(--success);
 }
 
-.pin {
-  display: flex;
-  gap: 10px;
-  padding: 14px 16px;
-  border-top: 1px solid var(--border);
-  background: var(--surface-sunken);
+.get svg {
+  width: 13px;
+  height: 13px;
 }
 
-.pin svg {
-  width: 18px;
-  height: 18px;
-  flex: none;
-  margin-top: 1px;
-  color: var(--text-tertiary);
+.empty {
+  padding: 22px 16px;
+  text-align: center;
 }
 
-.pin strong {
-  font-size: 12px;
-  font-weight: 600;
+.empty .title {
+  font-size: 13.5px;
+  white-space: normal;
 }
 
-.pin p {
+.empty .meta {
   margin-top: 2px;
-  font-size: 12px;
-  color: var(--text-secondary);
+  white-space: normal;
+}
+
+.setting {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+}
+
+/* The app's Toggle: the proportions of the system switch, a track a little
+   over one and a half knobs wide, the knob filling it but for 2px all round. */
+.switch {
+  flex: none;
+  position: relative;
+  width: 40px;
+  height: 24px;
+  padding: 2px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--fill-active);
+  cursor: pointer;
+  transition: background-color var(--t-micro) var(--ease-out);
+}
+
+.switch[aria-checked="true"] {
+  background: var(--accent);
+}
+
+.switch:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.knob {
+  display: block;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: #ffffff;
+  box-shadow: 0 0 0 0.5px rgb(0 0 0 / 0.06), 0 2px 5px rgb(0 0 0 / 0.2);
+  transition: transform var(--t-micro) var(--ease-out);
+}
+
+.switch[aria-checked="true"] .knob {
+  transform: translateX(16px);
 }

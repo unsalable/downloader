@@ -279,22 +279,23 @@ impl RangeFetchManager {
         let scratch = paths::temp_dir()?;
         let id = util::new_id("fetch");
         let staged = ffmpeg::intermediate_path(&scratch, &id, "fetch", &job.plan.container);
-        let selector = job.plan.selector_for_engine();
+        // The editor fetches links typed into it, which come with no page
+        // behind them; a stream the page reader found is still fetched from
+        // its own address, as a queued download would be.
+        let engine = crate::downloader::engine_target(&job.plan, &job.metadata, &[]);
 
         let manager = Arc::clone(self);
         let mut sink = move |sample: ProgressSample| manager.on_progress(&sample, ranged);
 
         let outcome = engine_dl::run(
             EngineDownload {
-                url: job.metadata.stream_page(),
-                format_selector: &selector,
+                url: &engine.url,
+                format_selector: &engine.selector,
                 target: &staged,
-                merge_container: job
-                    .plan
-                    .needs_merge
-                    .then_some(job.plan.container.as_str()),
+                merge_container: engine.merge_container.as_deref(),
                 section: job.section,
                 force_keyframes: job.exact,
+                headers: &engine.headers,
             },
             &settings,
             control,

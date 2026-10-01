@@ -14,6 +14,7 @@ import type {
   DiagnosticsSnapshot,
   DownloadRequest,
   DownloadTask,
+  Handoff,
   HistoryEntry,
   LanguageCode,
   LicenseEntry,
@@ -95,6 +96,11 @@ export const bridgeRepair = () => invoke<BridgeStatus>('bridge_repair');
 export const bridgeDisconnect = () => invoke<BridgeStatus>('bridge_disconnect');
 /** A support paste. Carries cookie names, never their values. */
 export const bridgeDiagnostics = () => invoke<string>('bridge_diagnostics');
+/**
+ * Every video the extension handed over since the last call, oldest first.
+ * Taking them empties the inbox, so each one is answered once.
+ */
+export const takeHandoffs = () => invoke<Handoff[]>('take_handoffs');
 
 // -- analysis --------------------------------------------------------------
 
@@ -277,6 +283,7 @@ export const EVENTS = {
   toolsChanged: 'tools://changed',
   settingsChanged: 'settings://changed',
   bridgeChanged: 'bridge://changed',
+  handoff: 'bridge://handoff',
   convertChanged: 'convert://changed',
   convertProgress: 'convert://progress',
   exportChanged: 'editor://export',
@@ -323,6 +330,15 @@ export function onSettingsChanged(handler: (settings: Settings) => void): Promis
  */
 export function onBridgeChanged(handler: () => void): Promise<UnlistenFn> {
   return listen(EVENTS.bridgeChanged, () => handler());
+}
+
+/**
+ * The extension handed over a video while the app was running. Like the event
+ * above it carries nothing: the handoffs wait in the inbox, and `takeHandoffs`
+ * is what collects them.
+ */
+export function onHandoff(handler: () => void): Promise<UnlistenFn> {
+  return listen(EVENTS.handoff, () => handler());
 }
 
 export interface ConvertProgressEvent {

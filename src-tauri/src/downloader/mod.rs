@@ -20,8 +20,8 @@ use std::sync::Arc;
 
 use crate::error::{AppError, AppResult};
 use crate::model::{
-    DownloadProgress, DownloadRequest, DownloadStage, MediaFormat, MediaMetadata, MusicTags,
-    PlatformId,
+    DownloadProgress, DownloadRequest, DownloadStage, MediaFormat, MediaMetadata,
+    MusicTags, PlatformId, SourceContext,
 };
 use crate::settings::Settings;
 use crate::{ffmpeg, filename, log_debug, log_info, paths, providers};
@@ -135,17 +135,27 @@ pub async fn execute(
 
     // Fresh metadata means fresh (unexpired) stream URLs. An analysis the user
     // made moments ago is fresh enough, and repeating it is the costliest step.
-    let metadata = match providers::recent_analysis(&request.url, settings) {
-        Some(metadata) => {
-            log_debug!("downloader", "task {task_id}: reusing the analysis made moments ago");
-            metadata
-        }
-        None => {
-            let metadata = providers::analyze(&request.url, settings).await?;
-            // The other items of a gallery are queued behind this one and can
-            // share it, rather than each asking the platform again.
-            providers::remember_analysis(&request.url, settings, &metadata);
-            metadata
+    //
+    // Not for a link the browser handed over, though. That one is read with
+    // the page and headers it was playing under, and the kept analyses are
+    // keyed on the address alone: one made without those headers is no answer
+    // for this request, and one made with them is no answer for the next
+    // request of the same address that has none.
+    let metadata = if let Some(source) = request.source.as_ref() {
+        providers::analyze_with_source(&request.url, settings, Some(source)).await?
+    } else {
+        match providers::recent_analysis(&request.url, settings) {
+            Some(metadata) => {
+                log_debug!("downloader", "task {task_id}: reusing the analysis made moments ago");
+                metadata
+            }
+            None => {
+                let metadata = providers::analyze(&request.url, settings).await?;
+                // The other items of a gallery are queued behind this one and
+                // can share it, rather than each asking the platform again.
+                providers::remember_analysis(&request.url, settings, &metadata);
+                metadata
+            }
         }
     };
 
@@ -178,6 +188,15 @@ async fn download_analyzed(
         return Err(AppError::Canceled);
     }
 
+    // Before anything is named after it: the file, the finished task and the
+    // history entry all take their title from here.
+    let metadata = with_page_title(metadata, request);
+    let headers = request
+        .source
+        .as_ref()
+        .map(SourceContext::headers)
+        .unwrap_or_default();
+
     let plan = plan::for_request(&metadata, request)?;
 
     // A merge is the one step with a hard external dependency. Failing here,
@@ -209,7 +228,8 @@ async fn download_analyzed(
     let mut aggregate = Aggregator::new(plan.estimated_bytes, plan.stage_count());
 
     let produced = if plan.needs_engine {
-        run_via_engine(task_id, &plan, &metadata, settings, &control, &mut aggregate, on_update, temp_dir).await?
+        run_via_engine(task_id, &plan, &metadata, &headers, settings, &control, &mut aggregate, on_update, temp_dir)
+            .await?
     } else {
         match run_natively(task_id, &plan, &metadata, settings, &control, &mut aggregate, on_update, temp_dir).await {
             Ok(path) => path,
@@ -224,7 +244,7 @@ async fn download_analyzed(
                 );
                 cleanup_task_files(task_id);
                 aggregate = Aggregator::new(plan.estimated_bytes, 1 + u32::from(plan.convert_to.is_some()));
-                run_via_engine(task_id, &plan, &metadata, settings, &control, &mut aggregate, on_update, temp_dir)
+                run_via_engine(task_id, &plan, &metadata, &headers, settings, &control, &mut aggregate, on_update, temp_dir)
                     .await
                     // The engine failing here is the same refusal seen from
                     // another angle; the access error is the one that explains
@@ -373,6 +393,7 @@ async fn run_via_engine(
     task_id: &str,
     plan: &DownloadPlan,
     metadata: &MediaMetadata,
+    headers: &[(String, String)],
     settings: &Settings,
     control: &Arc<TaskControl>,
     aggregate: &mut Aggregator,
@@ -381,7 +402,7 @@ async fn run_via_engine(
 ) -> AppResult<PathBuf> {
     aggregate.enter(DownloadStage::Video, 1);
 
-    let selector = plan.selector_for_engine();
+    let target = engine_target(plan, metadata, headers);
     let staged = ffmpeg::intermediate_path(temp_dir, task_id, "e", &plan.container);
 
     let mut sink = |sample: http::ProgressSample| {
@@ -391,14 +412,15 @@ async fn run_via_engine(
 
     engine_dl::run(
         engine_dl::EngineDownload {
-            url: metadata.stream_page(),
-            format_selector: &selector,
+            url: &target.url,
+            format_selector: &target.selector,
             target: &staged,
-            merge_container: plan.needs_merge.then_some(plan.container.as_str()),
+            merge_container: target.merge_container.as_deref(),
             // A queued download is always the whole thing. Fetching a piece of
             // a link is the editor's, and goes through its own manager.
             section: None,
             force_keyframes: false,
+            headers: &target.headers,
         },
         settings,
         Arc::clone(control),
@@ -429,6 +451,94 @@ async fn run_via_engine(
     .await?;
     let _ = std::fs::remove_file(&produced);
     Ok(converted)
+}
+
+/// What the engine is pointed at, and what it is asked to pick there.
+#[derive(Debug, PartialEq)]
+pub(crate) struct EngineTarget {
+    pub(crate) url: String,
+    pub(crate) selector: String,
+    pub(crate) merge_container: Option<String>,
+    pub(crate) headers: Vec<(String, String)>,
+}
+
+pub(crate) fn engine_target(
+    plan: &DownloadPlan,
+    metadata: &MediaMetadata,
+    headers: &[(String, String)],
+) -> EngineTarget {
+    // The page reader's streams are addresses it found in a page's markup, and
+    // `generic-0` is a name only this app gives them: asked for that format on
+    // the page, the engine has none by that name. The stream is the address
+    // itself -- a manifest, which the engine reads as readily as a page -- so
+    // that is what it is pointed at, to take the best of what it lists.
+    let found_on_page = (metadata.provider_id == providers::generic::PROVIDER_ID)
+        .then(|| plan.primary())
+        .flatten()
+        .and_then(|format| Some((format, format.url.as_deref()?)));
+
+    if let Some((_, url)) = found_on_page {
+        let mut headers = headers.to_vec();
+        // A manifest a page published is often served only to that page.
+        if !headers.iter().any(|(name, _)| name.eq_ignore_ascii_case("referer")) {
+            if let Some(referer) = referer_for(&metadata.canonical_url) {
+                headers.push(("Referer".to_string(), referer));
+            }
+        }
+        // Asked of the plan rather than of the stream. A page's player stream
+        // carries picture and sound together, and in Audio mode the plan takes
+        // only the sound out of it: its container is then m4a or mp3, which
+        // the engine refuses to merge into before it fetches a byte. The sound
+        // alone is taken instead, and the plan's own conversion turns it into
+        // the file that was asked for.
+        let audio_only = plan.video.is_none() && plan.image.is_none();
+        return EngineTarget {
+            url: url.to_string(),
+            selector: if audio_only { "ba/b" } else { "bv*+ba/b" }.to_string(),
+            // What it picks may arrive as two streams, and they are put
+            // together in the container the plan promised -- when that is one
+            // the engine merges into at all. Otherwise it chooses its own
+            // rather than refusing to start.
+            merge_container: (!audio_only && engine_merges_into(&plan.container))
+                .then(|| plan.container.clone()),
+            headers,
+        };
+    }
+
+    EngineTarget {
+        url: metadata.stream_page().to_string(),
+        selector: plan.selector_for_engine(),
+        merge_container: plan.needs_merge.then(|| plan.container.clone()),
+        headers: headers.to_vec(),
+    }
+}
+
+/// Whether `--merge-output-format` takes `container`. The engine's own list,
+/// and it refuses anything else while reading its options.
+fn engine_merges_into(container: &str) -> bool {
+    matches!(container, "avi" | "flv" | "mkv" | "mov" | "mp4" | "webm")
+}
+
+/// The title of the tab a handed-over link was playing in, for a result with
+/// nothing better to be called.
+///
+/// A page's player fetches addresses like `master.m3u8` and `index.mp4`, and
+/// read on its own that is all a web page or a bare file can be named after
+/// -- a film saved as "master.mp4". The tab the user pressed Download in knew
+/// what it was showing. Only for those two kinds of result: a platform the app
+/// knows names its own media better than a tab title does.
+fn with_page_title(mut metadata: MediaMetadata, request: &DownloadRequest) -> MediaMetadata {
+    let title = request
+        .title
+        .as_deref()
+        .map(str::trim)
+        .filter(|title| !title.is_empty());
+    if let (Some(_), Some(title)) = (request.source.as_ref(), title) {
+        if matches!(metadata.platform, PlatformId::Generic | PlatformId::Direct) {
+            metadata.title = title.to_string();
+        }
+    }
+    metadata
 }
 
 /// Whether the engine is in a position to retry a transfer the direct fetcher
@@ -747,6 +857,7 @@ pub fn platform_of(request: &DownloadRequest) -> PlatformId {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::model::FormatKind;
 
     #[test]
     fn a_referer_is_the_origin_of_the_page_the_media_came_from() {
@@ -764,5 +875,158 @@ mod tests {
     fn an_address_with_no_host_yields_no_referer() {
         assert_eq!(referer_for("not-a-url"), None);
         assert_eq!(referer_for("https://"), None);
+    }
+
+    fn request(source: Option<SourceContext>, title: Option<&str>) -> DownloadRequest {
+        DownloadRequest {
+            url: "https://cdn.example/hls/master.m3u8".into(),
+            mode: crate::model::DownloadMode::Video,
+            quality: crate::model::QualityPreference::Best,
+            video_format_id: None,
+            audio_format_id: None,
+            container: None,
+            watermark: crate::model::WatermarkPreference::Any,
+            output_dir: None,
+            title: title.map(str::to_string),
+            thumbnail_url: None,
+            platform: None,
+            entry: None,
+            audio_language: None,
+            source,
+        }
+    }
+
+    fn handed_over() -> Option<SourceContext> {
+        Some(SourceContext {
+            page_url: Some("https://site.example/watch/5".into()),
+            ..SourceContext::default()
+        })
+    }
+
+    /// A stream the page reader found, as `generic::push_format` lists one.
+    fn page_stream(kind: FormatKind) -> MediaMetadata {
+        let mut format = providers::image_format("generic-0", "https://cdn.example/hls/master.m3u8", None, None, Vec::new());
+        format.kind = kind;
+        format.container = if kind == FormatKind::Audio { "mp3" } else { "mp4" }.into();
+        format.protocol = "m3u8".into();
+        format.has_video = kind == FormatKind::Muxed;
+        format.has_audio = true;
+        format.needs_engine_download = true;
+        format.quality_label = "Original".into();
+
+        let mut metadata = providers::tests_support::blank();
+        metadata.provider_id = providers::generic::PROVIDER_ID.into();
+        metadata.platform = PlatformId::Generic;
+        metadata.canonical_url = "https://site.example/watch/5".into();
+        metadata.media_kind = if kind == FormatKind::Audio {
+            crate::model::MediaKind::Audio
+        } else {
+            crate::model::MediaKind::Video
+        };
+        metadata.formats = vec![format];
+        metadata
+    }
+
+    #[test]
+    fn a_stream_found_on_a_page_is_fetched_from_its_own_address() {
+        let metadata = page_stream(FormatKind::Muxed);
+        let plan = plan::for_request(&metadata, &request(None, None)).unwrap();
+        assert!(plan.needs_engine);
+
+        let target = engine_target(&plan, &metadata, &[]);
+        assert_eq!(target.url, "https://cdn.example/hls/master.m3u8");
+        assert_eq!(target.selector, "bv*+ba/b", "`generic-0` means nothing to the engine");
+        assert_eq!(target.merge_container.as_deref(), Some("mp4"));
+        assert_eq!(
+            target.headers,
+            vec![("Referer".to_string(), "https://site.example/".to_string())]
+        );
+
+        // The browser's own Referer is kept rather than replaced.
+        let sent = vec![("Referer".to_string(), "https://player.example/".to_string())];
+        assert_eq!(engine_target(&plan, &metadata, &sent).headers, sent);
+
+        let metadata = page_stream(FormatKind::Audio);
+        let plan = plan::for_request(
+            &metadata,
+            &DownloadRequest {
+                mode: crate::model::DownloadMode::Audio,
+                ..request(None, None)
+            },
+        )
+        .unwrap();
+        let target = engine_target(&plan, &metadata, &[]);
+        assert_eq!(target.selector, "ba/b");
+        assert_eq!(target.merge_container, None);
+    }
+
+    #[test]
+    fn the_sound_of_a_page_stream_is_taken_without_a_merge() {
+        // A player stream carries picture and sound together, and Audio mode
+        // takes the sound out of it into m4a or mp3 -- neither of which the
+        // engine merges into. It refuses `--merge-output-format m4a` outright.
+        let metadata = page_stream(FormatKind::Muxed);
+        for container in [None, Some("mp3")] {
+            let plan = plan::for_request(
+                &metadata,
+                &DownloadRequest {
+                    mode: crate::model::DownloadMode::Audio,
+                    container: container.map(str::to_string),
+                    ..request(None, None)
+                },
+            )
+            .unwrap();
+            assert!(plan.needs_engine);
+            assert!(plan.video.is_none(), "the plan wants the sound only");
+
+            let target = engine_target(&plan, &metadata, &[]);
+            assert_eq!(target.url, "https://cdn.example/hls/master.m3u8");
+            assert_eq!(target.selector, "ba/b");
+            assert_eq!(target.merge_container, None);
+            // The plan's own conversion is what makes the audio file.
+            assert_eq!(plan.convert_to.as_deref(), Some(container.unwrap_or("m4a")));
+        }
+
+        // A picture in a container the engine cannot merge into is fetched
+        // without asking it to.
+        let mut metadata = page_stream(FormatKind::Muxed);
+        metadata.formats[0].container = "3gp".into();
+        let plan = plan::for_request(&metadata, &request(None, None)).unwrap();
+        let target = engine_target(&plan, &metadata, &[]);
+        assert_eq!(target.selector, "bv*+ba/b");
+        assert_eq!(target.merge_container, None);
+    }
+
+    #[test]
+    fn a_stream_the_engine_listed_is_still_asked_for_by_its_id_on_its_page() {
+        let mut metadata = page_stream(FormatKind::Muxed);
+        metadata.provider_id = providers::engine::PROVIDER_ID.into();
+        metadata.formats[0].id = "hls-1080".into();
+        let plan = plan::for_request(&metadata, &request(None, None)).unwrap();
+
+        let headers = vec![("Origin".to_string(), "https://player.example".to_string())];
+        let target = engine_target(&plan, &metadata, &headers);
+        assert_eq!(target.url, "https://site.example/watch/5");
+        assert_eq!(target.selector, "hls-1080");
+        assert_eq!(target.headers, headers);
+    }
+
+    #[test]
+    fn a_handed_over_stream_is_named_after_the_tab_it_played_in() {
+        let mut metadata = providers::tests_support::blank();
+        metadata.platform = PlatformId::Generic;
+        metadata.title = "master".into();
+
+        let titled = with_page_title(metadata.clone(), &request(handed_over(), Some("  Bölüm 5 ")));
+        assert_eq!(titled.title, "Bölüm 5");
+
+        // A link typed in keeps what the source called it, and so does a
+        // handed-over one with no title of its own.
+        assert_eq!(with_page_title(metadata.clone(), &request(None, Some("Bölüm 5"))).title, "master");
+        assert_eq!(with_page_title(metadata.clone(), &request(handed_over(), Some("  "))).title, "master");
+
+        // A platform the app knows names its media better than a tab does.
+        metadata.platform = PlatformId::Youtube;
+        assert_eq!(with_page_title(metadata, &request(handed_over(), Some("Bölüm 5"))).title, "master");
     }
 }

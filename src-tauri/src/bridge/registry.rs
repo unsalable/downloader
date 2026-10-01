@@ -70,7 +70,7 @@ pub fn register(host: &Path) -> AppResult<()> {
     let manifest = HostManifest {
         name: protocol::HOST_NAME,
         description:
-            "Lets Universal Downloader use this browser's session for content you are signed in to.",
+            "Lets this browser send videos to Universal Downloader, and lend it your YouTube session if you turn that on.",
         path: host.to_string_lossy().into_owned(),
         kind: "stdio",
         allowed_origins: protocol::allowed_origins(),
@@ -127,7 +127,7 @@ pub fn is_registered() -> bool {
     let Ok(expected) = manifest_path() else {
         return false;
     };
-    if !expected.is_file() || !manifest_names_our_host() {
+    if !expected.is_file() || !manifest_is_current() {
         return false;
     }
 
@@ -141,30 +141,49 @@ pub fn is_registered() -> bool {
     })
 }
 
-/// Whether the manifest on disk still names the helper this installation ships.
-///
-/// The file is read rather than assumed, because rewriting the `path` inside it
-/// redirects the browser just as effectively as changing the registry value and
-/// is quieter: the value still points where we put it, so a check that compared
-/// only the value would report a healthy link while the browser started someone
-/// else's program.
-fn manifest_names_our_host() -> bool {
+/// Whether the manifest on disk is the one this installation would write.
+fn manifest_is_current() -> bool {
     let Ok(path) = manifest_path() else {
         return false;
     };
     let Ok(text) = std::fs::read_to_string(path) else {
         return false;
     };
-    let Ok(body) = serde_json::from_str::<serde_json::Value>(&text) else {
+    super::host_path()
+        .map(|host| manifest_matches(&text, &host, &protocol::allowed_origins()))
+        .unwrap_or(false)
+}
+
+/// Whether `text` names `host` and lets in exactly `origins`.
+///
+/// The file is read rather than assumed, because rewriting the `path` inside it
+/// redirects the browser just as effectively as changing the registry value and
+/// is quieter: the value still points where we put it, so a check that compared
+/// only the value would report a healthy link while the browser started someone
+/// else's program.
+///
+/// The origins are compared for the opposite reason. A manifest an older build
+/// wrote names only the extension ids that build knew, and Chrome refuses every
+/// other id before the host ever starts -- which is how the copy from the store
+/// was turned away while Settings called the link healthy. Order does not
+/// matter to Chrome, so it does not matter here either.
+fn manifest_matches(text: &str, host: &Path, origins: &[String]) -> bool {
+    let Ok(body) = serde_json::from_str::<serde_json::Value>(text) else {
         return false;
     };
     let Some(named) = body.get("path").and_then(|value| value.as_str()) else {
         return false;
     };
+    let Some(listed) = body.get("allowed_origins").and_then(|value| value.as_array()) else {
+        return false;
+    };
 
-    super::host_path()
-        .map(|host| same_path(named, &host))
-        .unwrap_or(false)
+    let mut listed: Vec<&str> = listed.iter().filter_map(|value| value.as_str()).collect();
+    let mut wanted: Vec<&str> = origins.iter().map(String::as_str).collect();
+    listed.sort_unstable();
+    wanted.sort_unstable();
+
+    same_path(named, host) && listed == wanted
 }
 
 /// Every vendor's current value, for the support paste. A stale or hijacked
@@ -186,7 +205,7 @@ pub fn describe() -> Vec<(String, String)> {
 }
 
 /// Remove the values, and the manifest with them, so a browser cannot start the
-/// helper at all once the user has turned the link off.
+/// helper at all.
 pub fn unregister() -> AppResult<()> {
     let hkcu = RegKey::predef(HKEY_CURRENT_USER);
     for (_, subkey) in VENDORS {
@@ -251,5 +270,48 @@ mod tests {
         let json = serde_json::to_string(&manifest).unwrap();
         assert!(json.contains(r#""type":"stdio""#), "{json}");
         assert!(json.contains(r#""allowed_origins""#), "{json}");
+    }
+
+    #[test]
+    fn a_manifest_that_lets_in_other_extensions_is_not_current() {
+        let host = PathBuf::from(r"C:\app\ud-bridge.exe");
+        let ours = protocol::allowed_origins();
+        let written = |origins: Vec<String>, path: &str| {
+            serde_json::to_string(&HostManifest {
+                name: protocol::HOST_NAME,
+                description: "test",
+                path: path.to_string(),
+                kind: "stdio",
+                allowed_origins: origins,
+            })
+            .unwrap()
+        };
+
+        assert!(manifest_matches(&written(ours.clone(), r"C:\app\ud-bridge.exe"), &host, &ours));
+        // The same ids in another order are the same manifest to Chrome.
+        let reversed: Vec<String> = ours.iter().rev().cloned().collect();
+        assert!(manifest_matches(&written(reversed, r"c:\APP\ud-bridge.exe"), &host, &ours));
+
+        // What a build from before the store listing wrote: the development
+        // id alone, which Chrome uses to turn the published copy away.
+        let stale = vec![format!("chrome-extension://{}/", protocol::EXTENSION_ID_DEV)];
+        assert!(!manifest_matches(&written(stale, r"C:\app\ud-bridge.exe"), &host, &ours));
+
+        let mut extra = ours.clone();
+        extra.push("chrome-extension://somebodyelse/".to_string());
+        assert!(!manifest_matches(&written(extra, r"C:\app\ud-bridge.exe"), &host, &ours));
+
+        assert!(!manifest_matches(&written(ours.clone(), r"C:\elsewhere\ud-bridge.exe"), &host, &ours));
+        assert!(!manifest_matches(r#"{"path":"C:\\app\\ud-bridge.exe"}"#, &host, &ours));
+        assert!(!manifest_matches("not json", &host, &ours));
+    }
+
+    #[test]
+    fn both_extension_ids_are_let_in() {
+        let origins = protocol::allowed_origins();
+        assert!(origins.contains(&"chrome-extension://bkoicficlaelgjpjhlddhloepoocpfoj/".to_string()));
+        assert!(origins.contains(&"chrome-extension://oikcjjcihkfmgmmmjagilnfgnfilghic/".to_string()));
+        assert!(protocol::origin_allowed("chrome-extension://oikcjjcihkfmgmmmjagilnfgnfilghic/"));
+        assert!(!protocol::origin_allowed("chrome-extension://oikcjjcihkfmgmmmjagilnfgnfilghicx/"));
     }
 }

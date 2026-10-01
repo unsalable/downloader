@@ -58,8 +58,14 @@ pub fn run() {
     {
         // A tray application must not start a second copy: the new process
         // would fight the old one over the queue database.
-        builder = builder.plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+        builder = builder.plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
             tray::show_main_window(app);
+            // The bridge host starts the app this way when the browser sent a
+            // link. The link itself is in the inbox; this only tells the
+            // window to go and take it.
+            if argv.iter().any(|arg| arg == bridge::handoff::LAUNCH_ARG) {
+                let _ = app.emit(commands::EVENT_BRIDGE_HANDOFF, ());
+            }
         }));
         builder = builder.plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
@@ -170,12 +176,16 @@ pub fn run() {
             // The browser link, which is registered on every launch rather than
             // at install time: a browser update, a cleaner or a second copy of
             // the app can all quietly take the registry value, and rewriting it
-            // here is what heals that without the user knowing it broke.
+            // here is what heals that without the user knowing it broke. It is
+            // also what brings a manifest an older build wrote up to the
+            // extension ids this one accepts.
+            //
+            // Whatever the YouTube session toggle says: the host also carries
+            // the videos the extension sends to download, and the toggle only
+            // decides whether it may store cookies.
             #[cfg(windows)]
-            if loaded.browser_link_enabled {
-                if let Err(err) = bridge::register() {
-                    log_warn!("app", "browser link unavailable: {err}");
-                }
+            if let Err(err) = bridge::register() {
+                log_warn!("app", "browser link unavailable: {err}");
             }
             // A lease that outlived its engine process is never resumable
             // state, unlike a partial download, so it goes unconditionally.
@@ -226,6 +236,7 @@ pub fn run() {
             commands::bridge_repair,
             commands::bridge_disconnect,
             commands::bridge_diagnostics,
+            commands::take_handoffs,
             commands::get_tools,
             commands::refresh_tools,
             commands::install_tool,

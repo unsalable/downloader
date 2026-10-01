@@ -140,7 +140,55 @@ export interface DownloadRequest {
   entry?: number | null;
   /** The sound track's language, where there are several. Null: the original. */
   audioLanguage?: string | null;
+  /**
+   * The page a link was found on, for a link the browser extension handed
+   * over. Null for everything else: a link pasted into Home needs no headers.
+   */
+  source?: SourceContext | null;
 }
+
+/**
+ * What the browser knew about a link when it was handed over: the page it
+ * played on and the headers it was fetched with. A stream's server often
+ * answers only a request that looks like the player's own, so the backend
+ * sends these with every request it makes for the link.
+ */
+export interface SourceContext {
+  pageUrl?: string | null;
+  referer?: string | null;
+  /** Only for a link the page fetched by script, where the browser sends one. */
+  origin?: string | null;
+  userAgent?: string | null;
+}
+
+/**
+ * A video the browser extension handed over, waiting in the bridge's inbox
+ * until `take_handoffs` collects it. The extension sends what the page showed;
+ * the native host checked it before writing it down.
+ *
+ * The one shape here whose counterpart is not in `model.rs`: it is
+ * `bridge::handoff::Handoff`, beside the inbox it is read from.
+ */
+export interface Handoff {
+  url: string;
+  /** What the extension took it for. Anything else arrives as 'page'. */
+  kind: HandoffKind;
+  title: string | null;
+  /** The tab's address, not the link's. */
+  pageUrl: string | null;
+  referer: string | null;
+  origin: string | null;
+  userAgent: string | null;
+  thumbnail: string | null;
+  /** Seconds since the epoch, stamped by the host. */
+  receivedAt: number;
+}
+
+/**
+ * 'page' is a site the app knows, handed over by its address; 'stream' an HLS
+ * or DASH manifest; 'video' and 'audio' a file the page played.
+ */
+export type HandoffKind = 'page' | 'stream' | 'video' | 'audio';
 
 /** A whole episode on a channel that licenses the series. */
 export interface AnimeEpisode {

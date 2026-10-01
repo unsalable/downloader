@@ -12,7 +12,7 @@ use once_cell::sync::Lazy;
 use regex::Regex;
 
 use crate::error::{AppError, AppResult};
-use crate::model::{FormatKind, MediaFormat, MediaKind, MediaMetadata, WatermarkSupport};
+use crate::model::{FormatKind, MediaFormat, MediaKind, MediaMetadata, SourceContext, WatermarkSupport};
 use crate::providers::detect;
 use crate::settings::Settings;
 
@@ -51,10 +51,20 @@ impl GenericProvider {
         detect::classify(url).is_some()
     }
 
-    pub async fn analyze(&self, url: &str, settings: &Settings) -> AppResult<MediaMetadata> {
+    pub async fn analyze(
+        &self,
+        url: &str,
+        settings: &Settings,
+        source: Option<&SourceContext>,
+    ) -> AppResult<MediaMetadata> {
         let client = crate::net::client(settings)?;
+        // Asked the way the browser that was showing it asked, when the link
+        // came from one: some sites only answer a page request that arrives
+        // from their own player, in a browser's name.
+        let headers = source.map(SourceContext::headers).unwrap_or_default();
         let response = client
             .get(url)
+            .headers(crate::net::header_map(&headers))
             .header(reqwest::header::ACCEPT, "text/html,application/xhtml+xml")
             .send()
             .await?;

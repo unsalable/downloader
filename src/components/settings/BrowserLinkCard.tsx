@@ -39,9 +39,14 @@ const POLL_MS = 4000;
  *
  * `pollMs` of 0 reads once and then only follows the event, which is all the
  * Settings page itself needs to decide whether the section exists at all.
+ * `initial` is a state already read elsewhere, shown until the first read of
+ * this hook's own answers.
  */
-export function useBridgeStatus(pollMs = 0): BridgeStatus | null {
-  const [status, setStatus] = useState<BridgeStatus | null>(null);
+export function useBridgeStatus(
+  pollMs = 0,
+  initial: BridgeStatus | null = null,
+): BridgeStatus | null {
+  const [status, setStatus] = useState<BridgeStatus | null>(initial);
 
   useEffect(() => {
     // There is no bridge on a phone, and no command behind these names either.
@@ -75,17 +80,19 @@ export function useBridgeStatus(pollMs = 0): BridgeStatus | null {
 }
 
 /**
- * Which of the link's states the user is looking at.
+ * Which of the YouTube sign-in's states the user is looking at.
  *
- * Ordered by what has to be fixed first: a browser that cannot start the helper
- * makes every other question moot, and a stale session is reported as its own
- * state rather than as a connection, because a card that says "connected" while
- * the popup says otherwise is worse than either being wrong alone.
+ * Ordered by what has to be fixed first. A stale session is reported as its
+ * own state rather than as a connection, because a card that says "connected"
+ * while the popup says otherwise is worse than either being wrong alone.
+ *
+ * A browser that cannot start the helper is not one of these: it stops the
+ * extension handing over videos as much as the sign-in, whether or not the
+ * sign-in is on, so the extension's own row reports it (see `ExtensionRow`).
  */
-type LinkPhase = 'broken' | 'waiting' | 'signedOut' | 'quiet' | 'connected';
+type LinkPhase = 'waiting' | 'signedOut' | 'quiet' | 'connected';
 
 function phaseOf(status: BridgeStatus): LinkPhase {
-  if (!status.registered) return 'broken';
   if (!status.connected) return 'waiting';
   if (status.session === 'stale') return 'quiet';
   if (status.session === 'none') return 'signedOut';
@@ -100,12 +107,6 @@ interface Presentation {
 }
 
 const PHASES: Record<LinkPhase, Presentation> = {
-  broken: {
-    icon: CircleAlert,
-    iconClass: 'text-error',
-    title: 'settings.linkBroken',
-    body: 'settings.linkBrokenHint',
-  },
   waiting: {
     icon: CircleDashed,
     iconClass: 'text-fg-muted',
@@ -157,36 +158,32 @@ function relativeTime(epochSeconds: number, locale: string): string {
   return format.format(Math.round(value), 'year');
 }
 
+// The sizes a `SettingRow` sets its two lines in, so the rows of a group agree.
+const TITLE_SIZE = IS_MOBILE ? 'text-[15px]' : 'text-[13.5px]';
+const BODY_SIZE = IS_MOBILE ? 'text-[13px]' : 'text-[12.5px]';
+
 interface BrowserLinkCardProps {
   settings: Settings;
   update: (patch: Partial<Settings>) => Promise<void>;
+  /**
+   * The state the Settings page read to decide that the section exists, so
+   * the section opens whole rather than filling in a moment later.
+   */
+  initialStatus?: BridgeStatus | null;
 }
 
-export function BrowserLinkCard({ settings, update }: BrowserLinkCardProps) {
+export function BrowserLinkCard({ settings, update, initialStatus = null }: BrowserLinkCardProps) {
   const { t, language } = useTranslation();
-  const status = useBridgeStatus(POLL_MS);
+  const status = useBridgeStatus(POLL_MS, initialStatus);
   const [working, setWorking] = useState(false);
   const [problem, setProblem] = useState<TranslationKey | null>(null);
   const [copied, markCopied] = useMomentary();
 
-  // Repair and Disconnect both make the backend emit `bridge://changed`, so the
-  // card is refreshed by the same path a push from the browser takes; there is
-  // no second copy of the state here to keep in step. That refresh is also the
-  // confirmation: the state above the buttons changes. Only a failure has to be
-  // put into words, because it changes nothing.
-  const repair = async () => {
-    setProblem(null);
-    setWorking(true);
-    try {
-      const next = await ipc.bridgeRepair();
-      if (!next.registered) setProblem('settings.linkRepairFailed');
-    } catch {
-      setProblem('settings.linkRepairFailed');
-    } finally {
-      setWorking(false);
-    }
-  };
-
+  // Disconnect makes the backend emit `bridge://changed`, so the card is
+  // refreshed by the same path a push from the browser takes; there is no
+  // second copy of the state here to keep in step. That refresh is also the
+  // confirmation: the state above the buttons changes. Only a failure has to
+  // be put into words, because it changes nothing.
   const disconnect = async () => {
     setProblem(null);
     setWorking(true);
@@ -214,12 +211,7 @@ export function BrowserLinkCard({ settings, update }: BrowserLinkCardProps) {
   const phase = status ? phaseOf(status) : null;
   const look = phase ? PHASES[phase] : null;
   const StateIcon = look?.icon;
-  // Whether a filled button -- Repair, or Get the extension -- heads the actions.
-  const leadAction = phase === 'broken' || (phase === 'waiting' && status?.storeListed === true);
   const browser = status?.browser ?? t('settings.linkBrowserFallback');
-  // The sizes a `SettingRow` sets its two lines in, so the rows of the group agree.
-  const titleSize = IS_MOBILE ? 'text-[15px]' : 'text-[13.5px]';
-  const bodySize = IS_MOBILE ? 'text-[13px]' : 'text-[12.5px]';
 
   // "Chrome is connected" is not an answer when two Chrome windows are open, so
   // a connected link is headed by the profile as well whenever the extension
@@ -230,162 +222,243 @@ export function BrowserLinkCard({ settings, update }: BrowserLinkCardProps) {
   }
 
   return (
-    <SettingGroup>
-      <ToggleRow
-        title={t('settings.browserLink')}
-        description={t('settings.browserLinkHint')}
-        checked={settings.browserLinkEnabled}
-        onChange={(value) => void update({ browserLinkEnabled: value })}
-      />
+    <>
+      <SettingGroup>
+        <ExtensionRow status={status} />
+      </SettingGroup>
 
-      <AnimatePresence initial={false}>
-        {settings.browserLinkEnabled && (
-          <motion.div
-            variants={COLLAPSE}
-            initial="initial"
-            animate="animate"
-            exit="exit"
-            className="overflow-hidden"
-          >
-            {/* Nothing at all until the first read answers: an empty frame
-                that fills in a moment later is a flicker, not information. */}
-            {status && look && StateIcon && (
-              <div className={cn('px-4', IS_MOBILE ? 'py-4' : 'py-3.5')}>
-                <div className="flex items-start gap-2">
-                  <StateIcon
-                    size={16}
-                    aria-hidden="true"
-                    className={cn('mt-[2px] shrink-0', look.iconClass)}
-                  />
-                  <span className={cn('min-w-0 text-fg', titleSize)}>{title}</span>
-                </div>
-
-                <p className={cn('mt-1 leading-relaxed text-fg-muted', bodySize)}>
-                  {t(look.body, { browser })}
-                </p>
-
-                {/* Two Chrome windows look identical from here, so a link
-                    the user cannot place is a link they cannot trust. */}
-                {phase === 'connected' && !status.profileLabel && (
-                  <p className={cn('mt-1.5 leading-relaxed text-fg-muted', bodySize)}>
-                    {t('settings.linkNoProfileName')}
-                  </p>
-                )}
-
-                {/* All of these describe a browser that is bound; beside
-                    "no browser connected" they would describe a ghost. */}
-                {status.connected &&
-                  (status.accountHint || status.lastPushAt != null || status.extensionVersion) && (
-                    <div
-                      className={cn('mt-1.5 flex flex-wrap gap-x-3 gap-y-0.5 text-fg-muted', bodySize)}
-                    >
-                      {status.accountHint && (
-                        <span>{t('settings.linkAccount', { account: status.accountHint })}</span>
-                      )}
-                      {status.lastPushAt != null && (
-                        <span>
-                          {t('settings.linkRefreshed', {
-                            when: relativeTime(status.lastPushAt, language),
-                          })}
-                        </span>
-                      )}
-                      {status.extensionVersion && (
-                        <span className="tabular">
-                          {t('settings.linkExtensionVersion', {
-                            version: status.extensionVersion,
-                          })}
-                        </span>
-                      )}
-                    </div>
-                  )}
-
-                {phase === 'waiting' && !status.storeListed && (
-                  <p className={cn('mt-1.5 leading-relaxed text-fg-muted', bodySize)}>
-                    {t('settings.linkStorePending')}
-                  </p>
-                )}
-
-                {/* A quiet button has no fill to line up, so when one leads the
-                    row it is pulled out by its padding and its label starts
-                    where the text above it does. */}
-                <div className={cn('mt-3 flex flex-wrap items-center gap-2', !leadAction && '-ml-3')}>
-                  {phase === 'broken' && (
-                    <Button
-                      size="sm"
-                      variant="primary"
-                      loading={working}
-                      onClick={() => void repair()}
-                    >
-                      {t('settings.linkRepair')}
-                    </Button>
-                  )}
-                  {phase === 'waiting' && status.storeListed && (
-                    <Button
-                      size="sm"
-                      variant="primary"
-                      iconRight={<ExternalLink size={13} />}
-                      onClick={() =>
-                        void openUrl(
-                          `https://chromewebstore.google.com/detail/${status.extensionId}`,
-                        )
-                      }
-                    >
-                      {t('settings.linkGetExtension')}
-                    </Button>
-                  )}
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    icon={copied ? <Check size={13} /> : <Copy size={13} />}
-                    onClick={() => void copyDiagnostics()}
-                  >
-                    {t('settings.linkCopyDiagnostics')}
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    disabled={working}
-                    onClick={() => void disconnect()}
-                  >
-                    {t('settings.linkDisconnect')}
-                  </Button>
-                  {/* The check is for the eye; this is the same news for a
-                      screen reader. */}
-                  {copied && (
-                    <span role="status" className="sr-only">
-                      {t('settings.linkDiagnosticsCopied')}
-                    </span>
-                  )}
-                </div>
-
-                {problem && (
-                  <InlineNotice tone="error" className="mt-2">
-                    {t(problem)}
-                  </InlineNotice>
-                )}
-
-                <p className={cn('mt-2 leading-relaxed text-fg-muted', bodySize)}>
-                  {t('settings.linkDiagnosticsHint')}
-                </p>
-              </div>
-            )}
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      {/* The failure this design is most prone to, and the one a user reads as
-          "the connection is broken" unless the app names it first. */}
-      {settings.browserLinkEnabled && (
-        <SettingRow
-          title={
-            <span className="flex items-center gap-1.5">
-              <TriangleAlert size={14} aria-hidden="true" className="shrink-0 text-warning" />
-              {t('settings.linkSecondAccount')}
-            </span>
-          }
-          description={t('settings.linkSecondAccountHint')}
+      <SettingGroup>
+        <ToggleRow
+          title={t('settings.browserLink')}
+          description={t('settings.browserLinkHint')}
+          checked={settings.browserLinkEnabled}
+          onChange={(value) => void update({ browserLinkEnabled: value })}
         />
-      )}
-    </SettingGroup>
+
+        <AnimatePresence initial={false}>
+          {settings.browserLinkEnabled && (
+            <motion.div
+              variants={COLLAPSE}
+              initial="initial"
+              animate="animate"
+              exit="exit"
+              className="overflow-hidden"
+            >
+              {/* Nothing at all until the first read answers: an empty frame
+                  that fills in a moment later is a flicker, not information. */}
+              {status && look && StateIcon && (
+                <div className={cn('px-4', IS_MOBILE ? 'py-4' : 'py-3.5')}>
+                  <div className="flex items-start gap-2">
+                    <StateIcon
+                      size={16}
+                      aria-hidden="true"
+                      className={cn('mt-[2px] shrink-0', look.iconClass)}
+                    />
+                    <span className={cn('min-w-0 text-fg', TITLE_SIZE)}>{title}</span>
+                  </div>
+
+                  <p className={cn('mt-1 leading-relaxed text-fg-muted', BODY_SIZE)}>
+                    {t(look.body, { browser })}
+                  </p>
+
+                  {/* Two Chrome windows look identical from here, so a link
+                      the user cannot place is a link they cannot trust. */}
+                  {phase === 'connected' && !status.profileLabel && (
+                    <p className={cn('mt-1.5 leading-relaxed text-fg-muted', BODY_SIZE)}>
+                      {t('settings.linkNoProfileName')}
+                    </p>
+                  )}
+
+                  {/* All of these describe a browser that is bound; beside
+                      "no browser connected" they would describe a ghost. */}
+                  {status.connected &&
+                    (status.accountHint || status.lastPushAt != null || status.extensionVersion) && (
+                      <div
+                        className={cn(
+                          'mt-1.5 flex flex-wrap gap-x-3 gap-y-0.5 text-fg-muted',
+                          BODY_SIZE,
+                        )}
+                      >
+                        {status.accountHint && (
+                          <span>{t('settings.linkAccount', { account: status.accountHint })}</span>
+                        )}
+                        {status.lastPushAt != null && (
+                          <span>
+                            {t('settings.linkRefreshed', {
+                              when: relativeTime(status.lastPushAt, language),
+                            })}
+                          </span>
+                        )}
+                        {status.extensionVersion && (
+                          <span className="tabular">
+                            {t('settings.linkExtensionVersion', {
+                              version: status.extensionVersion,
+                            })}
+                          </span>
+                        )}
+                      </div>
+                    )}
+
+                  {/* Quiet buttons have no fill to line up, so the row is
+                      pulled out by their padding and the first label starts
+                      where the text above it does. */}
+                  <div className="-ml-3 mt-3 flex flex-wrap items-center gap-2">
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      icon={copied ? <Check size={13} /> : <Copy size={13} />}
+                      onClick={() => void copyDiagnostics()}
+                    >
+                      {t('settings.linkCopyDiagnostics')}
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      disabled={working}
+                      onClick={() => void disconnect()}
+                    >
+                      {t('settings.linkDisconnect')}
+                    </Button>
+                    {/* The check is for the eye; this is the same news for a
+                        screen reader. */}
+                    {copied && (
+                      <span role="status" className="sr-only">
+                        {t('settings.linkDiagnosticsCopied')}
+                      </span>
+                    )}
+                  </div>
+
+                  {problem && (
+                    <InlineNotice tone="error" className="mt-2">
+                      {t(problem)}
+                    </InlineNotice>
+                  )}
+
+                  <p className={cn('mt-2 leading-relaxed text-fg-muted', BODY_SIZE)}>
+                    {t('settings.linkDiagnosticsHint')}
+                  </p>
+                </div>
+              )}
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* The failure this design is most prone to, and the one a user reads as
+            "the connection is broken" unless the app names it first. */}
+        {settings.browserLinkEnabled && (
+          <SettingRow
+            title={
+              <span className="flex items-center gap-1.5">
+                <TriangleAlert size={14} aria-hidden="true" className="shrink-0 text-warning" />
+                {t('settings.linkSecondAccount')}
+              </span>
+            }
+            description={t('settings.linkSecondAccountHint')}
+          />
+        )}
+      </SettingGroup>
+    </>
+  );
+}
+
+/**
+ * What the extension's row offers under or beside its description: the way to
+ * the store listing, the note that there is none yet, or nothing.
+ *
+ * A bound profile is the one proof the app has that the extension is
+ * installed, so once there is one the row stops asking for it; "Get the
+ * extension" above "Signed in through Chrome" would contradict itself. Without
+ * a binding the extension may well be there, since it hands videos over
+ * without one, but the app cannot tell, so the way to it stays.
+ */
+export type ExtensionOffer = 'store' | 'storePending' | null;
+
+export function extensionOffer(status: BridgeStatus | null): ExtensionOffer {
+  if (!status || status.connected) return null;
+  return status.storeListed ? 'store' : 'storePending';
+}
+
+/**
+ * The extension itself: what it does, and where to get it.
+ *
+ * It hands the browser's videos over whether or not the YouTube sign-in is
+ * on, so it has a row of its own above the switch. That makes this row the
+ * place for a browser that can no longer start the helper as well: that stops
+ * both, so it is shown whatever the switch says.
+ */
+function ExtensionRow({ status }: { status: BridgeStatus | null }) {
+  const { t } = useTranslation();
+  const [repairing, setRepairing] = useState(false);
+  const [repairFailed, setRepairFailed] = useState(false);
+  const offer = extensionOffer(status);
+
+  // A repair that worked makes the backend emit `bridge://changed`, and the
+  // row turning back into the extension's is the confirmation. Only a failure
+  // has to be put into words, because it changes nothing.
+  const repair = async () => {
+    setRepairFailed(false);
+    setRepairing(true);
+    try {
+      const next = await ipc.bridgeRepair();
+      if (!next.registered) setRepairFailed(true);
+    } catch {
+      setRepairFailed(true);
+    } finally {
+      setRepairing(false);
+    }
+  };
+
+  if (status && !status.registered) {
+    return (
+      <div className={cn('px-4', IS_MOBILE ? 'py-4' : 'py-3.5')}>
+        <div className="flex items-start gap-2">
+          <CircleAlert size={16} aria-hidden="true" className="mt-[2px] shrink-0 text-error" />
+          <span className={cn('min-w-0 text-fg', TITLE_SIZE)}>{t('settings.linkBroken')}</span>
+        </div>
+        <p className={cn('mt-1 leading-relaxed text-fg-muted', BODY_SIZE)}>
+          {t('settings.linkBrokenHint')}
+        </p>
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <Button size="sm" variant="primary" loading={repairing} onClick={() => void repair()}>
+            {t('settings.linkRepair')}
+          </Button>
+        </div>
+        {repairFailed && (
+          <InlineNotice tone="error" className="mt-2">
+            {t('settings.linkRepairFailed')}
+          </InlineNotice>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <SettingRow
+      title={t('settings.browserExtension')}
+      description={
+        offer === 'storePending' ? (
+          <>
+            {t('settings.browserExtensionHint')}
+            <span className="mt-1 block">{t('settings.linkStorePending')}</span>
+          </>
+        ) : (
+          t('settings.browserExtensionHint')
+        )
+      }
+      control={
+        offer === 'store' && status ? (
+          <Button
+            size="sm"
+            variant="secondary"
+            iconRight={<ExternalLink size={13} />}
+            onClick={() =>
+              void openUrl(`https://chromewebstore.google.com/detail/${status.extensionId}`)
+            }
+          >
+            {t('settings.linkGetExtension')}
+          </Button>
+        ) : undefined
+      }
+    />
   );
 }

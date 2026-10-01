@@ -45,6 +45,9 @@ pub struct EngineDownload<'a> {
     /// Re-encode around the cuts so the fetch begins on the frame that was
     /// asked for. Only means anything alongside a section.
     pub force_keyframes: bool,
+    /// Request headers the source has to be asked with: the page and browser
+    /// a handed-over link was playing in. Empty for everything else.
+    pub headers: &'a [(String, String)],
 }
 
 /// Download once with nothing behind it, and -- only for a refusal a linked
@@ -196,7 +199,10 @@ async fn attempt(
         if control.interrupted() {
             return Err(AppError::Canceled);
         }
-        return Err(engine::classify_engine_error(&stderr_text));
+        return Err(engine::naming_the_site(
+            engine::classify_engine_error(&stderr_text),
+            options.url,
+        ));
     }
 
     if let Some(sample) = last_sample {
@@ -284,6 +290,8 @@ fn download_args(
         args.push("--ffmpeg-location".into());
         args.push(location);
     }
+
+    args.extend(engine::header_args(options.headers));
 
     if let Some(jar) = cookies {
         args.push("--cookies".into());
@@ -491,6 +499,7 @@ mod tests {
             merge_container: Some("mp4"),
             section,
             force_keyframes,
+            headers: &[],
         }
     }
 
@@ -572,6 +581,34 @@ mod tests {
             let args = args_for(section, true);
             assert_eq!(args.last().unwrap(), "https://example.test/watch?v=x");
         }
+    }
+
+    #[test]
+    fn the_page_a_link_came_from_is_sent_and_the_link_stays_last() {
+        let headers = vec![
+            ("Referer".to_string(), "https://site.example/watch/5".to_string()),
+            ("Origin".to_string(), "https://player.example".to_string()),
+            ("User-Agent".to_string(), "Mozilla/5.0 (Windows NT 10.0)".to_string()),
+        ];
+        let mut options = options(None, false);
+        options.headers = &headers;
+        // A User-Agent from Settings arrives in the shared arguments first.
+        let base = vec!["--add-header".to_string(), "User-Agent:from-settings".to_string()];
+        let args = download_args(&options, base, Some("C:\\temp\\jar.txt"));
+
+        assert_eq!(value_after(&args, "--referer").as_deref(), Some("https://site.example/watch/5"));
+        let added: Vec<_> = args
+            .iter()
+            .enumerate()
+            .filter(|(_, arg)| *arg == "--add-header")
+            .filter_map(|(index, _)| args.get(index + 1).map(String::as_str))
+            .collect();
+        assert_eq!(
+            added,
+            ["User-Agent:from-settings", "Origin:https://player.example", "User-Agent:Mozilla/5.0 (Windows NT 10.0)"],
+            "the browser's own agent has to come after the one from Settings to win"
+        );
+        assert_eq!(args.last().unwrap(), "https://example.test/watch?v=x");
     }
 
     #[test]

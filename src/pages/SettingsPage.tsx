@@ -144,7 +144,7 @@ export function SettingsPage({ settings, section: openSection, onSectionChange }
       ALL_SECTIONS.filter((candidate) => {
         // Keyboard shortcuts mean nothing without a keyboard.
         if (candidate.id === 'shortcuts') return !IS_MOBILE;
-        // The browser link is a desktop feature. Whether the extension has a
+        // The browser extension is a desktop feature. Whether it has a
         // published listing decides what the section OFFERS, not whether it
         // exists: hiding it outright would also hide a link that is already
         // working, which is the state every install is in before the listing
@@ -178,7 +178,9 @@ export function SettingsPage({ settings, section: openSection, onSectionChange }
     >
       {section === 'general' && <GeneralSection settings={settings} update={update} />}
       {section === 'downloads' && <DownloadsSection settings={settings} update={update} />}
-      {section === 'connection' && <BrowserLinkCard settings={settings} update={update} />}
+      {section === 'connection' && (
+        <BrowserLinkCard settings={settings} update={update} initialStatus={link} />
+      )}
       {section === 'appearance' && <AppearanceSection settings={settings} update={update} />}
       {section === 'performance' && <PerformanceSection settings={settings} update={update} />}
       {section === 'shortcuts' && <ShortcutsSection settings={settings} update={update} />}

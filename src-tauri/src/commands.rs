@@ -31,6 +31,9 @@ pub const EVENT_TOOL_PROGRESS: &str = "tools://progress";
 pub const EVENT_TOOLS_CHANGED: &str = "tools://changed";
 pub const EVENT_SETTINGS_CHANGED: &str = "settings://changed";
 pub const EVENT_BRIDGE_CHANGED: &str = "bridge://changed";
+/// The browser left a link in the inbox while the app was running. Carries
+/// nothing; the window answers with `take_handoffs`.
+pub const EVENT_BRIDGE_HANDOFF: &str = "bridge://handoff";
 
 pub struct AppState {
     pub db: Arc<Database>,
@@ -112,8 +115,7 @@ pub async fn save_settings(
 
     // Turning the browser link off has to reach the disk, not just this
     // process: the bridge host runs while the app is closed and reads the same
-    // state to decide whether to accept a push. Unregistering as well means a
-    // browser cannot even start the helper afterwards.
+    // state to decide whether to accept a push.
     if previous.browser_link_enabled != settings.browser_link_enabled {
         apply_browser_link(&app, settings.browser_link_enabled);
     }
@@ -158,18 +160,20 @@ fn apply_autostart(app: &AppHandle, enabled: bool) {
     }
 }
 
+/// The toggle is about the YouTube session only. Off forgets the session and
+/// has the host refuse new ones, but leaves the host registered: it also
+/// carries the videos the extension sends to download, which lend the app
+/// nothing and must keep working. On registers again, which is what heals a
+/// registration an older build removed when it was turned off.
 fn apply_browser_link(app: &AppHandle, enabled: bool) {
     if let Err(err) = bridge::set_enabled(enabled) {
         log_warn!("bridge", "could not record the link state: {err}");
     }
 
-    let result = if enabled {
-        bridge::register()
-    } else {
-        bridge::unregister()
-    };
-    if let Err(err) = result {
-        log_warn!("bridge", "could not update the browser registration: {err}");
+    if enabled {
+        if let Err(err) = bridge::register() {
+            log_warn!("bridge", "could not update the browser registration: {err}");
+        }
     }
 
     let _ = app.emit(EVENT_BRIDGE_CHANGED, ());
@@ -217,6 +221,20 @@ pub fn bridge_disconnect(app: AppHandle, state: State<'_, AppState>) -> AppResul
 #[tauri::command]
 pub fn bridge_diagnostics(app: AppHandle, state: State<'_, AppState>) -> String {
     bridge::diagnostics(&state.settings(), &app.package_info().version.to_string())
+}
+
+/// The links the browser left for the app, oldest first, each handed out once.
+///
+/// Asked when the window opens -- a launch by the bridge host leaves its link
+/// before the window can listen for anything -- and again on
+/// `EVENT_BRIDGE_HANDOFF` while it runs. Empty where there is no desktop
+/// browser to send anything.
+#[tauri::command]
+pub fn take_handoffs() -> AppResult<Vec<bridge::handoff::Handoff>> {
+    if !bridge::supported() {
+        return Ok(Vec::new());
+    }
+    bridge::handoff::take_all()
 }
 
 // -- tools -----------------------------------------------------------------

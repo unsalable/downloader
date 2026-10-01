@@ -6,7 +6,9 @@
 //! than starting an extractor process.
 
 use crate::error::{AppError, AppResult};
-use crate::model::{FormatKind, MediaFormat, MediaKind, MediaMetadata, PlatformId, WatermarkSupport};
+use crate::model::{
+    FormatKind, MediaFormat, MediaKind, MediaMetadata, PlatformId, SourceContext, WatermarkSupport,
+};
 use crate::providers::detect;
 use crate::settings::Settings;
 
@@ -27,7 +29,12 @@ impl DirectProvider {
             .is_some_and(|info| info.direct_extension.is_some() && info.platform == PlatformId::Generic)
     }
 
-    pub async fn analyze(&self, url: &str, settings: &Settings) -> AppResult<MediaMetadata> {
+    pub async fn analyze(
+        &self,
+        url: &str,
+        settings: &Settings,
+        source: Option<&SourceContext>,
+    ) -> AppResult<MediaMetadata> {
         let info = detect::classify(url)
             .ok_or_else(|| AppError::InvalidUrl("the address could not be parsed".into()))?;
         let extension = info
@@ -37,10 +44,16 @@ impl DirectProvider {
 
         let client = crate::net::client(settings)?;
 
+        // A file a page was playing is often only served to a request that
+        // names that page. The probe asks the way the browser did, and the
+        // format keeps the same headers so the download does too.
+        let http_headers = source.map(SourceContext::headers).unwrap_or_default();
+
         // Some CDNs refuse HEAD. A ranged GET for a single byte gets the same
         // headers and is universally supported.
         let response = client
             .get(url)
+            .headers(crate::net::header_map(&http_headers))
             .header(reqwest::header::RANGE, "bytes=0-0")
             .send()
             .await?;
@@ -133,7 +146,7 @@ impl DirectProvider {
             language: None,
             language_preference: None,
             url: Some(url.to_string()),
-            http_headers: Vec::new(),
+            http_headers,
         };
 
         Ok(MediaMetadata {

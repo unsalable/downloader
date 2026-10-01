@@ -301,6 +301,62 @@ pub struct DownloadRequest {
     /// `None` takes the original.
     #[serde(default)]
     pub audio_language: Option<String>,
+    /// The page and headers a link was found with, when the browser extension
+    /// handed it over. `None` for everything typed or pasted.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<SourceContext>,
+}
+
+/// Where a link came from when the browser extension handed it over: the tab
+/// it was playing in, and what the browser sent when it fetched it.
+///
+/// A stream a page plays is often served only to a request that names that
+/// page, from a script on that page's site, in that browser. Read with none of
+/// it, the same address answers 403, so analysis and download both send it
+/// along. Kept on the request rather than with an analysis because a queued,
+/// restored or retried download analyses its link again.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct SourceContext {
+    #[serde(default)]
+    pub page_url: Option<String>,
+    #[serde(default)]
+    pub referer: Option<String>,
+    #[serde(default)]
+    pub origin: Option<String>,
+    #[serde(default)]
+    pub user_agent: Option<String>,
+}
+
+impl SourceContext {
+    /// The request headers this stands for: `Referer` (the one the browser
+    /// sent, else the page), `Origin` and `User-Agent`.
+    ///
+    /// A value with a control character in it is left out rather than sent.
+    /// The extension's values were checked once on the way in, but this
+    /// context is also read back from the queue and from history, and a line
+    /// break in a header is a second header.
+    pub fn headers(&self) -> Vec<(String, String)> {
+        let usable = |value: &Option<String>| {
+            value
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty() && !value.chars().any(char::is_control))
+                .map(str::to_string)
+        };
+
+        let mut headers = Vec::new();
+        if let Some(referer) = usable(&self.referer).or_else(|| usable(&self.page_url)) {
+            headers.push(("Referer".to_string(), referer));
+        }
+        if let Some(origin) = usable(&self.origin) {
+            headers.push(("Origin".to_string(), origin));
+        }
+        if let Some(agent) = usable(&self.user_agent) {
+            headers.push(("User-Agent".to_string(), agent));
+        }
+        headers
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -543,8 +599,9 @@ pub struct DiagnosticsSnapshot {
 ///
 /// `supported` and `storeListed` are separate on purpose: the first says this
 /// build can host a link at all, the second that there is a published extension
-/// to point the user at. The section hides itself unless both hold, so it never
-/// offers a button that leads to a listing that does not exist yet.
+/// to point the user at. The section shows whenever the first holds; the second
+/// decides whether it offers the listing or says it is on its way, so it never
+/// offers a button that leads to a listing that does not exist.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BridgeStatus {
@@ -1075,4 +1132,60 @@ pub struct ConvertProgressEvent {
     pub output_size_bytes: Option<u64>,
     pub stream_copied: bool,
     pub error: Option<AppErrorInfo>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_request_from_before_the_extension_still_reads_and_writes_the_same() {
+        let text = r#"{"url":"https://a.example/v","mode":"video","quality":{"type":"best"},
+            "videoFormatId":null,"audioFormatId":null,"container":null,"watermark":"any",
+            "outputDir":null,"title":null,"thumbnailUrl":null,"platform":null}"#;
+        let request: DownloadRequest = serde_json::from_str(text).unwrap();
+        assert_eq!(request.source, None);
+        // Absent rather than null, so a stored queue row is unchanged by it.
+        let written = serde_json::to_string(&request).unwrap();
+        assert!(!written.contains("source"), "{written}");
+    }
+
+    #[test]
+    fn the_referer_falls_back_to_the_page_and_a_broken_value_is_left_out() {
+        let source = SourceContext {
+            page_url: Some("https://site.example/watch/5".into()),
+            referer: None,
+            origin: Some("https://player.example".into()),
+            user_agent: Some("Mozilla/5.0".into()),
+        };
+        assert_eq!(
+            source.headers(),
+            vec![
+                ("Referer".to_string(), "https://site.example/watch/5".to_string()),
+                ("Origin".to_string(), "https://player.example".to_string()),
+                ("User-Agent".to_string(), "Mozilla/5.0".to_string()),
+            ]
+        );
+
+        let source = SourceContext {
+            page_url: Some("https://site.example/watch/5".into()),
+            referer: Some("https://player.example/".into()),
+            origin: Some("https://player.example\r\nCookie: x".into()),
+            user_agent: Some("  ".into()),
+        };
+        assert_eq!(
+            source.headers(),
+            vec![("Referer".to_string(), "https://player.example/".to_string())]
+        );
+        assert!(SourceContext::default().headers().is_empty());
+    }
+
+    #[test]
+    fn a_source_is_written_in_camel_case() {
+        let source: SourceContext =
+            serde_json::from_str(r#"{"pageUrl":"https://p.example/","userAgent":"UA"}"#).unwrap();
+        assert_eq!(source.page_url.as_deref(), Some("https://p.example/"));
+        assert_eq!(source.user_agent.as_deref(), Some("UA"));
+        assert_eq!(source.referer, None);
+    }
 }
