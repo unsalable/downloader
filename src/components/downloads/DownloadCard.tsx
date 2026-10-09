@@ -1,5 +1,5 @@
 import { AnimatePresence, motion } from 'motion/react';
-import { FolderOpen, Pause, Play, RotateCw, X } from 'lucide-react';
+import { FolderOpen, Pause, Play, RotateCw, Share, X } from 'lucide-react';
 import { memo, useState } from 'react';
 
 import { IconButton } from '@/components/ui/IconButton';
@@ -7,13 +7,15 @@ import { ROW_LINE } from '@/components/ui/ListGroup';
 import { PlatformBadge } from '@/components/ui/PlatformBadge';
 import { Progress } from '@/components/ui/Progress';
 import { SourceLink } from '@/components/ui/SourceLink';
+import { useFileActions } from '@/hooks/useFileActions';
 import { useThumbnail } from '@/hooks/useThumbnail';
-import { useTranslation } from '@/i18n';
+import { errorCopy, useTranslation } from '@/i18n';
 import type { TranslationKey } from '@/i18n';
 import { cn } from '@/lib/cn';
+import { PROBLEM_TEXT } from '@/lib/fileProblem';
 import { clampPercent, formatBytes, formatEta, formatSpeed } from '@/lib/format';
 import { COLLAPSE, LIST_ITEM } from '@/lib/motion';
-import { IS_MOBILE, openFile, revealFile } from '@/lib/platform';
+import { IS_MOBILE } from '@/lib/platform';
 import type { DownloadStage, DownloadTask } from '@/types';
 
 interface DownloadCardProps {
@@ -51,10 +53,6 @@ export const DownloadCard = memo(function DownloadCard({
   const { t } = useTranslation();
   const { src } = useThumbnail(task.thumbnailUrl);
   const [showError, setShowError] = useState(false);
-  // A finished row is a button that opens its file, which is a big target to
-  // press for nothing when the file has since been moved or deleted. The
-  // attempt is what finds that out, so the row says so afterwards.
-  const [missing, setMissing] = useState(false);
 
   const { progress, status } = task;
   const percent = clampPercent(progress.percent);
@@ -62,12 +60,14 @@ export const DownloadCard = memo(function DownloadCard({
   const isDone = status === 'completed';
   const isAbandoned = status === 'failed' || status === 'canceled';
   const outputPath = isDone ? task.outputPath : null;
+  // A finished row is a button that opens its file, which is a big target to
+  // press for nothing when the file has since been moved or deleted. The
+  // attempt is what finds that out, so the row says what it found: gone only
+  // when the backend said so, and otherwise which press did not work.
+  const file = useFileActions(outputPath);
 
-  const errorTitle = task.error
-    ? t(`error.${task.error.code}.title` as TranslationKey) === `error.${task.error.code}.title`
-      ? task.error.title
-      : t(`error.${task.error.code}.title` as TranslationKey)
-    : t('downloads.failed');
+  const copy = task.error ? errorCopy(task.error, IS_MOBILE) : null;
+  const errorTitle = copy?.title ?? t('downloads.failed');
   const technical = status === 'failed' ? task.error?.technical : null;
 
   const main = (
@@ -151,8 +151,10 @@ export const DownloadCard = memo(function DownloadCard({
 
         {isDone && (
           <span className={cn(LINE, 'mt-0.5')}>
-            {missing ? (
-              <span className="min-w-0 max-w-full truncate text-error">{t('file.missing')}</span>
+            {file.problem ? (
+              <span className="min-w-0 max-w-full truncate text-error">
+                {t(PROBLEM_TEXT[file.problem])}
+              </span>
             ) : (
               <>
                 <span className="min-w-0 max-w-full truncate">{task.formatLabel}</span>
@@ -224,7 +226,7 @@ export const DownloadCard = memo(function DownloadCard({
             <button
               type="button"
               data-open=""
-              onClick={() => void openFile(outputPath).catch(() => setMissing(true))}
+              onClick={file.open}
               aria-label={t('downloads.openFileNamed', { title: task.title })}
               className="absolute inset-0 cursor-pointer rounded-[12px]"
             />
@@ -269,12 +271,26 @@ export const DownloadCard = memo(function DownloadCard({
               onClick={() => onRetry(task.id)}
             />
           )}
-          {outputPath && (
+          {/* Share comes first, so the folder and the cross keep the places
+              the pointer has learned. Neither is offered for a file that is
+              known to be gone; the row itself stays pressable, so one that has
+              been put back opens and clears the line. */}
+          {outputPath && file.problem !== 'missing' && (
+            <IconButton
+              icon={<Share size={15} />}
+              label={t('downloads.share')}
+              size={ACTION_SIZE}
+              onClick={file.share}
+            />
+          )}
+          {/* On a phone this only opens the system's Downloads view, and
+              pressing the row already opens the file; Share takes its place. */}
+          {outputPath && file.problem !== 'missing' && !IS_MOBILE && (
             <IconButton
               icon={<FolderOpen size={15} />}
               label={t('downloads.showInFolder')}
               size={ACTION_SIZE}
-              onClick={() => void revealFile(outputPath).catch(() => setMissing(true))}
+              onClick={file.reveal}
             />
           )}
           {isDone || isAbandoned ? (
@@ -304,7 +320,20 @@ export const DownloadCard = memo(function DownloadCard({
             exit="exit"
             className="overflow-hidden"
           >
-            <pre className="selectable max-h-32 overflow-auto whitespace-pre-wrap break-words bg-surface-sunken px-4 py-2.5 font-mono text-[12px] leading-relaxed text-fg-muted">
+            {/* The row has room for the title alone, and a link handed over
+                from the browser lands here without passing Home's card -- so
+                what to do about it is said here, above the engine's words. */}
+            {copy && (
+              <p className="selectable bg-surface-sunken px-4 pt-2.5 text-[12.5px] leading-relaxed text-fg-muted">
+                {copy.message}
+              </p>
+            )}
+            <pre
+              className={cn(
+                'selectable max-h-32 overflow-auto whitespace-pre-wrap break-words bg-surface-sunken px-4 pb-2.5 font-mono text-[12px] leading-relaxed text-fg-muted',
+                copy ? 'pt-1.5' : 'pt-2.5',
+              )}
+            >
               {technical}
             </pre>
           </motion.div>

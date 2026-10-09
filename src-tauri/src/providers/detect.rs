@@ -85,11 +85,11 @@ pub fn protected_service(raw: &str) -> Option<&'static str> {
 /// label covers `pinterest.co.uk`, `pinterest.com.au` and friends.
 const HOST_PREFIXES: &[(&str, PlatformId)] = &[("pinterest.", PlatformId::Pinterest)];
 
-const VIDEO_EXTENSIONS: &[&str] = &[
+pub(crate) const VIDEO_EXTENSIONS: &[&str] = &[
     "mp4", "webm", "mkv", "mov", "m4v", "avi", "flv", "ts", "mpg", "mpeg", "3gp", "ogv",
 ];
-const AUDIO_EXTENSIONS: &[&str] = &["mp3", "m4a", "aac", "wav", "opus", "ogg", "flac", "wma"];
-const IMAGE_EXTENSIONS: &[&str] = &[
+pub(crate) const AUDIO_EXTENSIONS: &[&str] = &["mp3", "m4a", "aac", "wav", "opus", "ogg", "flac", "wma"];
+pub(crate) const IMAGE_EXTENSIONS: &[&str] = &[
     "jpg", "jpeg", "png", "webp", "gif", "avif", "bmp", "tiff", "heic", "heif",
 ];
 

@@ -15,9 +15,9 @@
 //!    lets it find them. yt-dlp itself is a Python zipapp, fetched like on the
 //!    desktop and run by that interpreter.
 //! 3. **What only the OS can do.** Keeping downloads alive once the app is in
-//!    the background, opening a finished file in another app, picking files to
-//!    convert and receiving links shared from other apps all go through the
-//!    `BridgePlugin` Kotlin class.
+//!    the background, opening or sharing a finished file in another app,
+//!    picking files to convert and receiving links shared from other apps all
+//!    go through the `BridgePlugin` Kotlin class.
 
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -57,6 +57,10 @@ const SITECUSTOMIZE: &str = include_str!("sitecustomize.py");
 /// this app install others.
 const INSTALL_PERMISSION_DENIED: &str = "INSTALL_PERMISSION_DENIED";
 
+/// The code `BridgePlugin` rejects with when the file it was asked about is no
+/// longer there.
+const FILE_MISSING: &str = "FILE_MISSING";
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct Environment {
@@ -83,6 +87,11 @@ impl Bridge {
                     if response.code.as_deref() == Some(INSTALL_PERMISSION_DENIED) =>
                 {
                     AppError::Permission("installing apps from this source is not allowed".into())
+                }
+                PluginInvokeError::InvokeRejected(ref response)
+                    if response.code.as_deref() == Some(FILE_MISSING) =>
+                {
+                    AppError::FileMissing(response.message.clone().unwrap_or_default())
                 }
                 _ => AppError::Other(format!("{command} failed: {err}")),
             })
@@ -482,6 +491,15 @@ pub async fn open_downloads(app: AppHandle) -> AppResult<()> {
     blocking(app, |bridge| bridge.call::<serde_json::Value>("openDownloads", ()))
         .await
         .map(|_| ())
+}
+
+/// Hand a finished file to another app through the system's share sheet.
+pub async fn share_file(app: AppHandle, path: String) -> AppResult<()> {
+    blocking(app, move |bridge| {
+        bridge.call::<serde_json::Value>("shareFile", PathArgs { path })
+    })
+    .await
+    .map(|_| ())
 }
 
 /// The app's page in the system settings, where it is allowed to use Wi-Fi and

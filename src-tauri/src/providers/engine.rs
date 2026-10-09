@@ -66,17 +66,42 @@ impl EngineProvider {
         args.push("--no-playlist".into());
         args.push("-J".into());
 
-        // The first look at any link is taken with no session behind it, which
-        // is why the overwhelming majority of downloads -- public video -- never
-        // cause the stored cookies to be written to disk at all.
-        let output = run_engine(&engine, &args, url, None).await?;
+        // The first look at any link is taken with no YouTube or TikTok session
+        // behind it, which is why the overwhelming majority of downloads --
+        // public video -- never cause those stored cookies to be written to
+        // disk at all. The other-site session is the exception, lent from the
+        // first look on, and only to a link on the site the user just pressed
+        // İndir for (see `bridge::lends_other`) -- by the address, or by the
+        // page a handed-over link came from, which is why `source` matters
+        // here. No refusal from such a site names a sign-in plainly enough to
+        // wait for one, and the extension sent that jar for this very link.
+        let other = bridge::other_lease(
+            settings,
+            url,
+            source.and_then(|source| source.page_url.as_deref()),
+        );
+        let other_jar = other
+            .as_ref()
+            .map(|lease| lease.path().to_string_lossy().into_owned());
+        let output = run_engine(&engine, &args, url, other_jar.as_deref()).await?;
         let mut result = interpret(&output, url);
+        if let Some(lease) = &other {
+            // A run that used it and was refused is not repeated with it: the
+            // engine tries once, and the queue's own repeats of this download
+            // go without the jar that was refused (`CookieLease::refused`).
+            match &result {
+                Ok(_) => lease.fold_back(),
+                Err(err) => lease.refused(url, err),
+            }
+        }
 
         if let Err(refusal) = &result {
             if let Some(session) = session_for(refusal, url, settings) {
                 let jar = session.path().to_string_lossy().into_owned();
                 let retried = run_engine(&engine, &args, url, Some(jar.as_str())).await?;
-                result = interpret(&retried, url);
+                // A wall that stands with the session behind it is told apart
+                // from the one that asked for it, and is not offered again.
+                result = interpret(&retried, url).map_err(AppError::after_session);
 
                 // Only after the run that worked: folding back a jar the engine
                 // rewrote while still being refused would store a signed-out
@@ -213,43 +238,67 @@ async fn run_engine(
     process::run_tree(engine, &args).await
 }
 
-/// The browser session to repeat a failed run with, if repeating it is worth
-/// anything.
-///
-/// Three conditions, all of them cheap and all of them necessary. The failure
-/// has to be a wall a signed-in viewer could be past -- a membership, or the
-/// broader refusal the engine gives when it cannot tell who is asking. The
-/// host has to be one the link was built for, so a session is never sent
-/// anywhere it does not belong. And a fresh session has to actually exist,
-/// which it does not for the user who never connected a browser.
-///
-/// The caller runs this once and only once. A second refusal with the session
-/// attached is a wall the browser cannot pass either, and grinding at it would
-/// spend a real Google login on a video that is not going to be served.
-/// Whether a refusal is the kind a stored browser session could answer.
+/// Whether a refusal is the kind `site`'s stored browser session could answer.
 ///
 /// Kept apart from `session_for` so the decision can be tested on its own: the
 /// function around it ends in a lease, and a test run has no session to lease.
-fn worth_a_session(err: &AppError) -> bool {
-    match err {
-        AppError::MembershipRequired { .. } | AppError::Forbidden { .. } => true,
-        // A video whose real formats the engine could not reach is reported as
-        // having only images, because the storyboards are all that survive the
-        // attempt. On YouTube that is another face of the same wall; anywhere
-        // else it is a genuine picture post, which is why this is only ever
-        // consulted for the hosts `wants_cookies` allows.
-        AppError::Engine(detail) => detail
-            .to_ascii_lowercase()
-            .contains("only images are available"),
-        _ => false,
+fn worth_a_session(err: &AppError, site: bridge::Site) -> bool {
+    match site {
+        bridge::Site::Youtube => match err {
+            AppError::MembershipRequired { .. } | AppError::Forbidden { .. } => true,
+            // A video whose real formats the engine could not reach is reported
+            // as having only images, because the storyboards are all that
+            // survive the attempt. On YouTube that is another face of the same
+            // wall; anywhere else it is a genuine picture post, which is why
+            // this is only ever consulted for YouTube.
+            AppError::Engine(detail) => detail
+                .to_ascii_lowercase()
+                .contains("only images are available"),
+            _ => false,
+        },
+        // TikTok says plainly when a sign-in helps. Its 403s, its rate limits
+        // and its IP blocks are walls in front of everyone, and spending the
+        // account on them only puts it in front of the rate limiter. That also
+        // keeps YouTube's "only images" reading off TikTok's photo posts.
+        bridge::Site::Tiktok => matches!(
+            err,
+            AppError::TiktokSignIn {
+                session_tried: false,
+                ..
+            }
+        ),
+        // Lent on the first run or not at all (`bridge::other_lease`); no
+        // refusal is a reason to try it a second time.
+        bridge::Site::Other => false,
     }
 }
 
+/// The browser session to repeat a failed run with, if repeating it is worth
+/// anything.
+///
+/// Three conditions, all of them cheap and all of them necessary. The address
+/// has to be on a site the link lends a session for, and the session lent is
+/// that site's own, so one site's cookies are never sent anywhere they do not
+/// belong. The failure has to be a wall that site's signed-in viewer could be
+/// past -- a membership or the broader refusal the engine gives when it cannot
+/// tell who is asking on YouTube, TikTok's own sign-in wall on TikTok. And a
+/// fresh session for that site has to actually exist, which it does not for
+/// the user who never connected a browser or never turned that site's switch
+/// on.
+///
+/// The caller runs this once and only once. A second refusal with the session
+/// attached is a wall the browser cannot pass either, and grinding at it would
+/// spend a real login on a video that is not going to be served.
+///
+/// Never the other-site session: `Site::for_url` names YouTube and TikTok
+/// alone, so an address that was lent that session on its first run -- which
+/// is never one of theirs -- has nothing to retry with here.
 pub fn session_for(err: &AppError, url: &str, settings: &Settings) -> Option<bridge::CookieLease> {
-    if !worth_a_session(err) || !bridge::wants_cookies(url) {
+    let site = bridge::Site::for_url(url)?;
+    if !worth_a_session(err, site) {
         return None;
     }
-    bridge::lease(settings)
+    bridge::lease(settings, site)
 }
 
 /// Request headers as engine arguments: `--referer` for the page a stream
@@ -467,6 +516,22 @@ pub fn classify_engine_error(stderr: &str) -> AppError {
         };
     }
 
+    // TikTok's sign-in wall. The broad check below would file it as "forbidden",
+    // with nothing to offer; a TikTok session is the one thing that answers it,
+    // and on the desktop the browser can lend one. Only the reported line and
+    // only TikTok's extractors decide, so another site's "log in" stays what it
+    // was.
+    if reported.contains("[tiktok")
+        && TIKTOK_SIGN_IN_WALLS
+            .iter()
+            .any(|wall| reported.contains(wall))
+    {
+        return AppError::TiktokSignIn {
+            detail: first_error_line(stderr),
+            session_tried: false,
+        };
+    }
+
     // Everything else that means "you are not allowed to see this", including
     // the engine's own suggestion to supply cookies or credentials. The caller
     // may repeat one of these with a linked browser's session behind it, but
@@ -516,6 +581,17 @@ pub fn classify_engine_error(stderr: &str) -> AppError {
 
     AppError::Engine(first_error_line(stderr))
 }
+
+/// TikTok's own words for a post only a signed-in viewer gets, as the engine
+/// passes them through (`yt_dlp/extractor/tiktok.py`, 2026.08.19): a creator's
+/// audience controls, a private post or account, and TikTok sending the
+/// request to its login page. Matched lowercase, against the reported line.
+const TIKTOK_SIGN_IN_WALLS: &[&str] = &[
+    "comfortable for some audiences",
+    "log in for access",
+    "log into an account that has access",
+    "requiring login for access",
+];
 
 /// What a protection the engine reported is reported against until the caller,
 /// which knows the address, names the site.
@@ -609,10 +685,18 @@ pub fn parse_result(root: &Value, requested_url: &str) -> AppResult<MediaMetadat
     }
 
     let mut items = Vec::new();
+    // A lighter picture of each photo for the grid it is picked from, kept in
+    // step with `items`: an item left out is left out of both. Only photos:
+    // a video's poster is already small, and on YouTube the smallest sharp one
+    // is letterboxed, which a square tile would show as bars.
+    let mut grid = Vec::new();
     let mut first_error = None;
     for entry in root.get("entries").and_then(Value::as_array).into_iter().flatten() {
         match parse_metadata(entry, requested_url) {
-            Ok(item) => items.push(item),
+            Ok(item) => {
+                grid.push(if item.media_kind == MediaKind::Image { grid_thumbnail(entry) } else { None });
+                items.push(item);
+            }
             Err(err) => {
                 log_debug!("engine", "skipping an item with nothing to download: {err}");
                 first_error.get_or_insert(err);
@@ -622,9 +706,17 @@ pub fn parse_result(root: &Value, requested_url: &str) -> AppResult<MediaMetadat
 
     let title = root.get("title").and_then(Value::as_str).map(str::to_string);
     let canonical_url = root.get("webpage_url").and_then(Value::as_str).map(str::to_string);
-    providers::gallery(title, canonical_url, items).ok_or_else(|| {
+    let mut post = providers::gallery(title, canonical_url, items).ok_or_else(|| {
         first_error.unwrap_or_else(|| AppError::Unsupported("the source returned no media".into()))
-    })
+    })?;
+    // The entries keep their originals: a task row and its history entry show
+    // one picture at a time, and larger.
+    for (item, small) in post.items.iter_mut().zip(grid) {
+        if let Some(small) = small {
+            item.thumbnail_url = Some(small);
+        }
+    }
+    Ok(post)
 }
 
 pub fn parse_metadata(node: &Value, requested_url: &str) -> AppResult<MediaMetadata> {
@@ -746,6 +838,7 @@ pub fn parse_metadata(node: &Value, requested_url: &str) -> AppResult<MediaMetad
         warnings,
         entries: Vec::new(),
         tracks: Vec::new(),
+        items: Vec::new(),
         music: None,
     })
 }
@@ -844,23 +937,48 @@ impl ImageCandidate {
         })
     }
 
+    /// Width and height: as stated, or else as the address names them -- for
+    /// a CDN's bounded rendition, the box it fits in.
+    fn size(&self) -> Option<(u64, u64)> {
+        match (self.width, self.height) {
+            (Some(width), Some(height)) => Some((u64::from(width), u64::from(height))),
+            _ => SIZE_IN_URL.captures(&self.url).and_then(|size| {
+                Some((size.get(1)?.as_str().parse().ok()?, size.get(2)?.as_str().parse().ok()?))
+            }),
+        }
+    }
+
     /// Larger first, uncropped ahead of cropped. A rendition whose size is
     /// neither stated nor written into its address is the undecorated
     /// original, which is larger than any bounded rendition of it.
     fn rank(&self) -> (u64, bool) {
-        let pixels = match (self.width, self.height) {
-            (Some(width), Some(height)) => u64::from(width) * u64::from(height),
-            _ => SIZE_IN_URL
-                .captures(&self.url)
-                .and_then(|size| {
-                    let width: u64 = size.get(1)?.as_str().parse().ok()?;
-                    let height: u64 = size.get(2)?.as_str().parse().ok()?;
-                    Some(width * height)
-                })
-                .unwrap_or(u64::MAX),
-        };
+        let pixels = self.size().map_or(u64::MAX, |(width, height)| width * height);
         (pixels, !CROP_IN_URL.is_match(&self.url))
     }
+}
+
+/// The shorter side a picture in the pick-from grid needs: a tile is about
+/// 135 points across on the desktop and 100 on a phone, drawn at two or three
+/// device pixels to the point.
+const GRID_SIDE: u64 = 300;
+
+/// A small rendition of a photo, for the grid its post is picked from. The
+/// engine previews a carousel photo with its original -- 926 KB measured on an
+/// Instagram post, where the 320-pixel rendition listed beside it is 25 KB, and
+/// the grid holds every one of them at once. `None` when no rendition says it
+/// is at least that large; the item's own thumbnail stands in then.
+fn grid_thumbnail(node: &Value) -> Option<String> {
+    node.get("thumbnails")
+        .and_then(Value::as_array)?
+        .iter()
+        .filter_map(ImageCandidate::from_json)
+        .filter(|candidate| viewable(&candidate.url))
+        .filter_map(|candidate| {
+            let (width, height) = candidate.size()?;
+            (width.min(height) >= GRID_SIDE).then_some((width * height, candidate.url))
+        })
+        .min_by_key(|(pixels, _)| *pixels)
+        .map(|(_, url)| url)
 }
 
 /// The full-size photo out of the renditions the engine lists for a post.
@@ -1152,17 +1270,19 @@ fn quality_label(
     }
 }
 
-fn pick_thumbnail(node: &Value) -> Option<String> {
-    // The webview cannot show HEIC, which is what some sources keep a photo's
-    // original in; a smaller JPEG of it previews where the original would not.
-    let viewable = |url: &&str| {
-        url.starts_with("http")
-            && !detect::classify(url)
-                .and_then(|info| info.direct_extension)
-                .is_some_and(|extension| extension == "heic" || extension == "heif")
-    };
+/// Whether the webview can show a picture at this address: it cannot show
+/// HEIC, which is what some sources keep a photo's original in.
+fn viewable(url: &str) -> bool {
+    url.starts_with("http")
+        && !detect::classify(url)
+            .and_then(|info| info.direct_extension)
+            .is_some_and(|extension| extension == "heic" || extension == "heif")
+}
 
-    if let Some(url) = node.get("thumbnail").and_then(Value::as_str).filter(viewable) {
+fn pick_thumbnail(node: &Value) -> Option<String> {
+    // Where the original is one the webview cannot show, a smaller JPEG of it
+    // previews instead.
+    if let Some(url) = node.get("thumbnail").and_then(Value::as_str).filter(|url| viewable(url)) {
         return Some(url.to_string());
     }
 
@@ -1171,7 +1291,7 @@ fn pick_thumbnail(node: &Value) -> Option<String> {
     node.get("thumbnails")
         .and_then(Value::as_array)?
         .iter()
-        .filter(|entry| entry.get("url").and_then(Value::as_str).is_some_and(|url| viewable(&url)))
+        .filter(|entry| entry.get("url").and_then(Value::as_str).is_some_and(viewable))
         .max_by_key(|entry| entry.get("width").and_then(Value::as_u64).unwrap_or(0))
         .and_then(|entry| entry.get("url").and_then(Value::as_str))
         .map(str::to_string)
@@ -1391,9 +1511,73 @@ mod tests {
         let missing = AppError::NotFound { status: 404, detail: "x".into() };
 
         // Nothing but a refusal, and nothing off the hosts the link serves,
-        // ever reaches the point of asking for a lease at all.
+        // ever reaches the point of asking for a lease at all. Every case here
+        // is turned away before one, which is what keeps this test off the
+        // developer's own stored sessions.
         assert!(session_for(&missing, "https://www.youtube.com/watch?v=abc", &settings).is_none());
         assert!(session_for(&membership, "https://vimeo.com/76979871", &settings).is_none());
+
+        // TikTok's wall is no reason to lend anything to another site, and a
+        // refusal TikTok gives everyone is no reason to lend TikTok's.
+        let tiktok_wall = AppError::TiktokSignIn {
+            detail: "x".into(),
+            session_tried: false,
+        };
+        let forbidden = AppError::Forbidden {
+            status: 403,
+            detail: "x".into(),
+        };
+        assert!(session_for(&tiktok_wall, "https://vimeo.com/76979871", &settings).is_none());
+        assert!(session_for(&forbidden, "https://www.tiktok.com/@a/video/1", &settings).is_none());
+    }
+
+    /// Verbatim from yt-dlp 2026.08.19, given the app's own arguments, on the
+    /// age-restricted post that started this.
+    const TIKTOK_AUDIENCE_WALL: &str = "ERROR: [TikTok] 7670756126907960589: This post may not be comfortable for some audiences. Log in for access. Use --cookies-from-browser or --cookies for the authentication. See  https://github.com/yt-dlp/yt-dlp/wiki/FAQ#how-do-i-pass-cookies-to-yt-dlp  for how to manually pass cookies";
+
+    #[test]
+    fn a_tiktok_audience_wall_asks_for_a_tiktok_sign_in() {
+        let err = classify_engine_error(TIKTOK_AUDIENCE_WALL);
+        assert_eq!(err.code(), "tiktokSignIn");
+        // The desktop's browser can answer it; a phone has nothing to lend.
+        assert_eq!(err.retryable(), cfg!(windows));
+        assert!(
+            err.technical()
+                .is_some_and(|text| text.contains("comfortable for some audiences")),
+            "{:?}",
+            err.technical()
+        );
+    }
+
+    #[test]
+    fn every_tiktok_sign_in_wall_is_recognised() {
+        for wall in [
+            "ERROR: [TikTok] 1: You do not have permission to view this post. Log into an account that has access. Use --cookies-from-browser or --cookies for the authentication. See  https://github.com/yt-dlp/yt-dlp/wiki/FAQ#how-do-i-pass-cookies-to-yt-dlp  for how to manually pass cookies",
+            "ERROR: [TikTok] 1: TikTok is requiring login for access to this content. Use --cookies-from-browser or --cookies for the authentication.",
+            "ERROR: [tiktok:user] x: This user's account is private. Log into an account that has access",
+        ] {
+            assert_eq!(classify_engine_error(wall).code(), "tiktokSignIn", "{wall}");
+        }
+    }
+
+    #[test]
+    fn a_tiktok_refusal_no_sign_in_answers_stays_what_it_was() {
+        let blocked = classify_engine_error(
+            "ERROR: [TikTok] 1: Your IP address is blocked from accessing this post",
+        );
+        assert_ne!(blocked.code(), "tiktokSignIn");
+        assert_eq!(
+            classify_engine_error(
+                "ERROR: [TikTok] 1: Unable to download webpage: HTTP Error 403: Forbidden"
+            )
+            .code(),
+            "forbidden"
+        );
+        // Another site's words for the same thing are that site's refusal.
+        assert_eq!(
+            classify_engine_error("ERROR: [twitter] 1: Log in for access").code(),
+            "forbidden"
+        );
     }
 
     #[test]
@@ -1604,6 +1788,90 @@ mod tests {
         }
     }
 
+    /// A TikTok video as the engine lists it (2026.08.19, probed 2026-10-08):
+    /// the H.265 renditions state outright that they have no sound, the H.264
+    /// 720p rendition carries the only clean sound, and nothing is offered as
+    /// sound alone. Each clean rendition is listed once per CDN.
+    fn tiktok_video() -> Value {
+        let hevc = |id: &str, side: u32, kbps: u32, size: u64| {
+            serde_json::json!({
+                "format_id": id, "url": format!("https://v16-webapp-prime.tiktok.test/{id}"),
+                "protocol": "https", "ext": "mp4", "vcodec": "h265", "acodec": "none",
+                "width": side, "height": side, "tbr": kbps, "vbr": kbps, "abr": 0,
+                "filesize": size, "quality": 1,
+            })
+        };
+        let h264 = |id: &str| {
+            serde_json::json!({
+                "format_id": id, "url": format!("https://v16-webapp-prime.tiktok.test/{id}"),
+                "protocol": "https", "ext": "mp4", "vcodec": "h264", "acodec": "aac",
+                "width": 720, "height": 720, "tbr": 1207, "filesize": 37_655_063u64, "quality": 2,
+            })
+        };
+        serde_json::json!({
+            "id": "7691247381555268877",
+            "title": "#montypythonandtheholygrail #lifeofbrian #fyp #movie #funny",
+            "uploader": "edat673243",
+            "duration": 249,
+            "formats": [
+                { "format_id": "download", "url": "https://v16-webapp-prime.tiktok.test/download",
+                  "protocol": "https", "ext": "mp4", "vcodec": "h264", "acodec": "aac",
+                  "format_note": "watermarked", "preference": -2 },
+                hevc("bytevc1_540p_499667-0", 576, 499, 12_860_076),
+                hevc("bytevc1_540p_499667-1", 576, 499, 12_860_076),
+                h264("h264_720p_1207492-0"),
+                h264("h264_720p_1207492-1"),
+                hevc("bytevc1_720p_808614-0", 720, 808, 20_393_089),
+                hevc("bytevc1_720p_808614-1", 720, 808, 20_393_089),
+                hevc("bytevc1_1080p_1511769-0", 1080, 1511, 36_463_968),
+                hevc("bytevc1_1080p_1511769-1", 1080, 1511, 36_463_968),
+            ],
+        })
+    }
+
+    #[test]
+    fn a_tiktok_video_keeps_its_sound_when_its_sharpest_picture_has_none() {
+        let meta = parse_metadata(
+            &tiktok_video(),
+            "https://www.tiktok.com/@edat673243/video/7691247381555268877",
+        )
+        .unwrap();
+        let find = |id: &str| meta.formats.iter().find(|format| format.id == id).unwrap();
+        assert_eq!(find("bytevc1_1080p_1511769-0").kind, FormatKind::Video);
+        assert_eq!(find("h264_720p_1207492-0").kind, FormatKind::Muxed);
+        assert_eq!(find("download").watermarked, Some(true));
+        assert!(!meta.formats.iter().any(|format| format.kind == FormatKind::Audio));
+
+        for quality in [
+            crate::model::QualityPreference::Auto,
+            crate::model::QualityPreference::Best,
+            crate::model::QualityPreference::MaxHeight { height: 1080 },
+        ] {
+            for watermark in [crate::model::WatermarkPreference::Any, crate::model::WatermarkPreference::CleanOnly] {
+                let plan = crate::downloader::plan::build(
+                    &meta,
+                    crate::model::DownloadMode::Video,
+                    quality,
+                    None,
+                    None,
+                    None,
+                    watermark,
+                )
+                .unwrap();
+                let video = plan.video.as_ref().unwrap();
+                assert!(
+                    video.has_audio || plan.audio.is_some(),
+                    "{quality:?}/{watermark:?} chose {} with no sound",
+                    video.id
+                );
+                if !matches!(quality, crate::model::QualityPreference::Auto) {
+                    assert_eq!(video.height, Some(1080), "{quality:?}");
+                    assert_eq!(plan.audio.as_ref().unwrap().id, "h264_720p_1207492-1");
+                }
+            }
+        }
+    }
+
     #[test]
     fn a_track_the_engine_could_not_name_is_not_a_track_it_denied() {
         // Only the audio stream of a direct link: the engine states there is
@@ -1709,8 +1977,8 @@ mod tests {
             .any(|(name, value)| name == "Referer" && value == "https://www.instagram.com/"));
     }
 
-    #[test]
-    fn a_carousel_becomes_a_gallery_of_its_photos_and_videos() {
+    /// A carousel as the engine prints it: a photo, a video, a photo.
+    fn carousel() -> Value {
         let video = serde_json::json!({
             "id": "DQ3yk18DLbd",
             "title": "Video by someone",
@@ -1722,7 +1990,7 @@ mod tests {
             ],
             "thumbnails": instagram_renditions("579688490"),
         });
-        let root = serde_json::json!({
+        serde_json::json!({
             "_type": "playlist",
             "title": "Post by someone",
             "webpage_url": "https://www.instagram.com/p/DQ3zR6-DPGm/",
@@ -1731,9 +1999,12 @@ mod tests {
                 video,
                 instagram_photo("DQ3zRt3DClt", "576111569"),
             ],
-        });
+        })
+    }
 
-        let post = parse_result(&root, "https://www.instagram.com/p/DQ3zR6-DPGm/").unwrap();
+    #[test]
+    fn a_carousel_becomes_a_gallery_of_its_photos_and_videos() {
+        let post = parse_result(&carousel(), "https://www.instagram.com/p/DQ3zR6-DPGm/").unwrap();
         assert_eq!(post.media_kind, MediaKind::Gallery);
         assert_eq!(post.entry_count, Some(3));
         assert_eq!(post.title, "Post by someone");
@@ -1743,6 +2014,48 @@ mod tests {
         assert_eq!(kinds, [MediaKind::Image, MediaKind::Video, MediaKind::Image]);
         assert_eq!(post.entries[1].title, "Post by someone (2)");
         assert!(post.entries[1].formats.iter().all(|format| format.kind != FormatKind::Image));
+    }
+
+    #[test]
+    fn a_carousel_offers_small_pictures_for_its_grid() {
+        let post = parse_result(&carousel(), "https://www.instagram.com/p/DQ3zR6-DPGm/").unwrap();
+
+        let kinds: Vec<_> = post.items.iter().map(|item| item.kind).collect();
+        assert_eq!(kinds, [MediaKind::Image, MediaKind::Video, MediaKind::Image]);
+        for photo in [&post.items[0], &post.items[2]] {
+            let small = photo.thumbnail_url.as_deref().unwrap();
+            assert!(small.contains("s640x640"), "picked {small} for the grid");
+        }
+        // A video keeps its own poster, and the items themselves their originals.
+        assert_eq!(post.items[1].thumbnail_url, post.entries[1].thumbnail_url);
+        assert!(post.entries[0].thumbnail_url.as_deref().unwrap().contains("stp=dst-jpg_e35_tt6"));
+    }
+
+    #[test]
+    fn a_grid_picture_is_the_smallest_still_sharp_at_tile_size() {
+        // Stated sizes, as Pinterest gives them, around an original of none.
+        let pin = serde_json::json!({ "thumbnails": [
+            { "url": "https://i.pinimg.test/236x/a.jpg", "width": 236, "height": 354 },
+            { "url": "https://i.pinimg.test/474x/a.jpg", "width": 474, "height": 711 },
+            { "url": "https://i.pinimg.test/736x/a.jpg", "width": 736, "height": 1104 },
+            { "url": "https://i.pinimg.test/originals/a.jpg" },
+        ]});
+        assert_eq!(grid_thumbnail(&pin).as_deref(), Some("https://i.pinimg.test/474x/a.jpg"));
+
+        // Sizes written into the address, as Instagram does.
+        let instagram = serde_json::json!({ "thumbnails": instagram_renditions("1") });
+        assert!(grid_thumbnail(&instagram).unwrap().contains("s640x640"));
+
+        // Never one the webview cannot show, however well it fits.
+        let heic = serde_json::json!({ "thumbnails": [
+            { "url": "https://i.pinimg.test/400x/a.heic", "width": 400, "height": 400 },
+            { "url": "https://i.pinimg.test/736x/a.jpg", "width": 736, "height": 1104 },
+        ]});
+        assert_eq!(grid_thumbnail(&heic).as_deref(), Some("https://i.pinimg.test/736x/a.jpg"));
+
+        let no_sizes = serde_json::json!({ "thumbnails": [{ "url": "https://cdn.test/a.jpg" }] });
+        assert_eq!(grid_thumbnail(&no_sizes), None);
+        assert_eq!(grid_thumbnail(&serde_json::json!({})), None);
     }
 
     #[test]
@@ -1804,34 +2117,109 @@ mod tests {
     /// takes when the engine could not decipher the formats it was served.
     #[test]
     fn a_wall_is_worth_the_session_and_an_empty_post_is_not() {
-        assert!(worth_a_session(&AppError::MembershipRequired {
-            detail: "members".into()
-        }));
-        assert!(worth_a_session(&AppError::Forbidden {
-            status: 403,
-            detail: "sign in".into()
-        }));
-        assert!(worth_a_session(&AppError::Engine(
-            "ERROR: Only images are available for download".into()
-        )));
+        use bridge::Site::{Other, Tiktok, Youtube};
 
-        assert!(!worth_a_session(&AppError::Unsupported(
-            "nothing to download".into()
-        )));
-        assert!(!worth_a_session(&AppError::Network("timed out".into())));
-        assert!(!worth_a_session(&AppError::Engine(
-            "ERROR: unable to extract player version".into()
-        )));
+        // The other-site session is never a retry: it is lent on the first
+        // run or not at all, so no refusal earns it a second.
+        for err in [
+            AppError::Forbidden { status: 403, detail: "x".into() },
+            AppError::MembershipRequired { detail: "x".into() },
+            AppError::TiktokSignIn { detail: "x".into(), session_tried: false },
+        ] {
+            assert!(!worth_a_session(&err, Other), "{err:?}");
+        }
+
+        assert!(worth_a_session(
+            &AppError::MembershipRequired {
+                detail: "members".into()
+            },
+            Youtube
+        ));
+        assert!(worth_a_session(
+            &AppError::Forbidden {
+                status: 403,
+                detail: "sign in".into()
+            },
+            Youtube
+        ));
+        assert!(worth_a_session(
+            &AppError::Engine("ERROR: Only images are available for download".into()),
+            Youtube
+        ));
+
+        assert!(!worth_a_session(
+            &AppError::Unsupported("nothing to download".into()),
+            Youtube
+        ));
+        assert!(!worth_a_session(
+            &AppError::Network("timed out".into()),
+            Youtube
+        ));
+        assert!(!worth_a_session(
+            &AppError::Engine("ERROR: unable to extract player version".into()),
+            Youtube
+        ));
+
+        // TikTok's session answers TikTok's own sign-in wall, once, and
+        // nothing else: not a refusal it gives everyone, and not a photo post.
+        assert!(worth_a_session(
+            &AppError::TiktokSignIn {
+                detail: "x".into(),
+                session_tried: false
+            },
+            Tiktok
+        ));
+        assert!(!worth_a_session(
+            &AppError::TiktokSignIn {
+                detail: "x".into(),
+                session_tried: true
+            },
+            Tiktok
+        ));
+        assert!(!worth_a_session(
+            &AppError::Forbidden {
+                status: 403,
+                detail: "x".into()
+            },
+            Tiktok
+        ));
+        assert!(!worth_a_session(
+            &AppError::Engine("ERROR: Only images are available for download".into()),
+            Tiktok
+        ));
     }
 
-    /// And a picture post on a platform that really publishes pictures must
-    /// never reach for it, whatever the engine called the failure.
+    /// A session is only ever offered to the site it came from, and a picture
+    /// post on a platform that really publishes pictures must never reach for
+    /// one, whatever the engine called the failure.
     #[test]
-    fn only_youtube_addresses_are_worth_a_session() {
-        assert!(bridge::wants_cookies("https://www.youtube.com/watch?v=a"));
-        assert!(bridge::wants_cookies("https://youtu.be/a"));
-        assert!(!bridge::wants_cookies("https://www.instagram.com/p/x/"));
-        assert!(!bridge::wants_cookies("https://youtube.com.example.test/watch?v=a"));
+    fn each_address_is_worth_its_own_sites_session_only() {
+        use bridge::Site;
+
+        for youtube in [
+            "https://www.youtube.com/watch?v=a",
+            "https://youtu.be/a",
+            "https://m.youtube.com/watch?v=a",
+        ] {
+            assert_eq!(Site::for_url(youtube), Some(Site::Youtube), "{youtube}");
+        }
+        for tiktok in [
+            "https://www.tiktok.com/@itzmav_/video/7670756126907960589",
+            "https://m.tiktok.com/v/1.html",
+            "https://vm.tiktok.com/ZSq4hQv5y/",
+            "https://vt.tiktok.com/ZSq4hQv5y/",
+            "https://tiktok.com/@a/video/1",
+        ] {
+            assert_eq!(Site::for_url(tiktok), Some(Site::Tiktok), "{tiktok}");
+        }
+        for neither in [
+            "https://tiktok.com.example.test/@a/video/1",
+            "https://nottiktok.com/@a/video/1",
+            "https://www.instagram.com/p/x/",
+            "https://youtube.com.example.test/watch?v=a",
+        ] {
+            assert_eq!(Site::for_url(neither), None, "{neither}");
+        }
     }
 
     #[test]

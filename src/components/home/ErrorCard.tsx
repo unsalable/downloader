@@ -5,10 +5,10 @@ import { useState } from 'react';
 import { Button } from '@/components/ui/Button';
 import { InlineNotice } from '@/components/ui/InlineNotice';
 import { useMomentary } from '@/hooks/useMomentary';
-import { useTranslation } from '@/i18n';
-import type { TranslationKey } from '@/i18n';
+import { errorCopy, useTranslation } from '@/i18n';
 import { cn } from '@/lib/cn';
 import { T, rise } from '@/lib/motion';
+import { IS_MOBILE } from '@/lib/platform';
 import type { AppErrorInfo } from '@/types';
 
 interface ErrorCardProps {
@@ -21,18 +21,16 @@ interface ErrorCardProps {
 
 /**
  * User-facing failure. The plain-language pair comes from the dictionary
- * keyed by the error code, with the backend's English text as the fallback;
- * the raw technical detail stays collapsed until asked for.
+ * keyed by the error code, with the backend's English text as the fallback
+ * and the phone's own sentence where it has one; the raw technical detail
+ * stays collapsed until asked for.
  */
 export function ErrorCard({ error, onRetry, extraAction, actionError }: ErrorCardProps) {
   const { t } = useTranslation();
   const [showDetails, setShowDetails] = useState(false);
   const [copied, markCopied] = useMomentary();
 
-  const titleKey = `error.${error.code}.title` as TranslationKey;
-  const messageKey = `error.${error.code}.message` as TranslationKey;
-  const title = t(titleKey) === titleKey ? error.title : t(titleKey);
-  const message = t(messageKey) === messageKey ? error.message : t(messageKey);
+  const { title, message } = errorCopy(error, IS_MOBILE);
 
   const copyDetails = async () => {
     if (!error.technical) return;

@@ -16,6 +16,8 @@ import { cn } from '@/lib/cn';
  *     {tasks.map(...)}           16 padding + 72 thumbnail + 16 gap
  *   </ListGroup>
  *
+ *   <ListGroup tone="fill">      a group inside a dialog
+ *
  * Each direct child is a row. The hairlines are drawn by the group (see
  * `.list-group` in globals.css), so a row brings no border or divider of its
  * own -- only its padding, `px-4` to line up with the default inset. A row
@@ -27,15 +29,31 @@ interface ListGroupProps {
   children: ReactNode;
   /** Where the hairlines start, in pixels from the left edge. */
   inset?: number;
+  /**
+   * `card` (the default) is a card on the page. `fill` is a group set on
+   * something that is already a card's colour -- a dialog -- where a white card
+   * on white needs its hairline to be seen, and in the dark theme has none
+   * (`--card-edge` is transparent there), so the card would vanish and its
+   * dividers float. There the group is a quiet fill instead, as grouped rows
+   * are on an iOS sheet. Rows in a `fill` group react with `hover:bg-fill`, not
+   * `bg-surface-hover`, which is opaque and in the dark theme would be darker
+   * than the group at rest.
+   *
+   * A variant rather than a className, because `cn` does not merge Tailwind
+   * classes: a caller's `bg-fill` beside `bg-surface` would win or lose by the
+   * stylesheet's order, not by the caller's.
+   */
+  tone?: 'card' | 'fill';
   className?: string;
 }
 
-export function ListGroup({ children, inset = 16, className }: ListGroupProps) {
+export function ListGroup({ children, inset = 16, tone = 'card', className }: ListGroupProps) {
   return (
     <div
       style={{ '--list-inset': `${inset}px` } as CSSProperties}
       className={cn(
-        'list-group overflow-hidden rounded-[var(--radius-card)] border border-card-edge bg-surface',
+        'list-group overflow-hidden rounded-[var(--radius-card)]',
+        tone === 'fill' ? 'bg-fill' : 'border border-card-edge bg-surface',
         className,
       )}
     >

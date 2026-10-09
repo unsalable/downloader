@@ -60,6 +60,19 @@ impl DownloadPlan {
         self.video.as_ref().or(self.image.as_ref()).or(self.audio.as_ref())
     }
 
+    /// The sound is taken out of a rendition that carries a picture of its
+    /// own, and only the sound is wanted from it.
+    ///
+    /// The shape TikTok made common: its sharpest picture is published with no
+    /// sound, and its sound is never published apart -- the only sound there is
+    /// sits inside a lower-resolution rendition. Whoever puts the two together
+    /// has to keep that rendition's sound and nothing else. The engine, left to
+    /// itself, keeps neither: asked for `V+M` it quietly drops `M` as a second
+    /// picture and delivers the silent file this exists to prevent.
+    pub fn sound_from_muxed(&self) -> bool {
+        self.video.is_some() && self.audio.as_ref().is_some_and(|audio| audio.has_video)
+    }
+
     /// Format expression that describes this plan to the engine.
     ///
     /// [`Self::engine_selector`] is only set when the engine was always going
@@ -511,17 +524,33 @@ fn build_video(
     let best_muxed = pick_video(&muxed, ceiling);
     let best_split = pick_video(&video_only, ceiling);
 
+    // A picture published without sound takes it from a stream of sound alone
+    // when the source has one. TikTok has none: its sharpest picture comes
+    // without sound, and its only sound sits inside a lower rendition with a
+    // picture of its own. That rendition can lend its sound, at the price of
+    // downloading its picture only to throw it away -- so it is only ever the
+    // fallback, and only from a rendition that names its sound.
+    let donor = if audio_only.is_empty() { sound_donor(&muxed) } else { None };
+
     let chosen_split = match quality {
         // "Auto" avoids a merge when a single-stream rendition is close enough,
         // because merging needs FFmpeg and doubles the work.
         QualityPreference::Auto => match (best_muxed, best_split) {
+            // Borrowed sound costs a second whole rendition, which is only
+            // worth it when that rendition is far behind the picture: a quarter
+            // of the pixels or less. TikTok's 720p beside its 1080p is not --
+            // the sound would cost as much as the picture again, for a file
+            // that plays everywhere as it is.
+            (Some(m), Some(s)) if donor.is_some() && m.pixels() * 4 > s.pixels() => None,
             (Some(m), Some(s)) if m.pixels() * 2 >= s.pixels() => None,
             (Some(_), Some(s)) => Some(s),
             (None, Some(s)) => Some(s),
             _ => None,
         },
         // "Best" takes the highest resolution available, merging if that is
-        // what it takes.
+        // what it takes. Whether its sound then comes apart, out of another
+        // rendition or not at all does not change the picture: a silent
+        // post's sharpest picture is still its best.
         _ => match (best_muxed, best_split) {
             (Some(m), Some(s)) if s.pixels() > m.pixels() => Some(s),
             (None, Some(s)) => Some(s),
@@ -530,7 +559,7 @@ fn build_video(
     };
 
     if let Some(video) = chosen_split {
-        let audio = pick_audio_opt(&audio_only, QualityPreference::Best);
+        let audio = pick_audio_opt(&audio_only, QualityPreference::Best).or(donor);
         return Ok(assemble(video, audio, requested_container));
     }
 
@@ -625,6 +654,10 @@ fn assemble(
 
     let estimated_bytes = match (video.best_known_size(), audio.and_then(|a| a.best_known_size())) {
         (Some(v), Some(a)) => Some(v + a),
+        // A second whole rendition of unstated size is not a rounding error to
+        // leave out of the figure: half of it would be missing. Left unknown,
+        // the preview works it out from the rates or says nothing.
+        (Some(_), None) if audio.is_some_and(|a| a.has_video) => None,
         (Some(v), None) => Some(v),
         (None, _) => None,
     };
@@ -731,6 +764,46 @@ fn pick_audio_opt<'a>(
     (!formats.is_empty()).then(|| pick_audio(formats, quality))
 }
 
+/// The rendition whose sound goes with a picture that has none, for a source
+/// that keeps no sound apart.
+///
+/// Only one that names its sound codec. A rendition the engine could not
+/// describe is taken to carry sound, which is the right reading for playing
+/// it whole; here its sound is asked for by itself, and asking FFmpeg for a
+/// track that is not there fails the entire download rather than leaving it
+/// quiet.
+///
+/// Of those: a clean one before a stamped one, then the best sound the source
+/// states, then the smallest, since everything else in it is thrown away. The
+/// stamp is on the picture, which is discarded, and measured on TikTok
+/// (2026-10-08) the stamped rendition's sound ran exactly as long as the clean
+/// picture -- but stamped saves have carried an outro before, and the clean
+/// rendition is never the worse choice. Of two equal copies -- TikTok lists
+/// each rendition once per CDN -- the last listed, which is the copy
+/// `pick_video` and Audio mode take as well, so the advanced menu names the
+/// same one in both modes.
+fn sound_donor<'a>(muxed: &[&'a MediaFormat]) -> Option<&'a MediaFormat> {
+    let stamped = |format: &MediaFormat| format.watermarked == Some(true);
+    muxed
+        .iter()
+        .filter(|format| format.has_audio && format.acodec.is_some())
+        // Greater is better, so that ties go to the last listed.
+        .max_by(|a, b| {
+            // An unstated size is the worst case, not the best.
+            let size = |format: &MediaFormat| format.best_known_size().unwrap_or(u64::MAX);
+            stamped(b)
+                .cmp(&stamped(a))
+                .then_with(|| {
+                    a.abr
+                        .unwrap_or(0.0)
+                        .partial_cmp(&b.abr.unwrap_or(0.0))
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                })
+                .then_with(|| size(b).cmp(&size(a)))
+        })
+        .copied()
+}
+
 /// Highest useful bitrate a format reports, in kbps.
 fn bitrate_of(format: &MediaFormat) -> f64 {
     format.abr.or(format.tbr).or(format.vbr).unwrap_or(0.0)
@@ -811,6 +884,7 @@ mod tests {
             warnings: Vec::new(),
             entries: Vec::new(),
             tracks: Vec::new(),
+            items: Vec::new(),
             music: None,
         }
     }
@@ -1482,5 +1556,256 @@ mod tests {
             format("140", FormatKind::Audio, None, Some(128.0), "m4a"),
         ]);
         assert_eq!(plan(&meta, QualityPreference::Best).estimated_bytes, Some(2_000_000));
+    }
+
+    /// A TikTok video as the engine listed it on 2026-10-08
+    /// (@edat673243/video/7691247381555268877, yt-dlp 2026.08.19): H.265
+    /// pictures with no sound at 576, 720 and 1080, the only clean sound inside
+    /// the H.264 720p rendition, and the stamped `download` rendition with no
+    /// size or dimensions -- every clean one listed twice, once per CDN.
+    /// Nothing is offered as sound alone. Measured with ffprobe: the 1080p file
+    /// holds a single HEVC stream, and the 720p one AAC at index 0 and H.264 at
+    /// index 1.
+    fn tiktok_hevc() -> MediaMetadata {
+        let hevc = |id: &str, side: u32, kbps: f64, size: u64| {
+            let mut picture = format(id, FormatKind::Video, Some(side), None, "mp4");
+            picture.width = Some(side);
+            picture.vcodec = Some("h265".into());
+            picture.tbr = Some(kbps);
+            picture.vbr = Some(kbps);
+            picture.abr = Some(0.0);
+            picture.filesize = Some(size);
+            picture.watermarked = Some(false);
+            picture
+        };
+        let h264 = |id: &str| {
+            let mut both = format(id, FormatKind::Muxed, Some(720), None, "mp4");
+            both.width = Some(720);
+            both.vcodec = Some("h264".into());
+            both.acodec = Some("aac".into());
+            both.tbr = Some(1207.0);
+            both.filesize = Some(37_655_063);
+            both.watermarked = Some(false);
+            both
+        };
+        let mut stamped = format("download", FormatKind::Muxed, None, None, "mp4");
+        stamped.vcodec = Some("h264".into());
+        stamped.acodec = Some("aac".into());
+        stamped.tbr = None;
+        stamped.filesize = None;
+        stamped.watermarked = Some(true);
+        stamped.quality_label = "watermarked".into();
+
+        let mut meta = metadata(vec![
+            hevc("bytevc1_1080p_1511769-0", 1080, 1511.0, 36_463_968),
+            hevc("bytevc1_1080p_1511769-1", 1080, 1511.0, 36_463_968),
+            h264("h264_720p_1207492-0"),
+            h264("h264_720p_1207492-1"),
+            hevc("bytevc1_720p_808614-0", 720, 808.0, 20_393_089),
+            hevc("bytevc1_720p_808614-1", 720, 808.0, 20_393_089),
+            hevc("bytevc1_540p_499667-0", 576, 499.0, 12_860_076),
+            hevc("bytevc1_540p_499667-1", 576, 499.0, 12_860_076),
+            stamped,
+        ]);
+        meta.platform = PlatformId::Tiktok;
+        meta.watermark_support = WatermarkSupport::CleanAvailable;
+        meta.duration_sec = Some(249.0);
+        meta
+    }
+
+    #[test]
+    fn a_picture_with_no_sound_takes_it_from_a_rendition_that_has_some() {
+        // The download that arrived silent: 1080p H.265 and nothing else.
+        let meta = tiktok_hevc();
+        for quality in [QualityPreference::Best, QualityPreference::MaxHeight { height: 1080 }] {
+            let result = plan(&meta, quality);
+            // Of two equal copies the last listed, as everywhere in this file.
+            assert_eq!(result.video.as_ref().unwrap().id, "bytevc1_1080p_1511769-1", "{quality:?}");
+            assert_eq!(
+                result.audio.as_ref().map(|audio| audio.id.as_str()),
+                Some("h264_720p_1207492-1"),
+                "{quality:?}"
+            );
+            assert!(result.needs_merge);
+            assert!(result.sound_from_muxed());
+            assert_eq!(result.container, "mp4");
+            assert_eq!(result.label, "1080p - MP4");
+            // What the button fetches, which is both renditions whole.
+            assert_eq!(result.estimated_bytes, Some(36_463_968 + 37_655_063));
+            assert_eq!(result.stage_count(), 3);
+            assert_eq!(
+                result.selector_for_engine(),
+                "bytevc1_1080p_1511769-1+h264_720p_1207492-1",
+                "the picture first: the engine merge drops the second input's picture by its index"
+            );
+        }
+    }
+
+    #[test]
+    fn auto_takes_the_rendition_with_its_own_sound_rather_than_fetching_a_second() {
+        let result = plan(&tiktok_hevc(), QualityPreference::Auto);
+        assert_eq!(result.video.as_ref().unwrap().id, "h264_720p_1207492-1");
+        assert!(result.audio.is_none());
+        assert!(!result.needs_merge);
+        assert!(!result.sound_from_muxed());
+        assert_eq!(result.label, "720p - MP4");
+        assert_eq!(result.estimated_bytes, Some(37_655_063));
+    }
+
+    #[test]
+    fn auto_still_borrows_when_the_rendition_with_sound_is_far_smaller() {
+        // The sound costs a 240p rendition, a small fraction of the picture,
+        // and the alternative is a 240p film.
+        let meta = metadata(vec![
+            format("240", FormatKind::Muxed, Some(240), None, "mp4"),
+            format("1080", FormatKind::Video, Some(1080), None, "mp4"),
+        ]);
+        let result = plan(&meta, QualityPreference::Auto);
+        assert_eq!(result.video.as_ref().unwrap().id, "1080");
+        assert_eq!(result.audio.as_ref().unwrap().id, "240");
+        assert!(result.sound_from_muxed());
+    }
+
+    #[test]
+    fn a_ceiling_the_muxed_rendition_meets_needs_nothing_borrowed() {
+        let result = plan(&tiktok_hevc(), QualityPreference::MaxHeight { height: 720 });
+        assert_eq!(result.video.as_ref().unwrap().id, "h264_720p_1207492-1");
+        assert!(!result.needs_merge);
+    }
+
+    #[test]
+    fn a_ceiling_below_every_rendition_with_sound_still_gets_sound() {
+        // The menu offers 576p because the silent H.265 rendition has it. The
+        // picture keeps to the ceiling and the sound comes from the 720p one.
+        let result = plan(&tiktok_hevc(), QualityPreference::MaxHeight { height: 576 });
+        assert_eq!(result.video.as_ref().unwrap().height, Some(576));
+        assert_eq!(result.audio.as_ref().unwrap().id, "h264_720p_1207492-1");
+        assert_eq!(result.label, "576p - MP4");
+    }
+
+    #[test]
+    fn clean_only_still_finds_the_sound() {
+        let result = build(
+            &tiktok_hevc(),
+            DownloadMode::Video,
+            QualityPreference::Best,
+            None,
+            None,
+            None,
+            WatermarkPreference::CleanOnly,
+        )
+        .unwrap();
+        assert_eq!(result.video.as_ref().unwrap().height, Some(1080));
+        assert_eq!(result.audio.as_ref().unwrap().id, "h264_720p_1207492-1");
+    }
+
+    #[test]
+    fn a_stamped_rendition_lends_its_sound_only_when_nothing_clean_has_any() {
+        let mut meta = tiktok_hevc();
+        meta.formats.retain(|format| !format.id.starts_with("h264_"));
+        let result = plan(&meta, QualityPreference::Best);
+        assert_eq!(result.video.as_ref().unwrap().height, Some(1080));
+        assert_eq!(result.audio.as_ref().unwrap().id, "download");
+        // Its size is not stated, and counting it as nothing would announce
+        // half the download.
+        assert_eq!(result.estimated_bytes, None);
+    }
+
+    #[test]
+    fn a_rendition_that_does_not_name_its_sound_is_never_asked_for_it() {
+        // Read as carrying sound, the way the engine reads it, but asking
+        // FFmpeg for `1:a:0` out of it would fail the download if it has none.
+        // Its own sound, if any, comes with its own picture instead.
+        let mut unnamed = format("http-720", FormatKind::Muxed, Some(720), None, "mp4");
+        unnamed.acodec = None;
+        let meta = metadata(vec![format("hls-1080", FormatKind::Video, Some(1080), None, "mp4"), unnamed]);
+        for quality in [QualityPreference::Best, QualityPreference::Auto] {
+            let result = plan(&meta, quality);
+            // Exactly what was chosen before there was any borrowing.
+            assert_eq!(result.video.as_ref().unwrap().id, "hls-1080", "{quality:?}");
+            assert!(result.audio.is_none());
+            assert!(!result.needs_merge);
+            assert!(!result.sound_from_muxed());
+        }
+    }
+
+    #[test]
+    fn a_silent_post_keeps_its_sharpest_picture() {
+        // Instagram and Facebook with no sound to offer: their DASH pictures
+        // state they have none, and the progressive file names no sound codec.
+        // Nothing can be borrowed, and nothing about the choice changes.
+        let mut progressive = format("8", FormatKind::Muxed, Some(1280), None, "mp4");
+        progressive.width = Some(720);
+        progressive.acodec = None;
+        let mut dash = format("dash-1920v", FormatKind::Video, Some(1920), None, "mp4");
+        dash.width = Some(1080);
+        let meta = metadata(vec![progressive, dash]);
+        for quality in [QualityPreference::Best, QualityPreference::Auto] {
+            let result = plan(&meta, quality);
+            assert_eq!(result.video.as_ref().unwrap().id, "dash-1920v", "{quality:?}");
+            assert!(result.audio.is_none());
+        }
+    }
+
+    #[test]
+    fn audio_mode_and_the_borrowed_sound_name_the_same_copy() {
+        // The advanced panel shows one entry per rendition; the copy Video
+        // mode borrows from and the copy Audio mode extracts from have to be
+        // the same one, or the menu shows a blank for one of them.
+        let meta = tiktok_hevc();
+        let borrowed = plan(&meta, QualityPreference::Best).audio.unwrap().id;
+        let extracted = build_with(&meta, DownloadMode::Audio, None).audio.unwrap().id;
+        assert_eq!(borrowed, "h264_720p_1207492-1");
+        assert_eq!(extracted, borrowed);
+    }
+
+    #[test]
+    fn a_picture_with_no_sound_anywhere_is_still_downloaded() {
+        let meta = metadata(vec![format("1080", FormatKind::Video, Some(1080), None, "mp4")]);
+        let result = plan(&meta, QualityPreference::Best);
+        assert_eq!(result.video.as_ref().unwrap().id, "1080");
+        assert!(result.audio.is_none());
+    }
+
+    #[test]
+    fn sound_kept_apart_is_never_borrowed_from_a_rendition() {
+        // YouTube, X, Instagram: a stream of sound alone exists, and is taken
+        // exactly as before.
+        let meta = metadata(vec![
+            format("18", FormatKind::Muxed, Some(360), Some(96.0), "mp4"),
+            format("137", FormatKind::Video, Some(1080), None, "mp4"),
+            format("140", FormatKind::Audio, None, Some(128.0), "m4a"),
+        ]);
+        for quality in [QualityPreference::Best, QualityPreference::Auto] {
+            let result = plan(&meta, quality);
+            assert_eq!(result.audio.as_ref().unwrap().id, "140", "{quality:?}");
+            assert!(!result.sound_from_muxed());
+        }
+    }
+
+    #[test]
+    fn the_sound_alone_comes_out_of_the_rendition_that_has_it() {
+        let result = build_with(&tiktok_hevc(), DownloadMode::Audio, None);
+        let sound = result.audio.as_ref().unwrap();
+        assert!(sound.id.starts_with("h264_720p_"), "{}", sound.id);
+        assert!(result.video.is_none());
+        assert_eq!(result.container, "m4a");
+        assert_eq!(result.convert_to.as_deref(), Some("m4a"));
+    }
+
+    #[test]
+    fn an_explicit_picture_can_take_its_sound_from_a_rendition_with_both() {
+        let result = build(
+            &tiktok_hevc(),
+            DownloadMode::Video,
+            QualityPreference::Best,
+            Some("bytevc1_1080p_1511769-0"),
+            Some("h264_720p_1207492-0"),
+            None,
+            WatermarkPreference::Any,
+        )
+        .unwrap();
+        assert!(result.needs_merge);
+        assert!(result.sound_from_muxed());
     }
 }

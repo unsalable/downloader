@@ -33,6 +33,17 @@
   "linkDisabled": { "message": "Universal Downloader'da kapalı" },
   "linkOther": { "message": "Başka bir profil bağlı" },
 
+  "tiktokTitle": { "message": "TikTok oturumu" },
+  "tiktokOn": { "message": "Yaş sınırlı gönderiler için bağlı" },
+  "tiktokSignedOut": { "message": "TikTok'ta oturum açık değil" },
+  "tiktokOffHint": { "message": "Yaş sınırlı gönderileri indirmek için" },
+  "otherTitle": { "message": "Diğer siteler" },
+  "otherOn": { "message": "Yalnızca İndir'e bastığınız site için" },
+  "otherOffHint": { "message": "Instagram, X ve diğerleri için" },
+  "rowSignIn": { "message": "TikTok oturumu gerekiyor" },
+  "rowWithSession": { "message": "TikTok oturumunuzla iner" },
+  "sessionsTitle": { "message": "Oturumlar" },
+
   "welcomeTitle": { "message": "Universal Downloader Connector hazır" },
   "step1Title": { "message": "Universal Downloader'ı bir kez açın" },
   "step1Body": { "message": "Uygulama kendi yerini Chrome'a bildirir." },
@@ -40,16 +51,16 @@
   "step2Body": { "message": "Herhangi bir sitede. Eklenti, sayfanın oynattığını fark eder." },
   "step3Title": { "message": "Araç çubuğundaki simgeye, sonra İndir'e basın" },
   "step3Body": {
-    "message": "Universal Downloader öne gelir ve videoyu varsayılan kalitenizle indirir."
+    "message": "Universal Downloader video açık olarak öne gelir; kaliteyi ve filigranı orada seçip indirirsiniz."
   },
   "welcomeSession": {
-    "message": "Üyelere özel YouTube videoları için açılır penceredeki YouTube oturumu anahtarını açın. YouTube oturumunuzu bu bilgisayardaki uygulamaya verir; siz açana kadar kapalı kalır."
+    "message": "Üyelere özel YouTube videoları için açılır penceredeki YouTube oturumu anahtarını, yaş sınırlı TikTok gönderileri için TikTok'tayken görünen TikTok oturumu anahtarını, başka sitelerde yalnızca hesabınızın görebildiği gönderiler için de Diğer siteler anahtarını açın. Diğer siteler, İndir'e bastığınız sitenin oturumunu yalnızca o indirme için verir. Her anahtar oturumu yalnızca bu bilgisayardaki uygulamaya verir ve siz açana kadar kapalı kalır."
   },
   "pinTitle": { "message": "Elinizin altında dursun" },
   "pinBody": {
     "message": "Chrome yeni eklentileri adres çubuğunun yanındaki yapboz parçası düğmesinin arkasına gizler. Ona, sonra Universal Downloader Connector'ın yanındaki raptiyeye tıklayın."
   },
   "privacyBody": {
-    "message": "Eklenti, bu bilgisayardaki Universal Downloader dışında hiçbir yere bir şey göndermez; uygulama bir videoyu yalnızca İndir'e bastığınızda indirir."
+    "message": "Eklenti, bu bilgisayardaki Universal Downloader dışında hiçbir yere bir şey göndermez; uygulama bir videoyu yalnızca siz indirmeyi seçtiğinizde indirir."
   }
 }

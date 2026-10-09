@@ -65,10 +65,17 @@ export const tr: Record<TranslationKey, string> = {
   'options.videoStream': 'Video akışı',
   'options.audioStream': 'Ses akışı',
   'options.none': 'Yok',
+  'options.withSound': '{quality} + ses',
+  'options.soundOf': '{quality} videonun sesi',
 
   'action.download': 'İndir',
-  'action.downloadAll': 'Tümünü indir ({n})',
   'action.downloadCount': 'İndir ({n})',
+  'action.downloadPhoto': 'Fotoğrafı indir',
+  'action.downloadPhotos': '{n} fotoğrafı indir',
+  'action.downloadVideo': 'Videoyu indir',
+  'action.downloadVideos': '{n} videoyu indir',
+  'action.downloadItem': 'Öğeyi indir',
+  'action.downloadItems': '{n} öğeyi indir',
 
   'anime.title': 'Resmî kanallarda',
   'anime.searching': 'Aranıyor…',
@@ -78,6 +85,15 @@ export const tr: Record<TranslationKey, string> = {
   'tracks.title': 'Şarkılar',
   'tracks.selectAll': 'Tümünü seç',
   'tracks.selectNone': 'Seçimi kaldır',
+
+  'gallery.photos': 'Fotoğraflar',
+  'gallery.videos': 'Videolar',
+  'gallery.mixed': 'Fotoğraf ve videolar',
+  'gallery.items': 'Öğeler',
+  'gallery.photoN': '{n}. fotoğraf',
+  'gallery.videoN': '{n}. video',
+  'gallery.itemN': '{n}. öğe',
+
   'action.preparing': 'Hazırlanıyor…',
 
   'downloads.title': 'İndirmeler',
@@ -93,6 +109,7 @@ export const tr: Record<TranslationKey, string> = {
   'downloads.remove': 'Kaldır',
   'downloads.openFileNamed': 'Dosyayı aç: {title}',
   'downloads.showInFolder': 'Klasörde göster',
+  'downloads.share': 'Paylaş',
   'downloads.details': 'Ayrıntılar',
   'downloads.pauseAll': 'Tümünü duraklat',
   'downloads.resumeAll': 'Tümünü sürdür',
@@ -177,9 +194,29 @@ export const tr: Record<TranslationKey, string> = {
   'history.requeued': 'Kuyruğa eklendi',
   'history.delete': 'Geçmişten kaldır',
   'history.clearAll': 'Geçmişi temizle',
-  'history.clearConfirm': 'Geçmişteki tüm kayıtlar kaldırılsın mı?',
-  'history.clearConfirmBody': 'Bu yalnızca listeyi temizler. Diskteki dosyalara dokunulmaz.',
+  'history.clear': 'Temizle',
+  // Not "Diskteki dosyalar": a phone has no disk to speak of, and the files
+  // stay where they are there too.
+  'history.clearConfirmBody': 'Dosyaların kendisi silinmez.',
+  'history.clearRange': 'Zaman aralığı',
+  'history.range.day': 'Son 24 saat',
+  'history.range.week': 'Son 7 gün',
+  'history.range.all': 'Tümü',
+  // Turkish takes no plural after a number, so one and several share a pattern.
+  'history.clearCount.day.none': 'Son 24 saatte indirme yok.',
+  'history.clearCount.day.one': 'Son 24 saatteki {n} indirme geçmişten kaldırılacak.',
+  'history.clearCount.day.many': 'Son 24 saatteki {n} indirme geçmişten kaldırılacak.',
+  'history.clearCount.week.none': 'Son 7 günde indirme yok.',
+  'history.clearCount.week.one': 'Son 7 gündeki {n} indirme geçmişten kaldırılacak.',
+  'history.clearCount.week.many': 'Son 7 gündeki {n} indirme geçmişten kaldırılacak.',
+  'history.clearCount.all.none': 'Geçmiş boş.',
+  'history.clearCount.all.one': 'Geçmişteki {n} indirme kaldırılacak.',
+  'history.clearCount.all.many': 'Geçmişteki {n} indirmenin tümü kaldırılacak.',
+  'history.clearFailed': 'Geçmiş temizlenemedi. Tekrar dene.',
   'file.missing': 'Dosya taşınmış veya silinmiş',
+  'file.openFailed': 'Dosya açılamadı',
+  'file.revealFailed': 'Klasör açılamadı',
+  'file.shareFailed': 'Dosya paylaşılamadı',
   'history.noResults': '"{query}" ile eşleşen kayıt yok.',
 
   'settings.title': 'Ayarlar',
@@ -192,7 +229,7 @@ export const tr: Record<TranslationKey, string> = {
   'settings.hotkeys': 'Kısayollar',
   'settings.generalSummary': 'Pano izleme, bildirimler',
   'settings.downloadsSummary': 'Klasör, kalite, eşzamanlı indirme',
-  'settings.connectionSummary': 'Tarayıcı uzantısı ve YouTube oturumu',
+  'settings.connectionSummary': 'Tarayıcı uzantısı ve oturumlar',
   'settings.appearanceSummary': 'Tema, dil, hareket',
   'settings.performanceSummary': 'Düşük kaynak modu, önbellek',
   'settings.advancedSummary': 'İndirme motoru, ağ, sıfırlama',
@@ -233,18 +270,18 @@ export const tr: Record<TranslationKey, string> = {
   'settings.browserExtension': 'Tarayıcı uzantısı',
   'settings.browserExtensionHint':
     'Tarayıcında oynayan videoları tek tıkla bu uygulamaya gönderir.',
-  'settings.browserLink': 'YouTube oturumu',
+  'settings.browserLink': 'Tarayıcı oturumları',
   'settings.browserLinkHint':
-    'Yalnızca hesabının izleyebildiği videolar için tarayıcındaki YouTube oturumunu kullanır. Oturum bu bilgisayarda şifreli durur.',
+    "Yalnızca hesabının görebildiği videolar için tarayıcındaki YouTube ve TikTok oturumlarını, uzantıda Diğer siteler açıksa İndir'e bastığın sitenin oturumunu da kullanır. Oturumlar bu bilgisayarda şifreli durur; diğer sitelerinki bir saat sonra silinir.",
   'settings.linkBroken': 'Tarayıcılar yardımcıyı başlatamıyor',
   'settings.linkBrokenHint':
     'Uzantının bu uygulamaya ulaşmasını sağlayan kayıt eksik ya da başka bir yeri gösteriyor. Bunu bir tarayıcı güncellemesi, bir temizlik aracı veya uygulamanın ikinci bir kopyası yapmış olabilir. Onar, kaydı geri yazar.',
   'settings.linkWaiting': 'Henüz bağlı tarayıcı yok',
   'settings.linkWaitingHint':
-    "YouTube'a giriş yaptığın tarayıcıda uzantıya tıkla, sonra \"YouTube oturumu\" anahtarını aç.",
+    "YouTube'a ya da TikTok'a giriş yaptığın tarayıcıda uzantıya tıkla, sonra oturum anahtarını aç.",
   'settings.linkSignedOut': 'Saklanan oturum yok',
   'settings.linkSignedOutHint':
-    "{browser} bağlı ama YouTube'da oturum açık değil ya da oturum temizlenmiş. Orada oturum aç; uzantı gerisini kendiliğinden halleder.",
+    "{browser} bağlı ama YouTube'da da TikTok'ta da oturum açık değil ya da oturum temizlenmiş. Orada oturum aç; uzantı gerisini kendiliğinden halleder.",
   'settings.linkQuiet': 'Bağlantıdan bir süredir ses çıkmıyor',
   'settings.linkQuietHint':
     '{browser} bir süredir yeni bir oturum aktarmadı, bu yüzden uygulama elindekini kullanmayı bıraktı. O tarayıcıyı bir kez açman yeter, gerisi kendiliğinden düzelir: yeniden kurulacak ya da basılacak bir şey yok.',
@@ -256,6 +293,13 @@ export const tr: Record<TranslationKey, string> = {
   'settings.linkAccount': '{account} gibi görünüyor',
   'settings.linkRefreshed': 'Son yenileme {when}',
   'settings.linkExtensionVersion': 'Uzantı {version}',
+  'settings.linkSiteFresh': 'Oturum açık',
+  'settings.linkSiteStale': 'Bir süredir yenilenmedi',
+  'settings.linkSiteNone': 'Oturum yok',
+  'settings.linkOtherSites': 'Diğer siteler',
+  'settings.linkOtherFresh': '{site} · oturum açık',
+  'settings.linkTiktokHint':
+    "Yaş sınırlı TikTok gönderileri için tarayıcıda TikTok'a giriş yap, sonra uzantıda TikTok oturumunu aç.",
   'settings.linkBrowserFallback': 'Tarayıcı',
   'settings.linkRepair': 'Onar',
   'settings.linkRepairFailed': 'Bağlantı onarılamadı',
@@ -549,8 +593,21 @@ export const tr: Record<TranslationKey, string> = {
   'error.membershipRequired.title': 'Bu video kanal üyelerine özel',
   'error.membershipRequired.message':
     "YouTube bu videoyu yalnızca kanalın üyeliğine sahip bir hesaba veriyor. Ayarlar'dan tarayıcını bağla; Universal Downloader bu bağlantıyı bir dahaki denemende o oturumu kullanarak açsın.",
+  'error.membershipRequired.messageMobile':
+    'YouTube bu videoyu yalnızca kanalın üyeliğine sahip bir hesaba veriyor. Telefonda bu oturum kullanılamıyor; bilgisayardaki uygulamayla indirebilirsin.',
+  'error.tiktokSignIn.title': "Bu gönderi için TikTok'ta oturum açmak gerekiyor",
+  'error.tiktokSignIn.message':
+    "TikTok bu gönderiyi yalnızca oturum açmış izleyicilere gösteriyor. TikTok'a giriş yaptığın tarayıcıda uzantıdan TikTok oturumunu aç, sonra tekrar dene.",
+  'error.tiktokSignIn.messageMobile':
+    'TikTok bu gönderiyi yalnızca oturum açmış izleyicilere gösteriyor. Telefonda TikTok oturumu henüz kullanılamıyor; bilgisayardaki uygulamayla indirebilirsin.',
+  'error.tiktokSignIn.action': 'Ayarlarda göster',
+  'error.tiktokNotForAccount.title': 'TikTok bu gönderiyi bağlı hesaba da göstermiyor',
+  'error.tiktokNotForAccount.message':
+    "Hesap TikTok'a 18 yaşından küçük görünüyor olabilir ya da gönderi yalnızca takipçilere açık.",
   'error.notFound.title': 'Bu medya artık mevcut değil',
   'error.notFound.message': 'Gönderi silinmiş veya gizli yapılmış olabilir.',
+  'error.fileMissing.title': 'Dosya taşınmış veya silinmiş',
+  'error.fileMissing.message': 'Kaydedildiği yerde artık yok.',
   'error.noMatch.title': 'Bu şarkı bulunamadı',
   'error.noMatch.message': "YouTube'da bu şarkının bir kaydı çıkmadı.",
   'error.protected.title': 'Bu servisten indirme yapılamaz',

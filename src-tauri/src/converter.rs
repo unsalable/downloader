@@ -43,8 +43,8 @@ pub const EVENT_PROGRESS: &str = "convert://progress";
 /// Containers offered as a target. Anything not on one of these two lists is
 /// refused: the arguments FFmpeg needs differ per container, and an unchecked
 /// extension would reach the command line as an output path.
-const VIDEO_FORMATS: [&str; 5] = ["mp4", "mkv", "webm", "mov", "avi"];
-const AUDIO_FORMATS: [&str; 7] = ["mp3", "m4a", "aac", "wav", "flac", "opus", "ogg"];
+pub(crate) const VIDEO_FORMATS: [&str; 5] = ["mp4", "mkv", "webm", "mov", "avi"];
+pub(crate) const AUDIO_FORMATS: [&str; 7] = ["mp3", "m4a", "aac", "wav", "flac", "opus", "ogg"];
 
 pub fn format_kind(target: &str) -> Option<ConvertKind> {
     let target = target.trim().to_ascii_lowercase();

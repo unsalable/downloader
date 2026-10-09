@@ -24,13 +24,34 @@
 
     <section class="card list" id="list" aria-live="polite" hidden></section>
 
+    <!-- Each site's switch is shown on that site's own pages, where it is
+         about the page in front of the user; the other sites' switch, which
+         is about whichever page İndir is pressed on, always. -->
     <section class="card">
-      <div class="setting">
+      <div class="setting" id="youtubeRow" hidden>
         <div class="text">
           <p class="title" id="linkTitle" data-i18n="linkTitle"></p>
           <p class="line" id="linkLine">&nbsp;</p>
         </div>
         <button type="button" class="switch" id="linkSwitch" role="switch" aria-checked="false" aria-labelledby="linkTitle" aria-describedby="linkLine" disabled>
+          <span class="knob"></span>
+        </button>
+      </div>
+      <div class="setting" id="tiktokRow" hidden>
+        <div class="text">
+          <p class="title" id="tiktokTitle" data-i18n="tiktokTitle"></p>
+          <p class="line" id="tiktokLine">&nbsp;</p>
+        </div>
+        <button type="button" class="switch" id="tiktokSwitch" role="switch" aria-checked="false" aria-labelledby="tiktokTitle" aria-describedby="tiktokLine" disabled>
+          <span class="knob"></span>
+        </button>
+      </div>
+      <div class="setting" id="otherRow">
+        <div class="text">
+          <p class="title" id="otherTitle" data-i18n="otherTitle"></p>
+          <p class="line" id="otherLine">&nbsp;</p>
+        </div>
+        <button type="button" class="switch" id="otherSwitch" role="switch" aria-checked="false" aria-labelledby="otherTitle" aria-describedby="otherLine" disabled>
           <span class="knob"></span>
         </button>
       </div>

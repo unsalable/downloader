@@ -28,7 +28,7 @@ use std::time::Duration;
 
 use universal_downloader_lib::bridge::handoff;
 use universal_downloader_lib::bridge::protocol::{
-    self, Download, ErrorCode, HostStatus, Peer, Push, Request, Response,
+    self, Download, ErrorCode, HostStatus, Peer, Push, Request, Response, SessionState, Site,
 };
 use universal_downloader_lib::bridge::LinkState;
 use universal_downloader_lib::downloader::{self, DownloadPreview};
@@ -144,9 +144,9 @@ fn send(output: &mut impl Write, response: &Response) -> std::io::Result<()> {
     output.flush()
 }
 
-fn handle(request: Request) -> Response {
+fn handle(mut request: Request) -> Response {
     let version = match &request {
-        Request::Push(push) => push.peer.v,
+        Request::Push(push) | Request::PushSite(push) => push.peer.v,
         Request::Download(download) | Request::Probe(download) => download.peer.v,
         Request::Status(peer)
         | Request::Claim(peer)
@@ -164,6 +164,24 @@ fn handle(request: Request) -> Response {
         );
     }
 
+    // Whose session a push carries is settled before anything is read: a push
+    // that names it wrongly is refused whole rather than stored as some other
+    // site's, and refusing it touches no file under `bridge/`.
+    let site = match push_site(&request) {
+        Ok(site) => site,
+        Err(reason) => {
+            if let Request::Push(push) | Request::PushSite(push) = &mut request {
+                scrub(push);
+            }
+            return Response::err(ErrorCode::Malformed, reason);
+        }
+    };
+
+    // This process is started for every question the extension asks, which
+    // makes it the likeliest thing to be running when the other-site session's
+    // hour runs out -- and so the one that lets it go, before the state the
+    // answer is drawn from is read.
+    LinkState::drop_lapsed();
     let state = LinkState::read();
 
     match request {
@@ -180,7 +198,7 @@ fn handle(request: Request) -> Response {
             Response::ok(status(&state, &peer))
         }
 
-        // Nor is a download. The toggle is about lending the app a YouTube
+        // Nor is a download. The toggle is about lending the app a browser
         // session, and a link the user pressed Download on lends nothing: the
         // app fetches it as it would one pasted into its own window.
         Request::Download(download) => hand_over(&state, &download),
@@ -217,8 +235,8 @@ fn handle(request: Request) -> Response {
             }
         }
 
-        Request::Push(mut push) => {
-            let answer = accept(&state, &push);
+        Request::Push(mut push) | Request::PushSite(mut push) => {
+            let answer = accept(&state, &push, site);
             // Whatever happened, this process is done with the values.
             scrub(&mut push);
             answer
@@ -226,8 +244,35 @@ fn handle(request: Request) -> Response {
     }
 }
 
-/// The one request that stores anything, and so the one with rules.
-fn accept(state: &LinkState, push: &Push) -> Response {
+/// Whose session a request carries, or why it cannot be stored as anyone's.
+///
+/// Anything that is not a push is answered as YouTube's, which is never read:
+/// only the push arms store anything.
+fn push_site(request: &Request) -> Result<Site, &'static str> {
+    match request {
+        // A plain push is YouTube's, as it always was. One naming another site
+        // is an extension that should have sent `pushSite`, and storing it as
+        // YouTube's would hand the engine the wrong site's cookies.
+        Request::Push(push) if push.site.is_some_and(|site| site != Site::Youtube) => {
+            Err("a push carries YouTube's session only")
+        }
+        // The other site's says which site in `domain`, and the jar is matched
+        // against addresses by that name: one that is missing where cookies
+        // ride on it, or spelled any way but a bare registrable domain, is
+        // refused here rather than stored under it.
+        Request::PushSite(push) if push.site == Some(Site::Other) => {
+            push.check_other().map(|()| Site::Other)
+        }
+        Request::PushSite(push) => push
+            .site
+            .ok_or("the push does not say whose session it carries"),
+        _ => Ok(Site::Youtube),
+    }
+}
+
+/// The one request that stores anything, and so the one with rules. They are
+/// the same for every site: one toggle, one binding.
+fn accept(state: &LinkState, push: &Push, site: Site) -> Response {
     // The toggle is enforced here rather than in the app, because the app is
     // usually not running when a push arrives. A setting that only takes effect
     // while the window is open is not a setting.
@@ -256,7 +301,7 @@ fn accept(state: &LinkState, push: &Push) -> Response {
         );
     }
 
-    match LinkState::accept_push(push) {
+    match LinkState::accept_push(push, site) {
         Ok(()) => Response::ok(status(&LinkState::read(), &push.peer)),
         Err(err) => {
             log_warn!("bridge-host", "could not store the session: {err}");
@@ -312,13 +357,13 @@ fn probe(state: &LinkState, download: &Download) -> Response {
     let mut settings = paths::database_path()
         .map(|path| db::load_settings_read_only(&path))
         .unwrap_or_default();
-    // A preview never borrows the browser's YouTube session. A download does,
-    // for the one run that needs it, by writing the cookies out in plain text
-    // and deleting them when the engine is done -- and this process is the
-    // browser's to kill at any moment, which would leave that file behind
-    // until the app next starts. A members-only video shows no details in the
-    // popup rather than risk that; pressing İndir still downloads it with the
-    // session.
+    // A preview never borrows a browser session. A download does, for the one
+    // run that needs it, by writing the cookies out in plain text and deleting
+    // them when the engine is done -- and this process is the browser's to
+    // kill at any moment, which would leave that file behind until the app
+    // next starts. A members-only video shows no details in the popup rather
+    // than risk that, and a TikTok post behind a sign-in is answered as one;
+    // pressing İndir still downloads either with the session.
     settings.browser_link_enabled = false;
     // The pipeline logs what it does where the app would, when the user has
     // asked the app to.
@@ -351,15 +396,19 @@ async fn look(request: &DownloadRequest, settings: &Settings) -> AppResult<Downl
 
 /// Why there is no preview, said without the link.
 ///
-/// A protected service is the one refusal told apart, because it is the one
-/// that changes what the popup offers. Everything else reaches the popup as
-/// "no details", with the app's own short title for what went wrong. That
-/// title is fixed text: the error's own detail can quote the address, and the
-/// reply goes back into the browser.
+/// Two refusals are told apart, because each changes what the popup says: a
+/// protected service, which no download can get past, and a post shown only
+/// to a signed-in viewer, which the browser's own session can. Everything
+/// else reaches the popup as "no details", with the app's own short title for
+/// what went wrong. That title is fixed text: the error's own detail can quote
+/// the address, and the reply goes back into the browser.
 fn refused(err: &AppError) -> Response {
     log_debug!("bridge-host", "no preview: {}", err.code());
     let code = match err {
         AppError::Protected(_) => ErrorCode::Protected,
+        // Both shapes: a probe never lends a session, so the second cannot
+        // arise here today, and the answer would be the same if it did.
+        AppError::TiktokSignIn { .. } => ErrorCode::SignIn,
         _ => ErrorCode::Unavailable,
     };
     Response::err(code, err.to_info().title)
@@ -397,6 +446,7 @@ fn disabled() -> Response {
 /// anything: no reply from this process may describe cookie contents.
 fn status(state: &LinkState, peer: &Peer) -> HostStatus {
     let ours = state.is_bound_to(&peer.profile_id);
+    let other_session = state.session_state(Site::Other);
 
     HostStatus {
         app_version: env!("CARGO_PKG_VERSION").to_string(),
@@ -414,7 +464,7 @@ fn status(state: &LinkState, peer: &Peer) -> HostStatus {
             .bound
             .as_ref()
             .and_then(|bound| bound.profile_label.clone()),
-        session: state.session_state(),
+        session: state.session_state(Site::Youtube),
         account_hint: if ours {
             state.account_hint.clone()
         } else {
@@ -422,6 +472,17 @@ fn status(state: &LinkState, peer: &Peer) -> HostStatus {
         },
         last_push_at: state.last_push_at,
         can_download: true,
+        sites: Site::ALL.to_vec(),
+        tiktok_session: state.session_state(Site::Tiktok),
+        // Which site the bound profile last lent a sign-in for is about that
+        // person's browsing, as the account hint is about their account, so
+        // another profile is told only that one is held, not whose.
+        other_domain: if ours && other_session == SessionState::Fresh {
+            state.other.domain.clone()
+        } else {
+            None
+        },
+        other_session,
     }
 }
 
@@ -573,8 +634,12 @@ mod tests {
         assert!(response.preview.is_none());
     }
 
+    /// Protection is one of the two refusals told apart (TikTok's sign-in
+    /// wall, below, is the other); every other one is "no details", the
+    /// refusals a YouTube session would answer included, since a probe never
+    /// lends one.
     #[test]
-    fn only_a_protected_service_is_told_apart_and_no_refusal_quotes_the_link() {
+    fn a_protected_service_is_told_apart_and_no_refusal_quotes_the_link() {
         let link = "https://site.example/watch/secret-id";
         let protected = refused(&AppError::Protected("Netflix".into()));
         assert_eq!(code(&protected), Some(ErrorCode::Protected));
@@ -583,6 +648,8 @@ mod tests {
             AppError::InvalidUrl(format!("not an http(s) address: {link}")),
             AppError::Unsupported(format!("no provider could read {link}")),
             AppError::NotFound { status: 404, detail: link.into() },
+            AppError::Forbidden { status: 403, detail: link.into() },
+            AppError::MembershipRequired { detail: link.into() },
             AppError::Network(format!("dns error for {link}")),
             AppError::Engine(format!("ERROR: [generic] {link}: unable to download")),
             AppError::EngineMissing,
@@ -591,6 +658,96 @@ mod tests {
             assert_eq!(code(&response), Some(ErrorCode::Unavailable), "{err:?}");
             let text = serde_json::to_string(&response).unwrap();
             assert!(!text.contains("site.example"), "{text}");
+        }
+    }
+
+    /// A plain push is YouTube's. One that names another site is refused
+    /// before the state file is read, and never stored as YouTube's.
+    #[test]
+    fn a_plain_push_that_names_another_site_is_malformed() {
+        let push = request(serde_json::json!({
+            "type": "push", "site": "tiktok", "v": 1, "profileId": "p",
+            "extensionVersion": "1.0.5", "signedIn": true, "capturedAt": 1_700_000_000,
+            "cookies": [{ "domain": ".tiktok.com", "name": "sessionid", "value": "v", "path": "/", "secure": true }],
+        }));
+        let response = handle(push);
+        assert!(!response.ok);
+        assert_eq!(code(&response), Some(ErrorCode::Malformed));
+    }
+
+    #[test]
+    fn a_site_push_without_a_site_is_malformed() {
+        let push = request(serde_json::json!({
+            "type": "pushSite", "v": 1, "profileId": "p", "extensionVersion": "1.0.5",
+            "signedIn": false, "capturedAt": 1_700_000_000, "cookies": [],
+        }));
+        let response = handle(push);
+        assert!(!response.ok);
+        assert_eq!(code(&response), Some(ErrorCode::Malformed));
+    }
+
+    /// An other-site push that does not name its site properly is refused
+    /// before the state file is read or a jar is touched.
+    #[test]
+    fn an_other_push_without_a_proper_site_is_malformed() {
+        let cookies = serde_json::json!([
+            { "domain": ".instagram.com", "name": "sessionid", "value": "v", "path": "/", "secure": true }
+        ]);
+        for domain in [
+            serde_json::Value::Null,
+            serde_json::json!("https://www.instagram.com/"),
+            serde_json::json!("www.instagram.com"),
+            serde_json::json!("co.uk"),
+            serde_json::json!("localhost"),
+            serde_json::json!("10.0.0.1"),
+            serde_json::json!("youtube.com"),
+            serde_json::json!("tiktok.com"),
+        ] {
+            let push = request(serde_json::json!({
+                "type": "pushSite", "site": "other", "domain": domain, "v": 1, "profileId": "p",
+                "extensionVersion": "1.0.5", "signedIn": true, "capturedAt": 1_700_000_000,
+                "cookies": cookies,
+            }));
+            let response = handle(push);
+            assert!(!response.ok, "{domain}");
+            assert_eq!(code(&response), Some(ErrorCode::Malformed), "{domain}");
+        }
+    }
+
+    /// The other site's switch going off sends a signed-out push naming no
+    /// site, and that is a push the host takes: all it does is delete.
+    #[test]
+    fn a_signed_out_other_push_needs_no_site() {
+        let Request::PushSite(push) = request(serde_json::json!({
+            "type": "pushSite", "site": "other", "v": 1, "profileId": "p",
+            "extensionVersion": "1.0.5", "signedIn": false, "capturedAt": 1_700_000_000,
+            "cookies": [],
+        })) else {
+            panic!("not read as a site push");
+        };
+        assert_eq!(push_site(&Request::PushSite(push)), Ok(Site::Other));
+    }
+
+    #[test]
+    fn a_tiktok_wall_reaches_the_popup_as_sign_in() {
+        let link = "https://www.tiktok.com/@someone/video/7670756126907960589";
+        for err in [
+            AppError::TiktokSignIn {
+                detail: format!("ERROR: [TikTok] 7670756126907960589: Log in for access. {link}"),
+                session_tried: false,
+            },
+            AppError::TiktokSignIn {
+                detail: link.into(),
+                session_tried: true,
+            },
+        ] {
+            let response = refused(&err);
+            assert_eq!(code(&response), Some(ErrorCode::SignIn), "{err:?}");
+            let text = serde_json::to_string(&response).unwrap();
+            assert!(
+                !text.contains("someone") && !text.contains("7670756126907960589"),
+                "{text}"
+            );
         }
     }
 }

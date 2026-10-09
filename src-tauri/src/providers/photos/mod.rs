@@ -17,7 +17,7 @@ pub mod twitter;
 
 use reqwest::header::{HeaderMap, SET_COOKIE};
 
-use crate::error::AppResult;
+use crate::error::{AppError, AppResult};
 use crate::model::{FormatKind, MediaFormat, MediaKind, MediaMetadata, PlatformId, WatermarkSupport};
 use crate::settings::Settings;
 use crate::log_warn;
@@ -91,9 +91,15 @@ pub async fn analyze(url: &str, platform: PlatformId, settings: &Settings) -> Ap
 /// TikTok photo post reached through a video address comes back from the
 /// engine as its soundtrack alone -- TikTok has no audio-only posts, so a
 /// result without a picture or a video is exactly that case.
-pub async fn complete(metadata: MediaMetadata, mixed: Option<MixedPost>, settings: &Settings) -> MediaMetadata {
+///
+/// A post TikTok shows only to signed-in viewers is the one exception that
+/// fails. The engine can read it with the browser's TikTok session, which the
+/// photo reader never sends, so the soundtrack is all that comes back -- and a
+/// soundtrack passed off as the post is worse than the refusal it gave before
+/// sessions were lent.
+pub async fn complete(metadata: MediaMetadata, mixed: Option<MixedPost>, settings: &Settings) -> AppResult<MediaMetadata> {
     if let Some(post) = mixed {
-        return post.merge(metadata);
+        return Ok(post.merge(metadata));
     }
 
     let soundtrack_only = metadata.platform == PlatformId::Tiktok
@@ -103,18 +109,20 @@ pub async fn complete(metadata: MediaMetadata, mixed: Option<MixedPost>, setting
             .iter()
             .any(|format| format.has_video || format.kind == FormatKind::Image);
     if !soundtrack_only {
-        return metadata;
+        return Ok(metadata);
     }
 
     match tiktok::analyze(&metadata.canonical_url, settings).await {
         Ok(Some(mut photos)) => {
             photos.url = metadata.url;
-            photos
+            Ok(photos)
         }
-        Ok(None) => metadata,
+        Ok(None) => Ok(metadata),
+        // The sign-in wall: a redirect to /login or a private post's status.
+        Err(err @ AppError::Forbidden { .. }) => Err(err),
         Err(err) => {
             log_warn!("photos", "could not read the photos of a TikTok post: {err}");
-            metadata
+            Ok(metadata)
         }
     }
 }
@@ -159,6 +167,7 @@ impl Post {
             warnings: Vec::new(),
             entries: Vec::new(),
             tracks: Vec::new(),
+            items: Vec::new(),
             music: None,
         }
     }
@@ -274,6 +283,10 @@ mod tests {
         assert_eq!(post.entries[1].provider_id, PROVIDER_ID);
         assert_eq!(post.entries[2].provider_id, "engine");
         assert_eq!(post.title, "A post");
+
+        // What the interface is shown is the merged order, not the engine's.
+        let listed: Vec<(u32, MediaKind)> = post.items.iter().map(|item| (item.position, item.kind)).collect();
+        assert_eq!(listed, [(1, MediaKind::Video), (2, MediaKind::Image), (3, MediaKind::Video)]);
     }
 
     #[test]

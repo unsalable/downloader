@@ -70,15 +70,14 @@ pub struct Handoff {
 }
 
 impl Handoff {
-    /// The request the app queues for this link: the one Home would send with
-    /// the default options untouched, since the user picked the video in the
-    /// browser and there is nothing left to ask them.
+    /// The request Home would send for this link if nothing were changed: the
+    /// app opens a handed-over link on Home with the default options chosen,
+    /// and the user picks the quality, the watermark and the rest there.
     ///
-    /// Must stay in step with `requestFromHandoff` in `src/lib/handoff.ts`,
-    /// field for field. That function builds the request the app downloads;
-    /// this one builds the request the popup's preview is worked out from, and
-    /// a preview of any other request would describe a download that never
-    /// happens.
+    /// Must stay in step with `homeFromHandoff` in `src/lib/handoff.ts`. That
+    /// function picks the options Home opens on; this one builds the request
+    /// the popup's preview is worked out from, and a preview of any other
+    /// request would describe a file Home does not open on.
     pub fn to_request(&self, settings: &Settings) -> DownloadRequest {
         let mode = if self.kind == "audio" {
             DownloadMode::Audio
@@ -558,7 +557,7 @@ mod tests {
     }
 
     // The four cases below are the ones `src/lib/handoff.test.ts` holds
-    // `requestFromHandoff` to. The two functions have to agree, so they are
+    // `homeFromHandoff` to. The two functions have to agree, so they are
     // held to the same examples.
 
     fn defaults() -> Settings {

@@ -1,6 +1,6 @@
 import { AnimatePresence, motion } from 'motion/react';
 import { readText } from '@tauri-apps/plugin-clipboard-manager';
-import { Images, RotateCcw } from 'lucide-react';
+import { RotateCcw } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { AnalyzingCard } from '@/components/home/AnalyzingCard';
@@ -8,6 +8,7 @@ import { AnimeResults, type AnimeSearch } from '@/components/home/AnimeResults';
 import { ClipboardSuggestion } from '@/components/home/ClipboardSuggestion';
 import { DownloadOptionsPanel } from '@/components/home/DownloadOptionsPanel';
 import { ErrorCard } from '@/components/home/ErrorCard';
+import { GalleryPicker } from '@/components/home/GalleryPicker';
 import { Hero } from '@/components/home/Hero';
 import { MediaPreviewCard } from '@/components/home/MediaPreviewCard';
 import { PlatformIndicator } from '@/components/home/PlatformIndicator';
@@ -18,11 +19,18 @@ import { InstallProgress } from '@/components/settings/ToolCard';
 import { Button } from '@/components/ui/Button';
 import { InlineNotice } from '@/components/ui/InlineNotice';
 import { useDebouncedValue } from '@/hooks/useDebouncedValue';
-import { useTranslation, type TranslationKey } from '@/i18n';
+import { errorCopy, useTranslation, type TranslationKey } from '@/i18n';
 import { cn } from '@/lib/cn';
-import { FADE, RISE, T, rise } from '@/lib/motion';
+import {
+  galleryDownloadLabel,
+  pickableItems,
+  pickedOf,
+  pickedPositions,
+} from '@/lib/gallerySelection';
+import { COLLAPSE, FADE, RISE, T, rise } from '@/lib/motion';
 import { IS_MOBILE } from '@/lib/platform';
 import { normalizeUrl } from '@/lib/url';
+import type { SettingsSection } from '@/pages/SettingsPage';
 import * as ipc from '@/services/ipc';
 import { useAnalysisStore } from '@/stores/useAnalysisStore';
 import { useToolsStore } from '@/stores/useToolsStore';
@@ -34,7 +42,8 @@ const READY = rise(10);
 interface HomePageProps {
   settings: Settings;
   onGoToDownloads: () => void;
-  onOpenSettings: () => void;
+  /** Settings, opened at `section` when there is one to point at. */
+  onOpenSettings: (section?: SettingsSection) => void;
   inputRef: React.RefObject<UrlInputHandle | null>;
 }
 
@@ -50,6 +59,7 @@ export function HomePage({
   const phase = useAnalysisStore((state) => state.phase);
   const platform = useAnalysisStore((state) => state.platform);
   const metadata = useAnalysisStore((state) => state.metadata);
+  const handoff = useAnalysisStore((state) => state.handoff);
   const error = useAnalysisStore((state) => state.error);
   const options = useAnalysisStore((state) => state.options);
   const clipboardSuggestion = useAnalysisStore((state) => state.clipboardSuggestion);
@@ -71,19 +81,24 @@ export function HomePage({
   const [search, setSearch] = useState<AnimeSearch | null>(null);
   const searchToken = useRef(0);
   const [dragging, setDragging] = useState(false);
-  // Which of the two download buttons failed, so the reason is set under it.
-  const [enqueueError, setEnqueueError] = useState<{ gallery: boolean; text: string } | null>(
-    null,
-  );
+  // Why the last press of Download did not queue anything.
+  const [enqueueError, setEnqueueError] = useState<string | null>(null);
   useEffect(() => setEnqueueError(null), [metadata]);
 
-  // The songs of an album or playlist that will be downloaded: all of them
-  // until the list says otherwise.
+  // What will be downloaded of an album's songs or a post's items: all of
+  // them until the list says otherwise.
   const tracks = metadata?.tracks ?? [];
+  const items = metadata?.items ?? [];
   const [picked, setPicked] = useState<Set<number>>(new Set());
   useEffect(() => {
-    setPicked(new Set((metadata?.tracks ?? []).map((track) => track.position)));
+    const listed = metadata?.tracks.length ? metadata.tracks : (metadata?.items ?? []);
+    setPicked(new Set(listed.map((entry) => entry.position)));
   }, [metadata]);
+  const isGallery = tracks.length === 0 && items.length > 1;
+  // What this mode can take from it -- see `pickableItems`.
+  const pickable = pickableItems(items, options.mode);
+  const pickingItems = isGallery && pickable.length > 1;
+  const pickedCount = pickedOf(pickable, picked).length;
 
   const engineReady = tools?.engine.available ?? false;
   const engineMissing = !engineReady && tools != null && !checkingTools;
@@ -274,20 +289,20 @@ export function HomePage({
       thumbnailUrl: metadata.thumbnailUrl,
       platform: metadata.platform,
       audioLanguage: options.audioLanguage,
+      // A link from the browser extension is fetched the way its page fetched
+      // it, as its analysis was.
+      source: handoff?.source ?? null,
     };
   };
 
   // The plain-language pair from the dictionary, keyed by the error code, with
   // the backend's English text as the fallback -- here as a single line.
   const describeError = (info: AppErrorInfo) => {
-    const titleKey = `error.${info.code}.title` as TranslationKey;
-    const messageKey = `error.${info.code}.message` as TranslationKey;
-    const title = t(titleKey) === titleKey ? info.title : t(titleKey);
-    const message = t(messageKey) === messageKey ? info.message : t(messageKey);
+    const { title, message } = errorCopy(info, IS_MOBILE);
     return `${title}. ${message}`;
   };
 
-  const startDownload = async (asGallery: boolean) => {
+  const startDownload = async () => {
     const request = buildRequest();
     if (!request) return;
 
@@ -295,11 +310,17 @@ export function HomePage({
     setEnqueueError(null);
     try {
       // A carousel or album becomes one task per item, so each gets its own
-      // progress, retry and history row. A list of songs queues the ones
-      // that are picked, in the album's order.
-      if (tracks.length > 0) {
-        await ipc.enqueueGallery(request, [...picked].sort((a, b) => a - b));
-      } else if (asGallery) await ipc.enqueueGallery(request);
+      // progress, retry and history row. Only what is ticked is queued, by
+      // position and in the post's order -- all of them named one by one, so
+      // a post that changed since it was shown is refused, not guessed at.
+      if (tracks.length > 0) await ipc.enqueueGallery(request, [...picked].sort((a, b) => a - b));
+      else if (pickingItems) await ipc.enqueueGallery(request, pickedPositions(pickable, picked));
+      // One item of a gallery has what this mode asks for: that one.
+      else if (isGallery && pickable.length === 1) {
+        await ipc.enqueueGallery(request, [pickable[0]!.position]);
+      }
+      // A single item, or a photo post asked for its sound alone: the post's
+      // own formats carry the soundtrack.
       else await ipc.enqueueDownload(request);
 
       // The download itself is the next thing to look at, and going to the
@@ -307,7 +328,7 @@ export function HomePage({
       reset();
       onGoToDownloads();
     } catch (caught) {
-      setEnqueueError({ gallery: asGallery, text: describeError(ipc.toAppError(caught)) });
+      setEnqueueError(describeError(ipc.toAppError(caught)));
     } finally {
       setSubmitting(false);
     }
@@ -319,13 +340,19 @@ export function HomePage({
     startAnalysis(clipboardSuggestion);
   };
 
-  // What the user can do about a failure, beyond trying again.
+  // What the user can do about a failure, beyond trying again. A TikTok post
+  // behind a sign-in is answered by the browser's session, and the place that
+  // says whether one is lent is Connection -- on the desktop, the only build a
+  // browser can lend one to. Once a lent session was tried and still refused,
+  // there is nothing left to point at.
   const errorAction =
     error?.code === 'engineMissing'
       ? { label: t('setup.installNow'), onClick: () => void installEngine() }
       : error?.code === 'networkBlocked' && IS_MOBILE
         ? { label: t('error.networkBlocked.action'), onClick: () => void ipc.platformOpenAppSettings() }
-        : undefined;
+        : error?.code === 'tiktokSignIn' && !IS_MOBILE
+          ? { label: t('error.tiktokSignIn.action'), onClick: () => onOpenSettings('connection') }
+          : undefined;
 
   const isCollapsed = phase !== 'idle' || search != null;
   // Offered only while there is nothing else to do with the field, and only
@@ -421,7 +448,8 @@ export function HomePage({
               <Button variant="primary" size="sm" onClick={() => void installEngine()}>
                 {t('setup.installNow')}
               </Button>
-              <Button variant="ghost" size="sm" onClick={onOpenSettings}>
+              {/* Not the handler itself: the click event would arrive as a section. */}
+              <Button variant="ghost" size="sm" onClick={() => onOpenSettings()}>
                 {t('nav.settings')}
               </Button>
             </div>
@@ -470,35 +498,49 @@ export function HomePage({
                 <TrackList tracks={tracks} picked={picked} onChange={setPicked} />
               )}
 
+              {/* Closes rather than vanishes when a mode leaves nothing to pick
+                  from: the negative margin cancels the column's gap, and the
+                  padding inside brings it back within the part that closes, so
+                  the panel below slides up instead of jumping. */}
+              <AnimatePresence initial={false}>
+                {pickingItems && (
+                  <motion.div
+                    key="gallery"
+                    variants={COLLAPSE}
+                    initial="initial"
+                    animate="animate"
+                    exit="exit"
+                    className="-mt-4 overflow-hidden"
+                  >
+                    <div className="pt-4">
+                      <GalleryPicker items={pickable} picked={picked} onChange={setPicked} />
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+
               <DownloadOptionsPanel
                 metadata={metadata}
                 options={options}
                 onChange={setOptions}
                 defaultDownloadDir={settings.downloadDir}
                 submitting={submitting}
-                onDownload={() => void startDownload(false)}
-                downloadError={enqueueError && !enqueueError.gallery ? enqueueError.text : null}
-                downloadCount={tracks.length > 0 ? picked.size : undefined}
+                onDownload={() => void startDownload()}
+                downloadError={enqueueError}
+                downloadLabel={
+                  tracks.length > 0
+                    ? t('action.downloadCount', { n: picked.size })
+                    : pickingItems
+                      ? galleryDownloadLabel(pickable, picked)
+                      : undefined
+                }
+                nothingPicked={
+                  tracks.length > 0 ? picked.size === 0 : pickingItems && pickedCount === 0
+                }
+                // The line describes the first item, which says nothing about
+                // a pick from a post whose items need not be alike.
+                showPlan={!pickingItems}
               />
-
-              {tracks.length === 0 && metadata.entryCount != null && metadata.entryCount > 1 && (
-                <div>
-                  <Button
-                    variant="secondary"
-                    fullWidth
-                    icon={<Images size={15} />}
-                    onClick={() => void startDownload(true)}
-                    loading={submitting}
-                  >
-                    {t('action.downloadAll', { n: metadata.entryCount })}
-                  </Button>
-                  {enqueueError?.gallery && (
-                    <InlineNotice tone="error" className="mt-2.5">
-                      {enqueueError.text}
-                    </InlineNotice>
-                  )}
-                </div>
-              )}
 
               <button
                 type="button"

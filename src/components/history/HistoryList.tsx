@@ -1,5 +1,5 @@
 import { AnimatePresence, motion } from 'motion/react';
-import { Check, Clock, Download, FolderOpen, Search, Trash2, X } from 'lucide-react';
+import { Check, Clock, Download, FolderOpen, Search, Share, X } from 'lucide-react';
 import { memo, useCallback, useEffect, useState } from 'react';
 
 import { Button } from '@/components/ui/Button';
@@ -7,22 +7,24 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { IconButton } from '@/components/ui/IconButton';
 import { InlineNotice } from '@/components/ui/InlineNotice';
 import { ListGroup, ROW_LINE } from '@/components/ui/ListGroup';
-import { Modal } from '@/components/ui/Modal';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { PlatformBadge } from '@/components/ui/PlatformBadge';
 import { SourceLink } from '@/components/ui/SourceLink';
 import { TextInput } from '@/components/ui/TextInput';
 import { useDebouncedValue } from '@/hooks/useDebouncedValue';
+import { useFileActions } from '@/hooks/useFileActions';
 import { useMomentary } from '@/hooks/useMomentary';
 import { useThumbnail } from '@/hooks/useThumbnail';
 import { useTranslation } from '@/i18n';
 import type { TranslationKey } from '@/i18n';
 import { cn } from '@/lib/cn';
+import { PROBLEM_TEXT } from '@/lib/fileProblem';
 import { formatBytes, formatDate, formatDay } from '@/lib/format';
 import { LIST_ITEM } from '@/lib/motion';
-import { IS_MOBILE, openFile, revealFile } from '@/lib/platform';
+import { IS_MOBILE } from '@/lib/platform';
 import * as ipc from '@/services/ipc';
 import type { AppErrorInfo, HistoryEntry } from '@/types';
+import { ClearHistoryModal } from './ClearHistoryModal';
 
 const PAGE_SIZE = 60;
 
@@ -112,8 +114,10 @@ export function HistoryList({ onGoHome }: { onGoHome: () => void }) {
     setTotal((value) => Math.max(0, value - 1));
   }, []);
 
-  const clearAll = async () => {
-    await ipc.clearHistory();
+  // The list is read again with the search it already had. After a partial
+  // clear the rows that went leave with the same exit as a single removal;
+  // when nothing is left the group gives way to the empty state at once.
+  const cleared = () => {
     setConfirmClear(false);
     void refresh();
   };
@@ -134,15 +138,19 @@ export function HistoryList({ onGoHome }: { onGoHome: () => void }) {
     <>
       {IS_MOBILE ? (
         // The control above already says this is the history; the field gets
-        // the line.
+        // the line. Temizle sits where the Sürüyor half's does, in its words
+        // and its style, so switching halves leaves it in place.
         <div className="flex items-center gap-1.5 pb-3">
           <div className="min-w-0 flex-1">{search}</div>
           {total > 0 && (
-            <IconButton
-              icon={<Trash2 size={16} />}
-              label={t('history.clearAll')}
+            <Button
+              size="sm"
+              variant="ghost"
+              aria-label={t('history.clearAll')}
               onClick={() => setConfirmClear(true)}
-            />
+            >
+              {t('history.clear')}
+            </Button>
           )}
         </div>
       ) : (
@@ -190,22 +198,10 @@ export function HistoryList({ onGoHome }: { onGoHome: () => void }) {
         </ListGroup>
       )}
 
-      <Modal
+      <ClearHistoryModal
         open={confirmClear}
         onClose={() => setConfirmClear(false)}
-        title={t('history.clearConfirm')}
-        description={t('history.clearConfirmBody')}
-        closeLabel={t('common.close')}
-        footer={
-          <>
-            <Button variant="ghost" onClick={() => setConfirmClear(false)}>
-              {t('common.cancel')}
-            </Button>
-            <Button variant="danger" onClick={() => void clearAll()} data-autofocus>
-              {t('history.clearAll')}
-            </Button>
-          </>
-        }
+        onCleared={cleared}
       />
     </>
   );
@@ -230,7 +226,7 @@ const HistoryRow = memo(function HistoryRow({
   const [busy, setBusy] = useState(false);
   const [requeued, markRequeued] = useMomentary();
   const [failure, setFailure] = useState<AppErrorInfo | null>(null);
-  const [gone, setGone] = useState(false);
+  const file = useFileActions(entry.fileExists ? entry.filePath : null);
 
   // Nothing pops up to say the entry was queued or was not. The button turns
   // into a check for a moment, and a failure is written into the row.
@@ -253,9 +249,10 @@ const HistoryRow = memo(function HistoryRow({
     : '';
 
   // The backend said whether the file was there when the page was read. It can
-  // have gone since, and pressing the row is what finds that out, so a refusal
-  // to open it moves the row to the state it should already have been in.
-  const exists = entry.fileExists && !gone;
+  // have gone since, and pressing the row is what finds that out, so being told
+  // it is gone moves the row to the state it should already have been in. Any
+  // other refusal leaves the file where it is and says which press failed.
+  const exists = entry.fileExists && file.problem !== 'missing';
 
   const main = (
     <>
@@ -277,7 +274,13 @@ const HistoryRow = memo(function HistoryRow({
         <span className="block truncate text-[13.5px] font-medium leading-[18px] text-fg">
           {entry.title}
         </span>
-        {exists ? (
+        {exists && file.problem ? (
+          <span className={LINE}>
+            <span className="min-w-0 max-w-full truncate text-error">
+              {t(PROBLEM_TEXT[file.problem])}
+            </span>
+          </span>
+        ) : exists ? (
           <span className={LINE}>
             {/* A phone has room for the day, not for the year and the minute. */}
             <span>
@@ -363,7 +366,7 @@ const HistoryRow = memo(function HistoryRow({
             <button
               type="button"
               data-open=""
-              onClick={() => void openFile(entry.filePath).catch(() => setGone(true))}
+              onClick={file.open}
               aria-label={t('downloads.openFileNamed', { title: entry.title })}
               className="absolute inset-0 cursor-pointer rounded-[12px]"
             />
@@ -372,18 +375,30 @@ const HistoryRow = memo(function HistoryRow({
         </div>
 
         <div className={quiet}>
+          {/* Share comes first, so the buttons that were here before keep
+              their places. */}
+          {exists && (
+            <IconButton
+              icon={<Share size={15} />}
+              label={t('downloads.share')}
+              size={ACTION_SIZE}
+              onClick={file.share}
+            />
+          )}
           {/* On a phone this only opens the system's Downloads view, and
-              pressing the row already opens the file; a third button would
-              leave the title a few letters wide. */}
+              pressing the row already opens the file. */}
           {exists && !IS_MOBILE && (
             <IconButton
               icon={<FolderOpen size={15} />}
               label={t('downloads.showInFolder')}
               size={ACTION_SIZE}
-              onClick={() => void revealFile(entry.filePath).catch(() => setGone(true))}
+              onClick={file.reveal}
             />
           )}
-          {redownloadButton}
+          {/* A phone row has room for two buttons beside a title that can
+              still be read, and a third would leave it a few letters wide: a
+              file that is there is shared, one that is gone is fetched again. */}
+          {(!IS_MOBILE || !exists) && redownloadButton}
           {removeButton}
         </div>
       </div>

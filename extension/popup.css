@@ -1,5 +1,5 @@
-/* The popup: a heading, the list, one switch. Everything the app's grouped
-   lists do, at the size of a toolbar popup. */
+/* The popup: a heading, the list, the session switches. Everything the app's
+   grouped lists do, at the size of a toolbar popup. */
 
 body {
   width: 340px;
@@ -361,6 +361,17 @@ h1 {
   align-items: center;
   gap: 12px;
   padding: 10px 12px;
+}
+
+/* Two switches in one card are divided as the list's rows are: a hairline
+   painted as the lower one's background, starting where its text does.
+   Counted among the rows on show only: a site's switch is hidden off its own
+   pages, and the first row in view has nothing above it to be divided from. */
+.setting:not([hidden]) ~ .setting:not([hidden]) {
+  background-image: linear-gradient(var(--border), var(--border));
+  background-size: calc(100% - 12px) 1px;
+  background-position: right top;
+  background-repeat: no-repeat;
 }
 
 /* The app's Toggle: the proportions of the system switch, a track a little

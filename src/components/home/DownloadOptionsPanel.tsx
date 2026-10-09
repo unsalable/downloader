@@ -49,8 +49,13 @@ interface DownloadOptionsPanelProps {
   submitting: boolean;
   /** Why the last press of Download did not queue anything. */
   downloadError?: string | null;
-  /** How many songs of a list are picked, when the button downloads a list. */
-  downloadCount?: number;
+  /** The button's words when it downloads a pick from a list; "İndir" otherwise. */
+  downloadLabel?: string;
+  /** A list with nothing picked: nothing to download. */
+  nothingPicked?: boolean;
+  /** Whether to say what the button fetches. Off while picking from a gallery:
+   *  the line describes the first item, and the items need not be alike. */
+  showPlan?: boolean;
 }
 
 const MODE_ICONS = { video: Video, audio: Music, image: ImageIcon } as const;
@@ -63,7 +68,9 @@ export function DownloadOptionsPanel({
   onDownload,
   submitting,
   downloadError,
-  downloadCount,
+  downloadLabel,
+  nothingPicked = false,
+  showPlan = true,
 }: DownloadOptionsPanelProps) {
   const { t } = useTranslation();
   const [plan, setPlan] = useState<ipc.PlanSummary | null>(null);
@@ -271,18 +278,33 @@ export function DownloadOptionsPanel({
             className="overflow-hidden"
           >
             <div className="mt-2 grid gap-3">
+              {/* Each menu shows what the plan took until one is picked by
+                  hand, and picking one commits the other as it is shown. Left
+                  uncommitted, the other went out empty: a sound lent by
+                  another rendition came back as that whole rendition, and
+                  "None" fell straight back to the plan's sound. */}
               <Dropdown
                 label={t('options.videoStream')}
                 value={options.videoFormatId ?? plan?.videoFormatId ?? ''}
-                options={videoStreamOptions(metadata)}
-                onChange={(id) => onChange({ videoFormatId: id || null })}
+                options={videoStreamOptions(metadata, options.videoFormatId ?? plan?.videoFormatId)}
+                onChange={(id) =>
+                  onChange({
+                    videoFormatId: id || null,
+                    audioFormatId: options.audioFormatId ?? plan?.audioFormatId ?? null,
+                  })
+                }
                 disabled={options.mode === 'audio'}
               />
               <Dropdown
                 label={t('options.audioStream')}
                 value={options.audioFormatId ?? plan?.audioFormatId ?? ''}
-                options={audioStreamOptions(metadata)}
-                onChange={(id) => onChange({ audioFormatId: id || null })}
+                options={audioStreamOptions(metadata, options.audioFormatId ?? plan?.audioFormatId)}
+                onChange={(id) =>
+                  onChange({
+                    audioFormatId: id || null,
+                    videoFormatId: options.videoFormatId ?? plan?.videoFormatId ?? null,
+                  })
+                }
               />
             </div>
           </motion.div>
@@ -324,15 +346,11 @@ export function DownloadOptionsPanel({
         fullWidth
         icon={<Download size={17} />}
         loading={submitting}
-        disabled={ffmpegBlocked || plan == null || downloadCount === 0}
+        disabled={ffmpegBlocked || plan == null || nothingPicked}
         onClick={onDownload}
         className="mt-4"
       >
-        {submitting
-          ? t('action.preparing')
-          : downloadCount != null
-            ? t('action.downloadCount', { n: downloadCount })
-            : t('action.download')}
+        {submitting ? t('action.preparing') : (downloadLabel ?? t('action.download'))}
       </Button>
 
       {downloadError && (
@@ -343,7 +361,7 @@ export function DownloadOptionsPanel({
 
       {/* What the button will fetch, as one plain line: the resolved format,
           and roughly how big it is when the source said. */}
-      {plan && (
+      {plan && showPlan && (
         <p className="mt-2.5 flex flex-wrap items-center justify-center gap-x-3 text-[12.5px] text-fg-muted">
           <span>{plan.label}</span>
           {plan.estimatedBytes != null && (

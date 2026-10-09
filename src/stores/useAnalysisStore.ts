@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 
+import { titledFromHandoff, type HandoffContext } from '@/lib/handoff';
 import { normalizeUrl } from '@/lib/url';
 import * as ipc from '@/services/ipc';
 import type {
@@ -37,11 +38,22 @@ interface AnalysisState {
   /** A link noticed on the clipboard, offered under the empty field on Home
    *  rather than acted on. Not part of an analysis, so `reset` leaves it be. */
   clipboardSuggestion: string | null;
+  /**
+   * The page and headers of a link the browser extension handed over, kept
+   * while that link is the one in the field: Home analyses it and builds its
+   * download with them. Typing another address lets them go.
+   */
+  handoff: HandoffContext | null;
 
   setUrl: (url: string) => void;
   setClipboardSuggestion: (url: string | null) => void;
   setPlatform: (platform: PlatformId) => void;
-  analyze: (url: string, defaults: Partial<DownloadOptions>) => Promise<void>;
+  /**
+   * `handoff` is given for a link the extension handed over. Analysing the
+   * same link again without one -- a retry, the engine turning up -- keeps
+   * what it brought; another link drops it.
+   */
+  analyze: (url: string, defaults: Partial<DownloadOptions>, handoff?: HandoffContext) => Promise<void>;
   cancel: () => void;
   reset: () => void;
   setOptions: (patch: Partial<DownloadOptions>) => void;
@@ -73,9 +85,15 @@ export const useAnalysisStore = create<AnalysisState>((set, get) => ({
   error: null,
   options: DEFAULT_OPTIONS,
   clipboardSuggestion: null,
+  handoff: null,
 
   // Anything in the field, typed or put there, answers the suggestion.
-  setUrl: (url) => set(url ? { url, clipboardSuggestion: null } : { url }),
+  setUrl: (url) =>
+    set((state) => ({
+      url,
+      ...(url ? { clipboardSuggestion: null } : {}),
+      handoff: state.handoff && state.handoff.url === url ? state.handoff : null,
+    })),
 
   setClipboardSuggestion: (suggestion) => {
     // The link already in the field is not news. Without this it would be
@@ -85,10 +103,12 @@ export const useAnalysisStore = create<AnalysisState>((set, get) => ({
   },
   setPlatform: (platform) => set({ platform }),
 
-  analyze: async (url, defaults) => {
+  analyze: async (url, defaults, handoff) => {
     const token = ++requestToken;
+    const kept = handoff ?? (get().handoff?.url === url ? get().handoff : null);
     set({
       url,
+      handoff: kept,
       clipboardSuggestion: null,
       phase: 'analyzing',
       error: null,
@@ -97,7 +117,7 @@ export const useAnalysisStore = create<AnalysisState>((set, get) => ({
     });
 
     try {
-      const metadata = await ipc.analyzeUrl(url);
+      const metadata = titledFromHandoff(await ipc.analyzeUrl(url, kept?.source ?? null), kept);
       if (token !== requestToken) return;
 
       set((state) => ({
@@ -128,6 +148,7 @@ export const useAnalysisStore = create<AnalysisState>((set, get) => ({
       metadata: null,
       error: null,
       options: DEFAULT_OPTIONS,
+      handoff: null,
     });
   },
 

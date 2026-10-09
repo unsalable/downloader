@@ -8,8 +8,9 @@ import { cn } from '@/lib/cn';
 import { formatCount, formatDuration, formatUploadDate } from '@/lib/format';
 import type { MediaMetadata } from '@/types';
 
-/** A fact laid over the thumbnail: the running time, "live", the item count. */
-const CHIP =
+/** A fact laid over the thumbnail: the running time, "live", the item count.
+ *  Also the running time on a tile of the grid a carousel is picked from. */
+export const CHIP =
   'absolute flex items-center gap-1 rounded-md bg-black/70 px-1.5 py-0.5 text-[12px] font-medium text-white';
 
 export function MediaPreviewCard({ metadata }: { metadata: MediaMetadata }) {

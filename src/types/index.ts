@@ -97,6 +97,8 @@ export interface MediaMetadata {
   warnings: string[];
   /** The songs of an album or playlist, to list and pick from. Empty otherwise. */
   tracks: TrackSummary[];
+  /** The items of a carousel or gallery, to show and pick from. Empty otherwise. */
+  items: GalleryItem[];
 }
 
 /** One song of an album or playlist. */
@@ -105,6 +107,16 @@ export interface TrackSummary {
   position: number;
   title: string;
   artists: string;
+  durationSec: number | null;
+}
+
+/** One item of a carousel or gallery, for the grid it is picked from. */
+export interface GalleryItem {
+  /** 1-based; the position a download request names it by. */
+  position: number;
+  /** 'image' or 'video' ('audio' in a set of songs); never 'gallery'. */
+  kind: MediaKind;
+  thumbnailUrl: string | null;
   durationSec: number | null;
 }
 
@@ -278,6 +290,13 @@ export interface HistoryEntry {
   status: 'completed' | 'failed';
   request: DownloadRequest | null;
 }
+
+/**
+ * How far back clearing the history reaches: the last 24 hours, the last 7
+ * days, or all of it. Rolling windows, which the backend measures on the clock
+ * that stamped each entry (see `HistoryRange` in model.rs).
+ */
+export type HistoryRange = 'day' | 'week' | 'all';
 
 // -- conversion ------------------------------------------------------------
 
@@ -708,7 +727,19 @@ export interface BridgeStatus {
   extensionVersion: string | null;
   /** Seconds since the epoch, not milliseconds: it comes from the host. */
   lastPushAt: number | null;
+  /** YouTube's session; the account hint above is YouTube's too. */
   session: BridgeSessionState;
+  /** TikTok's, lent by the extension's own switch for it. */
+  tiktokSession: BridgeSessionState;
+  /** Seconds since the epoch, as `lastPushAt`. */
+  tiktokLastPushAt: number | null;
+  /**
+   * The one other site the extension's İndir last lent a sign-in for: fresh
+   * for an hour after the press, then none. Never stale.
+   */
+  otherSession: BridgeSessionState;
+  /** Which site that is (`instagram.com`), while it is fresh. */
+  otherDomain: string | null;
   hostPath: string | null;
   appVersion: string;
   extensionId: string;

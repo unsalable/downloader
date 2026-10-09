@@ -418,9 +418,16 @@ mod tests {
         let gallery = photos(parse_post(&post(media.clone()), "https://x.com/a/status/1", None));
         assert_eq!(gallery.entry_count, Some(3));
         assert_eq!(gallery.entries[2].formats[0].url.as_deref(), Some("https://pbs.twimg.com/media/C?format=jpg&name=orig"));
+        // Drawn in the grid at the size X itself shows a post's photos at.
+        assert_eq!(gallery.items.len(), 3);
+        assert!(gallery
+            .items
+            .iter()
+            .all(|item| item.thumbnail_url.as_deref().is_some_and(|url| url.ends_with("name=medium"))));
 
         let second = photos(parse_post(&post(media), "https://x.com/a/status/1/photo/2", Some(2)));
         assert!(second.entries.is_empty());
+        assert!(second.items.is_empty());
         assert_eq!(second.formats[0].url.as_deref(), Some("https://pbs.twimg.com/media/B?format=jpg&name=orig"));
         assert_eq!(second.canonical_url, "https://x.com/TheEllenShow/status/440322224407314432/photo/2");
     }

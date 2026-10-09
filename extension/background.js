@@ -2,8 +2,12 @@
 //
 // - It notices the videos and sounds the open tabs play, so the popup can list
 //   them, and hands the one the user picks to the app.
-// - It lends the app this profile's YouTube session, when the user has turned
-//   that on, so members-only videos the user pays for can be downloaded.
+// - It lends the app this profile's YouTube and TikTok sessions, each only
+//   while the user has turned its switch on, so the members-only videos the
+//   user pays for and the age-restricted posts their account may see can be
+//   downloaded. With a third switch, "Other sites", it lends one more: the
+//   sign-in of the site a press of İndir is on, read at that press and for
+//   that press only.
 //
 // Everything that leaves the browser goes through one-shot `sendNativeMessage`
 // to the app's own helper on this computer, rather than a long-lived
@@ -40,6 +44,17 @@ import {
   toPayload,
   tooSmall,
 } from './media.js';
+import {
+  OTHER,
+  SITES,
+  onTikTok,
+  otherSiteOf,
+  pushHead,
+  signedIn,
+  siteOfDomain,
+  siteOfUrl,
+  worthPushing,
+} from './sessions.js';
 
 const HOST_NAME = 'com.universaldownloader.bridge';
 const WIRE_VERSION = 1;
@@ -56,6 +71,8 @@ const DISABLED_ASK_MS = 10 * 60 * 1000;
 
 const REFRESH_ALARM = 'refresh';
 const OFF_KEY = 'linkOff';
+const TIKTOK_KEY = 'tiktokOn';
+const OTHER_KEY = 'otherOn';
 const LINK_KEY = 'link';
 const TAB_PREFIX = 'tab:';
 
@@ -66,13 +83,6 @@ const COLLECT_TIMEOUT_MS = 1500;
 const MANIFEST_TIMEOUT_MS = 2500;
 const MANIFEST_MAX_BYTES = 256 * 1024;
 const MANIFESTS_PER_SCAN = 16;
-
-// A jar can be full of cookies and still belong to a signed-out browser:
-// YouTube sets visitor and preference cookies for everyone. These are the ones
-// that carry a sign-in, so their presence is what `signedIn` means. YouTube
-// keeps its own copies of the SID family on youtube.com, which is the only
-// domain this extension reads.
-const SESSION_COOKIE_NAMES = new Set(['SID', '__Secure-1PSID', '__Secure-3PSID', 'LOGIN_INFO']);
 
 // Cached as a promise rather than a value: two events can arrive before the
 // first read of storage resolves, and two callers each minting a UUID would
@@ -175,11 +185,13 @@ function sendNative(request) {
 //   sent; but the app can be switched back on without this extension hearing
 //   of it, so it is asked again, with a status request that carries none.
 // - 'unbound': another profile holds the binding, or none does. Only Claim
-//   binds, and Claim is the popup's switch, so there is nothing to ask until
-//   someone presses it.
+//   binds, and Claim is a session switch in the popup, so there is nothing to
+//   ask until someone presses one.
 //
-// Without this a profile that never turned the session on would launch the
-// helper after every YouTube cookie change, only to be refused each time.
+// The binding is one for both sites: whichever switch claimed it, the other
+// lends through the same one. Without this a profile that never turned a
+// session on would launch the helper after every YouTube cookie change, only
+// to be refused each time.
 function linkOf(result) {
   if (result.ok && typeof result.status?.bound === 'boolean') {
     if (!result.status.bound) return 'unbound';
@@ -206,7 +218,7 @@ async function callHost(request) {
   return result;
 }
 
-// Whether the user turned the session off from the popup.
+// Whether the user turned the YouTube session off from the popup.
 //
 // The app forgetting the session is not enough on its own: this extension
 // would keep offering one on every cookie change, and an off switch the user
@@ -219,6 +231,69 @@ async function isOff() {
 
 function setOff(off) {
   return chrome.storage.local.set({ [OFF_KEY]: off });
+}
+
+// Whether the user turned the TikTok session on, kept for the same reason.
+// Stored the other way up from YouTube's, because the default is the other way
+// up: a profile updating from 1.0.4 goes on exactly as it was -- lending
+// YouTube's sign-in if it did, and TikTok's not at all until someone presses
+// the switch for it.
+async function isTiktokOn() {
+  const stored = await chrome.storage.local.get(TIKTOK_KEY);
+  return stored[TIKTOK_KEY] === true;
+}
+
+function setTiktokOn(on) {
+  return chrome.storage.local.set({ [TIKTOK_KEY]: on });
+}
+
+// Whether the user turned the "Other sites" switch on. Off until someone
+// does, as TikTok's is.
+async function isOtherOn() {
+  const stored = await chrome.storage.local.get(OTHER_KEY);
+  return stored[OTHER_KEY] === true;
+}
+
+function setOtherOn(on) {
+  return chrome.storage.local.set({ [OTHER_KEY]: on });
+}
+
+// Any switch, as the rest of this file asks about it. YouTube's being "on"
+// means only that the user has not turned it off: whether it lends anything
+// still depends on this profile holding the binding, as it always did.
+async function isOn(site) {
+  if (site === 'youtube') return !(await isOff());
+  return site === OTHER ? isOtherOn() : isTiktokOn();
+}
+
+function setOn(site, on) {
+  if (site === 'youtube') return setOff(!on);
+  return site === OTHER ? setOtherOn(on) : setTiktokOn(on);
+}
+
+// Every switch the popup draws: the sites of SITES and the other sites' slot.
+const SWITCHES = [...Object.keys(SITES), OTHER];
+
+// The site a message from the popup is about. Anything but a name this file
+// knows is YouTube's, the only switch there was before.
+function siteIn(message) {
+  return typeof message?.site === 'string' && SWITCHES.includes(message.site)
+    ? message.site
+    : 'youtube';
+}
+
+// Whether the host stores `site`'s session. One older than the second site
+// says nothing about sites, and stores YouTube's alone.
+function hostKeeps(status, site) {
+  return site === 'youtube' || (Array.isArray(status?.sites) && status.sites.includes(site));
+}
+
+async function storedLink() {
+  try {
+    return (await chrome.storage.local.get(LINK_KEY))[LINK_KEY];
+  } catch {
+    return undefined;
+  }
 }
 
 function wireCookie(cookie) {
@@ -238,43 +313,83 @@ function wireCookie(cookie) {
   return out;
 }
 
-// youtube.com and nothing else. The extension has access to every site so it
-// can see what tabs play, but the session it lends is YouTube's alone.
-async function readJar() {
-  const jar = await chrome.cookies.getAll({ domain: 'youtube.com' });
+// That site's domain and nothing else. The extension has access to every site
+// so it can see what tabs play, but a session it lends is read from the one
+// domain that session lives on -- youtube.com for YouTube, tiktok.com for
+// TikTok -- and only ever while that site's switch is on.
+async function readJar(site) {
+  const jar = await chrome.cookies.getAll({ domain: SITES[site].domain });
   const cookies = jar.map(wireCookie);
-  const signedIn = cookies.some(
-    (cookie) => SESSION_COOKIE_NAMES.has(cookie.name) && cookie.value !== '',
-  );
-  return { cookies, signedIn };
+  return { cookies, signedIn: signedIn(site, cookies) };
 }
 
-async function push() {
-  const jar = await readJar();
-  return callHost({
-    type: 'push',
+// A signed-in answer for the popup's line, which is only asked for while the
+// switch it describes is on. A profile whose cookies cannot be read is, for
+// this purpose, signed out.
+async function isSignedIn(site) {
+  try {
+    return (await readJar(site)).signedIn;
+  } catch {
+    return false;
+  }
+}
+
+async function sendJar(site, jar) {
+  const result = await callHost({
+    ...pushHead(site),
+    // Only the other sites' slot names its site, and only when it has one:
+    // the empty jar that lets go of it needs no name.
+    ...(typeof jar.domain === 'string' ? { domain: jar.domain } : {}),
     ...(await peer()),
     signedIn: jar.signedIn,
     capturedAt: Math.floor(Date.now() / 1000),
     cookies: jar.cookies,
   });
+  // A host that cannot read `pushSite` is an app from before the second site,
+  // or one put back to it. It will answer the same to every push, and each one
+  // starts it, so the switch goes off rather than ask again on every sign-in
+  // cookie TikTok writes; turning it on again asks the app first.
+  if (!result.ok && result.code === 'malformed' && pushHead(site).type === 'pushSite') {
+    await setOn(site, false);
+  }
+  return result;
+}
+
+async function push(site) {
+  return sendJar(site, await readJar(site));
+}
+
+// Tell the app to let go of one site's session and keep the binding: a push
+// that says this profile is signed out of the site, which the host answers by
+// deleting that site's jar alone. It is what turning one switch off does while
+// the other is still on -- Forget would unbind the profile and take both.
+function drop(site) {
+  return sendJar(site, { cookies: [], signedIn: false });
 }
 
 let disabledAskedAt = 0;
 
 // The pushes nobody pressed a button for: a cookie change, the daily alarm,
-// the browser starting. Each needs the switch on -- this profile bound, not
-// turned off here and not turned off in the app -- because cookies leave the
-// browser only while it is. A profile whose state is not known for certain
-// (one connected under 1.0.2, or one the app has switched off) is asked first,
-// with a status request that carries no cookies.
+// the browser starting. Each needs a switch on -- this profile bound, that
+// site not turned off here and the link not turned off in the app -- because
+// cookies leave the browser only while it is. A profile whose state is not
+// known for certain (one connected under 1.0.2, or one the app has switched
+// off) is asked first, with a status request that carries no cookies.
+//
+// `only` narrows it to the sites whose cookies changed. Which sites are on is
+// asked first and on its own: a profile with YouTube's switch off may still be
+// lending TikTok's, and a profile with neither on costs no helper at all.
 //
 // The first push after the app is switched off cannot be avoided: nothing
 // tells this extension until the host refuses it, which it does without
 // keeping anything. Every push after that is held back here.
-async function backgroundPush({ fromCookie = false } = {}) {
-  if (await isOff()) return;
-  const link = (await chrome.storage.local.get(LINK_KEY))[LINK_KEY];
+async function backgroundPush({ fromCookie = false, only = null } = {}) {
+  const sites = [];
+  for (const site of Object.keys(SITES)) {
+    if ((only === null || only.has(site)) && (await isOn(site))) sites.push(site);
+  }
+  if (sites.length === 0) return;
+  const link = await storedLink();
   if (link === 'unbound') return;
   if (link !== 'bound') {
     if (link === 'disabled' && fromCookie) {
@@ -286,26 +401,27 @@ async function backgroundPush({ fromCookie = false } = {}) {
     const asked = await callHost({ type: 'status', ...(await peer()) });
     if (!asked.ok || !asked.status?.bound || asked.status.enabled !== true) return;
   }
-  await push();
+  for (const site of sites) await push(site);
 }
 
 let pushTimer = null;
+const pushesDue = new Set();
 
 // A timer does not hold the service worker open, so a torn-down worker can eat
 // this one. Three seconds nearly always lands inside the grace period Chrome
 // gives a worker after an event, and when it does not, the next cookie change or
-// the daily alarm carries the same jar -- nothing is lost, only delayed.
-function schedulePush() {
+// the daily alarm carries the same jar -- nothing is lost, only delayed. The
+// sites whose cookies changed in the meantime are gathered, so a burst on one
+// site does not send the other's jar along with it.
+function schedulePush(site) {
+  pushesDue.add(site);
   if (pushTimer !== null) clearTimeout(pushTimer);
   pushTimer = setTimeout(() => {
     pushTimer = null;
-    void backgroundPush({ fromCookie: true });
+    const only = new Set(pushesDue);
+    pushesDue.clear();
+    void backgroundPush({ fromCookie: true, only });
   }, PUSH_DEBOUNCE_MS);
-}
-
-function isYouTubeDomain(domain) {
-  const host = domain.replace(/^\./, '').toLowerCase();
-  return host === 'youtube.com' || host.endsWith('.youtube.com');
 }
 
 function ensureAlarm() {
@@ -662,46 +778,89 @@ async function scan(message) {
   return { ok: true, url, protectedService: null, rows: list };
 }
 
-// The popup draws the switch from these three facts, so every answer to it
-// carries all three. `linkOff` is the one the old popup never got, which is
-// how a session the user had turned off came to be described as "another
-// profile is connected".
-// `signedIn` is only looked up while the switch is on, the one state whose
-// line depends on it: with the switch off -- here or in the app -- the
-// extension does not read cookies at all, not even to count them.
+// The popup draws every switch from these facts, so every answer to it
+// carries all of them, whichever switch was pressed: one press can move the
+// others -- a claim empties every jar, the app's own switch covers them all -- and
+// a switch drawn only from answers about itself would show what was true two
+// presses ago. `linkOff` is the one the old popup never got, which is how a
+// session the user had turned off came to be described as "another profile is
+// connected".
+//
+// `signedIn` and `tiktokSignedIn` are only looked up while their switch is on,
+// the one state whose line depends on them: with a switch off -- here or in
+// the app -- the extension does not read that site's cookies at all, not even
+// to count them. The other sites' switch has no such line: which site it
+// would read is the page's to say, and it reads nothing until İndir.
 async function linkReply(result) {
   const linkOff = await isOff();
-  let signedIn = false;
-  if (result.ok && result.status?.bound && result.status.enabled === true && !linkOff) {
-    try {
-      signedIn = (await readJar()).signedIn;
-    } catch {
-      // A profile whose cookies cannot be read is, for this purpose, signed out.
-    }
-  }
-  return { result, signedIn, linkOff };
+  const tiktokOn = await isTiktokOn();
+  const lending = result.ok && result.status?.bound === true && result.status.enabled === true;
+  return {
+    result,
+    signedIn: lending && !linkOff ? await isSignedIn('youtube') : false,
+    linkOff,
+    tiktokOn,
+    tiktokSignedIn:
+      lending && tiktokOn && hostKeeps(result.status, 'tiktok') ? await isSignedIn('tiktok') : false,
+    otherOn: await isOtherOn(),
+  };
 }
 
 async function status() {
   let result = await callHost({ type: 'status', ...(await peer()) });
   if (result.ok && result.status?.bound) {
-    if (await isOff()) {
+    // An app put back to a version that keeps YouTube's session alone cannot
+    // take TikTok's. Its switch goes off now, as the first push it refused
+    // would turn it, rather than stay drawn on over a session nobody keeps.
+    if (!hostKeeps(result.status, 'tiktok') && (await isTiktokOn())) await setTiktokOn(false);
+    if (!hostKeeps(result.status, OTHER) && (await isOtherOn())) await setOtherOn(false);
+    const on = {};
+    for (const site of SWITCHES) on[site] = await isOn(site);
+    if (!Object.values(on).some(Boolean)) {
       // Turned off while the app could not be reached: finish the job now
       // that it can, rather than leave a session the user asked to drop.
       const forgotten = await callHost({ type: 'forget', ...(await peer()) });
       if (forgotten.ok) result = forgotten;
     } else if (result.status.enabled) {
       // Status carries nothing and changes nothing. Following it with a push
-      // when this profile is the bound one is what heals a link that has gone
-      // quiet, every time the popup opens.
-      const pushed = await push();
-      if (pushed.ok) result = pushed;
+      // for each switch that is on, when this profile is the bound one, is
+      // what heals a link that has gone quiet, every time the popup opens. A
+      // switch that is off while the app still holds its site's session was
+      // turned off when the app could not be reached; that session goes now,
+      // and the other site's stays.
+      //
+      // The other sites' slot is never pushed from here -- its cookies are
+      // read only when İndir is pressed -- but a session it lent is dropped
+      // as the others' are once its switch is off.
+      const held = {
+        youtube: result.status.session,
+        tiktok: result.status.tiktokSession,
+        [OTHER]: result.status.otherSession,
+      };
+      for (const site of SWITCHES) {
+        let answer = null;
+        if (on[site] && site !== OTHER) answer = await push(site);
+        else if (!on[site] && (held[site] ?? 'none') !== 'none') answer = await drop(site);
+        if (answer?.ok) result = answer;
+      }
     }
   }
   return linkReply(result);
 }
 
-async function connect() {
+async function connect(message) {
+  const site = siteIn(message);
+  return site === 'youtube' ? connectYouTube() : connectSite(site);
+}
+
+// YouTube's switch, as it has worked since there was one.
+async function connectYouTube() {
+  // Whether the claim below moves the binding here, from the host's last
+  // answer -- the popup asked for one as it opened. A claim that moves it
+  // empties every jar the binding held, and this press was for YouTube: a
+  // TikTok switch left on from before another profile took over does not come
+  // back on with it, just as claiming for TikTok leaves YouTube off.
+  const wasBound = (await storedLink()) === 'bound';
   // Clearing the off flag first, so nothing of ours refuses the push below.
   // Claim before the push: a push from an unbound profile is refused, so
   // sending the jar before the binding exists would be handing over cookies
@@ -709,16 +868,79 @@ async function connect() {
   await setOff(false);
   const claimed = await callHost({ type: 'claim', ...(await peer()) });
   if (!claimed.ok) return linkReply(claimed);
-  const pushed = await push();
+  if (!wasBound) {
+    await setTiktokOn(false);
+    await setOtherOn(false);
+  }
+  const pushed = await push('youtube');
   return linkReply(pushed.ok ? pushed : claimed);
 }
 
-async function forget() {
-  const result = await callHost({ type: 'forget', ...(await peer()) });
-  // Set even when the app could not be reached: the user asked for this to
-  // stop, and an app that is closed or gone is no reason to keep sending.
-  await setOff(true);
+// Any other site's switch. The app is asked first, because its answer decides
+// what the press alone cannot: whether this app keeps the site's session at
+// all, whether its own switch is on, and whether this profile already holds
+// the binding or has to claim it.
+async function connectSite(site) {
+  const asked = await callHost({ type: 'status', ...(await peer()) });
+  // An app from before the site, an app switched off, an app not there: the
+  // popup's line says which, and the switch stays off rather than wait on
+  // pushes that would be refused.
+  if (!asked.ok || asked.status?.enabled !== true || !hostKeeps(asked.status, site)) {
+    return linkReply(asked);
+  }
+  await setOn(site, true);
+  let answer = asked;
+  if (!asked.status.bound) {
+    // The press was for one site, so taking the binding for it never starts
+    // lending YouTube. When another profile holds the binding, the claim takes
+    // it, and the app deletes every session that profile lent -- YouTube's
+    // too, since the binding is one -- which is why the popup says another
+    // profile is connected before the switch is pressed.
+    const wasOff = await isOff();
+    await setOff(true);
+    answer = await callHost({ type: 'claim', ...(await peer()) });
+    if (!answer.ok) {
+      await setOn(site, false);
+      await setOff(wasOff);
+      return linkReply(answer);
+    }
+    // Nor any other switch left on from before another profile took over:
+    // the claim emptied every jar, and only the one pressed comes back on.
+    for (const other of SWITCHES) {
+      if (other !== site && other !== 'youtube') await setOn(other, false);
+    }
+  }
+  // Turning the other sites' switch on sends nothing: there is no site yet.
+  // Its cookies are read when İndir is pressed, for the page it is pressed on.
+  if (site === OTHER) return linkReply(answer);
+  const pushed = await push(site);
+  return linkReply(pushed.ok ? pushed : answer);
+}
+
+async function forget(message) {
+  const site = siteIn(message);
+  // Set before the app is asked, and even when it cannot be reached: the user
+  // asked for this to stop, and an app that is closed or gone is no reason to
+  // keep sending. The next popup finishes whatever the app missed.
+  await setOn(site, false);
+  let othersOn = false;
+  for (const other of SWITCHES) {
+    if (other !== site && (await isOn(other))) othersOn = true;
+  }
+  // With another switch still on the binding stays, and only this site's
+  // session goes. With all of them off nothing is left to lend, and Forget
+  // lets go of the binding and every session, as turning the one switch off
+  // always did.
+  const result = othersOn ? await drop(site) : await callHost({ type: 'forget', ...(await peer()) });
   return linkReply(result);
+}
+
+// Whether pressing İndir on an address of `site`'s would lend the app that
+// site's session: its switch on, this profile the bound one, and the browser
+// signed in there. The cookies are only read once the switch is known to be on.
+async function lends(site) {
+  if (!(await isOn(site)) || (await storedLink()) !== 'bound') return false;
+  return isSignedIn(site);
 }
 
 // Hand one row to the app. The popup sends back the row it was given; only
@@ -727,7 +949,52 @@ async function forget() {
 async function download(message) {
   const fields = toPayload(message.payload);
   if (!fields) return { result: { ok: false, code: 'malformed', message: '' } };
+  await lendFor(fields.url);
+  await lendOther(fields.pageUrl ?? fields.url);
   return { result: await callHost({ type: 'download', ...(await peer()), ...fields }) };
+}
+
+// A handoff never carries cookies: the host leaves it in the app's inbox as
+// plain JSON, where a session would sit unencrypted, and a session riding on
+// it would reach the app whatever the switch said. What happens instead, for a
+// TikTok address with the switch on, is that the jar as it is this moment goes
+// just before it. TikTok's is only sent again when the sign-in itself changes,
+// so the copy the app holds can be days behind the cookies the page has been
+// rewriting since; the app leans on the stored copy the moment TikTok asks the
+// download for a sign-in. YouTube's is sent on every change already. Best
+// effort: a push that fails holds nothing back, and the download goes ahead.
+//
+// By the address the app will download, not the page's, because that is what
+// the app picks a session by: a TikTok post embedded elsewhere is not lent one.
+async function lendFor(url) {
+  if (!onTikTok(url) || (await storedLink()) !== 'bound' || !(await isTiktokOn())) return;
+  try {
+    await push('tiktok');
+  } catch {
+    // Cookies that cannot be read this time are what the stored copy is for.
+  }
+}
+
+// The other sites' switch at work, and the only place it reads a cookie: on
+// İndir, for the site of the page İndir was pressed on -- the tab, not the
+// address of the stream, which is often some CDN's -- and that site's
+// registrable domain alone. The jar goes just before the download, as a
+// `pushSite` naming the site, and the app keeps it an hour. A browser signed
+// out of the site still sends one, empty, so the app lets go of whatever
+// site it held before rather than lend that to this download.
+//
+// The app lends it by that page or by the address, and never to YouTube or
+// TikTok, whose sessions are their own switches'. Best effort, like TikTok's:
+// a push that fails holds nothing back.
+async function lendOther(pageUrl) {
+  const domain = otherSiteOf(pageUrl);
+  if (domain === null || (await storedLink()) !== 'bound' || !(await isOtherOn())) return;
+  try {
+    const cookies = (await chrome.cookies.getAll({ domain })).map(wireCookie);
+    await sendJar(OTHER, { domain, cookies, signedIn: cookies.length > 0 });
+  } catch {
+    // The download still goes ahead, without the sign-in.
+  }
 }
 
 // What the app would make of a row: the title it would save under, its own
@@ -738,9 +1005,10 @@ async function download(message) {
 // Asked for when the popup shows a row, which is why the answer is kept: the
 // helper runs the download engine to find out, which takes seconds, and the
 // same row is usually shown again the next time the popup opens. Only answers
-// that asking again would not change are kept -- a preview, or "protected" --
-// and none for longer than PROBE_TTL_MS, after which a signed address may have
-// expired and a live stream ended.
+// that asking again would not change are kept -- a preview, "protected", or a
+// post shown only to a signed-in viewer -- and none for longer than
+// PROBE_TTL_MS, after which a signed address may have expired and a live
+// stream ended.
 const PROBE_KEY = 'probes';
 const PROBE_TTL_MS = 15 * 60 * 1000;
 const PROBE_KEEP = 40;
@@ -798,6 +1066,18 @@ function keepProbe(key, answer) {
 async function probe(message) {
   const fields = toPayload(message.payload);
   if (!fields) return { preview: null, protected: false };
+  const answer = await probeAnswer(fields);
+  if (!answer?.signIn) return answer;
+  // A probe never borrows a session, so a post behind a sign-in is answered as
+  // one whether or not İndir would lend it. Whether it would is the switch's to
+  // say, and the switch can move between two opens of the popup, so it is
+  // looked up for every answer rather than kept with one -- by the address, as
+  // the download will pick its session.
+  const site = siteOfUrl(fields.url);
+  return { ...answer, withSession: site !== null && (await lends(site)) };
+}
+
+async function probeAnswer(fields) {
   const key = `${fields.kind}:${fields.url}`;
 
   const kept = (await readProbes())[key];
@@ -810,8 +1090,9 @@ async function probe(message) {
       const answer = {
         preview: result.ok ? previewOf(result.preview) : null,
         protected: !result.ok && result.code === 'protected',
+        signIn: !result.ok && result.code === 'signIn',
       };
-      if (answer.preview || answer.protected) await keepProbe(key, answer);
+      if (answer.preview || answer.protected || answer.signIn) await keepProbe(key, answer);
       return answer;
     })().finally(() => probing.delete(key));
     probing.set(key, asking);
@@ -878,7 +1159,7 @@ chrome.runtime.onInstalled.addListener((details) => {
   // on a fresh install -- an update is not a moment anyone asked to be taught.
   if (details.reason === 'install') {
     // A new install is a new profile id that no app has bound, so the cookie
-    // listener has nothing to ask about until the switch is turned on.
+    // listener has nothing to ask about until a switch is turned on.
     void chrome.storage.local.set({ [LINK_KEY]: 'unbound' });
     chrome.tabs.create({ url: chrome.runtime.getURL('welcome.html') });
   } else if (details.reason === 'update') {
@@ -899,11 +1180,14 @@ chrome.alarms.onAlarm.addListener((alarm) => {
 });
 
 // With access to every site this fires for every cookie the browser writes, so
-// the test is the first thing it does: only YouTube's own cookies are a reason
-// to send the session again.
+// the test is the first thing it does: only the cookies of a site whose session
+// can be lent are a reason to send it again, and of TikTok's only the sign-in's
+// own. Whether that site's switch is on is the push's to ask, once the burst a
+// sign-in writes has settled.
 chrome.cookies.onChanged.addListener((change) => {
-  if (!isYouTubeDomain(change.cookie.domain)) return;
-  schedulePush();
+  const site = siteOfDomain(change.cookie.domain);
+  if (site === null || !worthPushing(site, change.cookie.name)) return;
+  schedulePush(site);
 });
 
 // Only this extension's own pages may ask for anything, and only by name. A

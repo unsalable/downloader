@@ -419,6 +419,7 @@ fn pending_song(tags: MusicTags) -> MediaMetadata {
         warnings: Vec::new(),
         entries: Vec::new(),
         tracks: Vec::new(),
+        items: Vec::new(),
         music: Some(tags),
     }
 }

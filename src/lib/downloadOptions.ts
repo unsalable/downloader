@@ -189,28 +189,129 @@ export function describeStream(format: MediaFormat | undefined): string | undefi
   return parts.join(' · ');
 }
 
-export function videoStreamOptions(metadata: MediaMetadata): DropdownOption<string>[] {
-  return metadata.formats
-    .filter((format) => format.hasVideo)
-    .map((format) => ({
+/**
+ * The picture menu of the advanced panel. `chosen` is the picture the plan
+ * took (or the one picked by hand); see `onePerRendition`.
+ */
+export function videoStreamOptions(
+  metadata: MediaMetadata,
+  chosen?: string | null,
+): DropdownOption<string>[] {
+  return onePerRendition(
+    metadata.formats.filter((format) => format.hasVideo),
+    (format) => ({
       value: format.id,
-      label: `${format.qualityLabel}${format.hasAudio ? ' + audio' : ''}`,
+      label: format.hasAudio
+        ? translate('options.withSound', { quality: format.qualityLabel })
+        : format.qualityLabel,
       description: describeStream(format),
       meta: sizeLabel(format),
-    }));
+    }),
+    chosen,
+  );
 }
 
-export function audioStreamOptions(metadata: MediaMetadata): DropdownOption<string>[] {
-  const options = metadata.formats
-    .filter((format) => format.kind === 'audio')
-    .map((format) => ({
-      value: format.id,
-      label: format.qualityLabel,
-      description: describeStream(format),
-      meta: sizeLabel(format),
-    }));
+/**
+ * The sound menu of the advanced panel. `chosen` is the sound the plan took
+ * (or the one picked by hand), so that the copy it names is the copy listed:
+ * the menu otherwise has nothing to show for it but a bare "--".
+ */
+export function audioStreamOptions(
+  metadata: MediaMetadata,
+  chosen?: string | null,
+): DropdownOption<string>[] {
+  const apart = metadata.formats.filter((format) => format.kind === 'audio');
+  const options =
+    apart.length > 0
+      ? apart.map((format) => ({
+          value: format.id,
+          label: format.qualityLabel,
+          description: describeStream(format),
+          meta: sizeLabel(format),
+        }))
+      : borrowedSoundOptions(metadata, chosen);
 
   return [{ value: '', label: translate('options.none') }, ...options];
+}
+
+/**
+ * The sound of each rendition that carries one, for a source that keeps no
+ * sound apart.
+ *
+ * TikTok publishes its sharpest picture without sound and its sound only
+ * inside another rendition, and the plan takes it from there (see
+ * `sound_donor` in plan.rs); without these the menu shows a bare "--" for
+ * that choice, and has nothing to offer someone who picks the picture by
+ * hand. Only renditions that name their sound codec, as the plan requires,
+ * and a stamped one only when nothing clean has sound -- but what the plan
+ * took is always listed, and once per rendition (see `onePerRendition`).
+ *
+ * Nothing at all where every picture brings its own sound and none was taken
+ * out of one: lent to a picture that already has sound, it is dropped, and an
+ * entry for it would be a choice that changes nothing.
+ */
+function borrowedSoundOptions(
+  metadata: MediaMetadata,
+  chosen: string | null | undefined,
+): DropdownOption<string>[] {
+  const muxed = metadata.formats.filter((format) => format.kind === 'muxed' && format.hasAudio);
+  const picked = muxed.find((format) => format.id === chosen);
+  if (!picked && !metadata.formats.some((format) => format.kind === 'video')) return [];
+
+  const named = muxed.filter((format) => format.acodec != null && format.acodec !== 'none');
+  const clean = named.filter((format) => format.watermarked !== true);
+  const pool = [...(clean.length > 0 ? clean : named)];
+  if (picked && !pool.includes(picked)) pool.push(picked);
+
+  return onePerRendition(
+    pool,
+    (format) => ({
+      value: format.id,
+      label: translate('options.soundOf', { quality: format.qualityLabel }),
+      description: describeSound(format),
+      meta: sizeLabel(format),
+    }),
+    chosen,
+  );
+}
+
+/**
+ * One entry for each choice that reads differently. TikTok lists every
+ * rendition twice, once per CDN, and two entries that say the same thing are
+ * one choice to the person reading them. The copy kept is `chosen` when it is
+ * one of them, so the menu shows what the plan took rather than a bare "--";
+ * otherwise the last listed, which is the copy the plan takes itself.
+ */
+function onePerRendition(
+  formats: MediaFormat[],
+  toOption: (format: MediaFormat) => DropdownOption<string>,
+  chosen: string | null | undefined,
+): DropdownOption<string>[] {
+  const kept = new Map<string, DropdownOption<string>>();
+  for (const format of formats) {
+    const option = toOption(format);
+    // What the entry says, and what it carries without saying: two entries
+    // that differ only in the language of their sound are still two choices.
+    const key = [
+      option.label,
+      option.description,
+      option.meta,
+      format.language,
+      format.note,
+      format.protocol,
+    ].join('|');
+    const held = kept.get(key);
+    if (held == null || held.value !== chosen) kept.set(key, option);
+  }
+  return [...kept.values()];
+}
+
+/** "AAC · 128 kbps": the sound of a rendition, without its picture. */
+function describeSound(format: MediaFormat): string | undefined {
+  const parts = [prettyCodec(format.acodec), formatBitrate(format.abr)].filter(
+    (part): part is string => part != null,
+  );
+  return parts.length > 0 ? parts.join(' · ') : undefined;
 }
 
 function sizeLabel(format: MediaFormat): string | undefined {

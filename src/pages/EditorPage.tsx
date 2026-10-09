@@ -40,6 +40,7 @@ import { InlineNotice } from '@/components/ui/InlineNotice';
 import { Modal } from '@/components/ui/Modal';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Progress } from '@/components/ui/Progress';
+import { useFileActions } from '@/hooks/useFileActions';
 import { errorMessage, useTranslation } from '@/i18n';
 import { cn } from '@/lib/cn';
 import { VIDEO_EXTENSIONS } from '@/lib/editor/files';
@@ -47,6 +48,7 @@ import { cutAt, nextKeptPosition } from '@/lib/editor/segments';
 import { ZOOM_STEP } from '@/lib/editor/zoom';
 import { COLLAPSE, EDITOR, FADE, T } from '@/lib/motion';
 import { formatMbps } from '@/lib/editor/bitrate';
+import { PROBLEM_TEXT } from '@/lib/fileProblem';
 import {
   basename,
   formatBytes,
@@ -54,7 +56,7 @@ import {
   formatTimecode,
   prettyCodec,
 } from '@/lib/format';
-import { IS_MOBILE, openFile, revealFile } from '@/lib/platform';
+import { IS_MOBILE } from '@/lib/platform';
 import * as ipc from '@/services/ipc';
 import {
   selectActiveClip,
@@ -183,6 +185,10 @@ export function EditorPage({ settings, onBackRef }: EditorPageProps) {
   const canUndo = useEditorStore((state) => selectHistory(state).past.length > 0);
   const canRedo = useEditorStore((state) => selectHistory(state).future.length > 0);
   const anyHistory = useEditorStore(selectAnyHistory);
+  // The finished export, opened by whatever the system hands it to -- and on a
+  // phone there may be nothing that will take it. That is said beside the
+  // button, and forgotten when the next export replaces the file.
+  const result = useFileActions(job.status === 'completed' ? job.outputPath : null);
 
   const openPath = useEditorStore((state) => state.open);
   const activate = useEditorStore((state) => state.activate);
@@ -233,7 +239,6 @@ export function EditorPage({ settings, onBackRef }: EditorPageProps) {
   const emptyRef = useRef<HTMLDivElement>(null);
   const [emptyScrolled, setEmptyScrolled] = useState(0);
   const [discardOpen, setDiscardOpen] = useState(false);
-  const [resultError, setResultError] = useState<string | null>(null);
   // Whether the preview has to stop at 100 %, which the inspector then says.
   const [previewCapped, setPreviewCapped] = useState(false);
 
@@ -774,21 +779,6 @@ export function EditorPage({ settings, onBackRef }: EditorPageProps) {
     setInstallError(useToolsStore.getState().error ?? t('error.network.message'));
   }, [installTool, t]);
 
-  // A finished file is opened by whatever the system hands it to, and on a
-  // phone there may be nothing that will take it. That is said beside the
-  // button, and forgotten when the next export replaces the file.
-  const openResult = useCallback(async (path: string) => {
-    setResultError(null);
-    try {
-      await openFile(path);
-    } catch (caught) {
-      setResultError(ipc.toAppError(caught).message);
-    }
-  }, []);
-  useEffect(() => {
-    setResultError(null);
-  }, [job.outputPath]);
-
   const railClips = useMemo(
     () =>
       pool.map((entry) => ({
@@ -1038,17 +1028,13 @@ export function EditorPage({ settings, onBackRef }: EditorPageProps) {
                                 {basename(job.outputPath!)}
                               </p>
                             </div>
-                            <Button
-                              size="sm"
-                              variant="secondary"
-                              onClick={() => void openResult(job.outputPath!)}
-                            >
+                            <Button size="sm" variant="secondary" onClick={result.open}>
                               {t('common.open')}
                             </Button>
                           </div>
-                          {resultError && (
+                          {result.problem && (
                             <InlineNotice tone="error" className="mt-2">
-                              {resultError}
+                              {t(PROBLEM_TEXT[result.problem])}
                             </InlineNotice>
                           )}
                         </>
@@ -1482,20 +1468,24 @@ export function EditorPage({ settings, onBackRef }: EditorPageProps) {
                 <>
                   <div className="min-w-0 flex-1">
                     <p className="text-[13px] font-medium text-fg">{t('editor.exported')}</p>
-                    <p className="mt-0.5 truncate text-[12px] text-fg-muted">{job.outputPath}</p>
+                    {/* A failed press says so where the path was: the path is
+                        what it failed on, and the bar has no room for both. */}
+                    {result.problem ? (
+                      <p className="mt-0.5 truncate text-[12px] text-error">
+                        {t(PROBLEM_TEXT[result.problem])}
+                      </p>
+                    ) : (
+                      <p className="mt-0.5 truncate text-[12px] text-fg-muted">{job.outputPath}</p>
+                    )}
                   </div>
-                  <Button
-                    size="sm"
-                    variant="secondary"
-                    onClick={() => void openFile(job.outputPath!)}
-                  >
+                  <Button size="sm" variant="secondary" onClick={result.open}>
                     {t('common.open')}
                   </Button>
                   <IconButton
                     size="sm"
                     icon={<FolderOpen size={15} />}
                     label={t('downloads.showInFolder')}
-                    onClick={() => void revealFile(job.outputPath!)}
+                    onClick={result.reveal}
                   />
                 </>
               )}

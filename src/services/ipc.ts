@@ -16,12 +16,14 @@ import type {
   DownloadTask,
   Handoff,
   HistoryEntry,
+  HistoryRange,
   LanguageCode,
   LicenseEntry,
   MediaMetadata,
   MediaProbe,
   PlatformId,
   Settings,
+  SourceContext,
   ToolInstallProgress,
   ToolKind,
   ToolUpdateCheck,
@@ -105,7 +107,9 @@ export const takeHandoffs = () => invoke<Handoff[]>('take_handoffs');
 // -- analysis --------------------------------------------------------------
 
 export const detectPlatform = (url: string) => invoke<PlatformId>('detect_platform', { url });
-export const analyzeUrl = (url: string) => invoke<MediaMetadata>('analyze_url', { url });
+/** `source` is the page a handed-over link played on; null for anything else. */
+export const analyzeUrl = (url: string, source: SourceContext | null = null) =>
+  invoke<MediaMetadata>('analyze_url', { url, source });
 export const getThumbnail = (url: string) => invoke<string>('get_thumbnail', { url });
 
 /**
@@ -221,9 +225,11 @@ export const allowMediaPreview = (path: string) =>
 
 export const listHistory = (query?: string, limit?: number, offset?: number) =>
   invoke<HistoryEntry[]>('list_history', { query, limit, offset });
-export const countHistory = () => invoke<number>('count_history');
+/** How many entries `range` holds; the whole history when it is left out. */
+export const countHistory = (range?: HistoryRange) => invoke<number>('count_history', { range });
 export const deleteHistoryEntry = (id: number) => invoke<void>('delete_history_entry', { id });
-export const clearHistory = () => invoke<void>('clear_history');
+/** Take `range` out of the history -- the list only, never the files -- and say how many went. */
+export const clearHistory = (range?: HistoryRange) => invoke<number>('clear_history', { range });
 
 // -- misc ------------------------------------------------------------------
 
@@ -233,17 +239,29 @@ export const previewFilename = (template: string) =>
 export const cacheStats = () => invoke<CacheStats>('cache_stats');
 export const clearCache = () => invoke<void>('clear_cache');
 export const getDiagnostics = () => invoke<DiagnosticsSnapshot>('get_diagnostics');
-export const getLogDir = () => invoke<string>('get_log_dir');
 export const getLicenses = () => invoke<{ packages: LicenseEntry[] }>('get_licenses');
 export const sweepTempFiles = () => invoke<number>('sweep_temp_files');
+
+// -- finished files --------------------------------------------------------
+//
+// On every platform, and only through these: the page may not open a path
+// itself (see `files` in the backend), since the scope that would let it would
+// let it start any program on the disk. Those given a path reject with code
+// `fileMissing` when the file is no longer where it was saved.
+
+export const openFile = (path: string) => invoke<void>('open_file', { path });
+/** Selects it in its folder; a phone opens its Downloads view instead. */
+export const revealFile = (path: string) => invoke<void>('reveal_file', { path });
+/** The system's share sheet: Windows' own, or Android's chooser. */
+export const shareFile = (path: string) => invoke<void>('share_file', { path });
+/** The desktop's logs folder, with the current log selected in it. */
+export const openLogDir = () => invoke<void>('open_log_dir');
 
 // -- mobile platform -------------------------------------------------------
 //
 // Only called on Android (see `IS_MOBILE`); the desktop has plugin APIs for
-// the same jobs.
+// the same jobs, or has no such job.
 
-export const platformOpenFile = (path: string) => invoke<void>('platform_open_file', { path });
-export const platformOpenDownloads = () => invoke<void>('platform_open_downloads');
 /** The app's page in the system settings, where its network access is allowed. */
 export const platformOpenAppSettings = () => invoke<void>('platform_open_app_settings');
 export const platformPickMediaFiles = () => invoke<string[]>('platform_pick_media_files');

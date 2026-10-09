@@ -11,7 +11,25 @@
  *   ?update=1           pretend a newer build has been released
  *   ?handoff=1          a video from the browser extension waits at load
  *   ?unregistered=1     the browsers cannot start the bridge's helper
+ *   ?files=missing      a press on a finished file finds it gone
+ *   ?files=fail         a press on a finished file is refused otherwise
+ *   ?clear=fail         clearing the history is refused
+ *   ?tiktok=fresh       the browser lends a TikTok sign-in too (or `stale`;
+ *                       default: none)
+ *   ?other=fresh        İndir has just lent instagram.com's sign-in through
+ *                       the extension's Other sites switch (default: none)
  *   ?raf=timers         run animation frames off timers (see below)
+ *
+ * Links, pasted on Home:
+ *   open.spotify.com/...          an album of eight songs to pick from
+ *   tiktok.com/@a/photo/1         a post of five photos over a soundtrack
+ *   tiktok.com/@a/video/1         a video whose sharpest picture has no sound and
+ *                                 borrows it from the 720p rendition
+ *   instagram.com/p/x/            a carousel of two videos and two photos
+ *   ...watch?v=anime1             an episode with its original track and dubs
+ *   anything with "fail"          an analysis that fails
+ *   itzmav_ or agegate            a TikTok post that needs a sign-in, from
+ *                                 Home and as a handed-over download
  *
  * From the console, `__UD_MOCK__.emit(event, payload)` delivers a backend
  * event and `__UD_MOCK__.calls` lists every command the app has invoked.
@@ -19,11 +37,16 @@
  * does, the sample stream with `item`'s fields over it.
  * `__UD_MOCK__.picked` is what the phone's file picker returns next, and
  * `__UD_MOCK__.clipboard` the last text the app wrote to the clipboard.
+ * `__UD_MOCK__.files` is how the next open, reveal or share goes: 'ok',
+ * 'missing' or 'fail', as `?files=` sets it at load.
  */
 (() => {
   const params = new URLSearchParams(location.search);
   const platform = params.get('platform') ?? 'windows';
   const empty = params.has('empty');
+  const tiktok = ['fresh', 'stale'].includes(params.get('tiktok')) ? params.get('tiktok') : 'none';
+  // Never stale: the other-site sign-in is fresh for its hour, then gone.
+  const other = params.get('other') === 'fresh' ? 'fresh' : 'none';
   const now = Date.now();
 
   // A hidden Browser pane stops requestAnimationFrame, and Motion's frame loop
@@ -215,12 +238,15 @@
           request: entry.request,
         }))
         // Older downloads the queue has since let go of, which only the history
-        // still knows about.
+        // still knows about. The last is from before the week, so each of
+        // clearing's ranges holds a different number: 4 in the last 24 hours
+        // (the finished and failed tasks above), 7 in the last 7 days, 8 in all.
         .concat(
           [
             ['youtube', 'Evangelion 3.0+1.01 - Final trailer', 'https://www.youtube.com/watch?v=0bD4kP9aQ2M', 26],
             ['instagram', 'Kadıköy sahilinde gün batımı', 'https://www.instagram.com/reel/C8kLm2NoPqR/', 30],
             ['tiktok', 'Fiel al anime 👌 #evangelion #anime', 'https://www.tiktok.com/@animefiel/video/7408812276541', 52],
+            ['youtube', "Boğaz'da bir sabah - kısa film", 'https://www.youtube.com/watch?v=Bq7nR2xLm4E', 24 * 12],
           ].map(([platformId, title, url, hours], index) => ({
             id: 100 + index,
             url,
@@ -231,12 +257,25 @@
             fileExists: true,
             container: 'mp4',
             qualityLabel: index === 2 ? '1920p' : '1080p',
-            fileSize: [58_400_000, 14_900_000, 1_170_000][index],
+            fileSize: [58_400_000, 14_900_000, 1_170_000, 212_000_000][index],
             createdAt: now - hours * 3_600_000,
             status: 'completed',
             request: request(url, platformId),
           })),
         );
+
+  // Where a range of the history starts, as `HistoryRange::cutoff` works it
+  // out; no range is all of it. `history` stays the same array, taken from in
+  // place, so every command below sees what the others left.
+  const HOUR = 3_600_000;
+  const rangeStart = (range) =>
+    range === 'day' ? Date.now() - 24 * HOUR : range === 'week' ? Date.now() - 7 * 24 * HOUR : -Infinity;
+  const inRange = (range) => (entry) => entry.createdAt >= rangeStart(range);
+  const removeWhere = (test) => {
+    const before = history.length;
+    for (let i = history.length - 1; i >= 0; i -= 1) if (test(history[i])) history.splice(i, 1);
+    return before - history.length;
+  };
 
   const conversions = empty
     ? []
@@ -341,6 +380,7 @@
     rangeFetchable: !url.includes('#whole'),
     warnings: [],
     tracks: [],
+    items: [],
   });
 
   // An album shared from Spotify: listed, with every song picked, and planned
@@ -388,6 +428,103 @@
     ],
   });
 
+  // A TikTok video as the engine listed it on 2026-10-08: H.265 pictures with
+  // no sound, the only clean sound inside the H.264 720p rendition, every
+  // clean rendition twice (once per CDN), and the stamped one with no size.
+  // Open the advanced formats to see the sound lent by the 720p rendition.
+  const tiktokVideo = (url) => {
+    const hevc = (id, side, kbps, size) => ({
+      ...format(id, side, size),
+      kind: 'video',
+      hasAudio: false,
+      width: side,
+      vcodec: 'h265',
+      acodec: null,
+      tbr: kbps,
+      vbr: kbps,
+      abr: null,
+      watermarked: false,
+    });
+    const h264 = (id) => ({
+      ...format(id, 720, 37_655_063),
+      width: 720,
+      vcodec: 'h264',
+      acodec: 'aac',
+      tbr: 1207,
+      vbr: null,
+      abr: null,
+      watermarked: false,
+    });
+    return {
+      ...metadataFor(url),
+      platformLabel: 'TikTok',
+      title: '#montypythonandtheholygrail #lifeofbrian #fyp #movie #funny',
+      creator: 'edat673243',
+      durationSec: 249,
+      watermarkSupport: 'cleanAvailable',
+      formats: [
+        {
+          ...format('download', 0, null),
+          width: null,
+          height: null,
+          fps: null,
+          vcodec: 'h264',
+          acodec: 'aac',
+          tbr: null,
+          vbr: null,
+          abr: null,
+          qualityLabel: 'watermarked',
+          watermarked: true,
+        },
+        hevc('bytevc1_540p_499667-0', 576, 499, 12_860_076),
+        hevc('bytevc1_540p_499667-1', 576, 499, 12_860_076),
+        h264('h264_720p_1207492-0'),
+        h264('h264_720p_1207492-1'),
+        hevc('bytevc1_720p_808614-0', 720, 808, 20_393_089),
+        hevc('bytevc1_720p_808614-1', 720, 808, 20_393_089),
+        hevc('bytevc1_1080p_1511769-0', 1080, 1511, 36_463_968),
+        hevc('bytevc1_1080p_1511769-1', 1080, 1511, 36_463_968),
+      ],
+    };
+  };
+
+  // What plan.rs makes of that video, near enough to look at: Best keeps the
+  // 1080p picture and takes the sound out of the 720p rendition, Auto and 720p
+  // take that rendition whole, Audio its sound alone, and streams picked by
+  // hand are taken as they come.
+  const tiktokPlan = (asked) => {
+    const { formats } = tiktokVideo('');
+    const find = (id) => formats.find((entry) => entry.id === id) ?? null;
+    const plan = (video, audio, container = 'mp4') => {
+      const shown = video ?? audio;
+      const merge = video != null && audio != null && !video.hasAudio;
+      const fetched = [shown, merge ? audio : null].filter((entry) => entry != null);
+      return {
+        label: `${shown.qualityLabel} - ${container.toUpperCase()}`,
+        qualityLabel: shown.qualityLabel,
+        container,
+        needsMerge: merge,
+        needsFfmpeg: merge || container === 'm4a',
+        // Unknown when any part of it is, as the real figure is.
+        estimatedBytes: fetched.some((entry) => entry.filesize == null)
+          ? null
+          : fetched.reduce((sum, entry) => sum + entry.filesize, 0),
+        videoFormatId: video?.id ?? null,
+        audioFormatId: (merge || video == null ? audio?.id : null) ?? null,
+        stageCount: merge ? 3 : container === 'm4a' ? 2 : 1,
+      };
+    };
+    const sound = find('h264_720p_1207492-1');
+    if (asked.mode === 'audio') return plan(null, find(asked.audioFormatId) ?? sound, 'm4a');
+    if (asked.videoFormatId || asked.audioFormatId) {
+      return plan(find(asked.videoFormatId), find(asked.audioFormatId));
+    }
+    const ceiling = asked.quality.type === 'maxHeight' ? asked.quality.height : null;
+    if (asked.quality.type === 'auto' || ceiling === 720) return plan(sound, null);
+    if (ceiling != null && ceiling < 720) return plan(find('bytevc1_540p_499667-1'), sound);
+    return plan(find('bytevc1_1080p_1511769-1'), sound);
+  };
+
   const ANIME_RESULTS = [
     ['Yıldız Kıyısı Episode 1 SUB/DUB | İlk Işık', 'Crunchyroll', 1431],
     ['Yıldız Kıyısı Episode 2 SUB/DUB | Sessiz Liman', 'Crunchyroll', 1430],
@@ -433,6 +570,97 @@
       durationSec,
     })),
   });
+
+  // A TikTok photo post: five pictures over a soundtrack, for any tiktok.com
+  // link with /photo/ in it, as TikTok writes those.
+  const isPhotoPost = (url) => url.includes('tiktok.com/') && url.includes('/photo/');
+  const picture = (id) => ({
+    ...format(id, 1350, null),
+    kind: 'image',
+    container: 'jpg',
+    hasVideo: false,
+    hasAudio: false,
+    width: 1080,
+    height: 1350,
+    fps: null,
+    vcodec: null,
+    acodec: null,
+    tbr: null,
+    vbr: null,
+    abr: null,
+    qualityLabel: '1080x1350',
+  });
+  const soundtrack = {
+    ...format('soundtrack', 0, null),
+    kind: 'audio',
+    container: 'm4a',
+    hasVideo: false,
+    width: null,
+    height: null,
+    fps: null,
+    vcodec: null,
+    tbr: null,
+    vbr: null,
+    abr: null,
+    qualityLabel: 'Audio',
+  };
+  const photoPost = (url) => ({
+    ...metadataFor(url),
+    platform: 'tiktok',
+    platformLabel: 'TikTok',
+    providerId: 'photos',
+    mediaKind: 'gallery',
+    title: 'Kapadokya’da bir sabah',
+    creator: 'gezgin.ada',
+    thumbnailUrl: 'thumb:41',
+    durationSec: null,
+    viewCount: 48_200,
+    likeCount: 3_100,
+    uploadDate: '20260921',
+    rangeFetchable: false,
+    entryCount: 5,
+    formats: [picture('image-1'), soundtrack],
+    items: [1, 2, 3, 4, 5].map((position) => ({
+      position,
+      kind: 'image',
+      thumbnailUrl: `thumb:${40 + position}`,
+      durationSec: null,
+    })),
+  });
+  // An Instagram carousel that opens on a video, with a photo after each of
+  // its two videos: the mixed wording, the running time on a tile, and what
+  // "sound only" leaves to pick. Any instagram.com/p/ link.
+  const isCarousel = (url) => url.includes('instagram.com/p/');
+  const carousel = (url) => ({
+    ...metadataFor(url),
+    platform: 'instagram',
+    platformLabel: 'Instagram',
+    mediaKind: 'gallery',
+    title: 'Post by gezgin.ada',
+    creator: 'gezgin.ada',
+    thumbnailUrl: 'thumb:51',
+    durationSec: 14,
+    viewCount: null,
+    likeCount: 912,
+    rangeFetchable: false,
+    entryCount: 4,
+    formats: [format('22', 720, 3_400_000)],
+    items: [
+      { position: 1, kind: 'video', thumbnailUrl: 'thumb:51', durationSec: 14 },
+      { position: 2, kind: 'image', thumbnailUrl: 'thumb:52', durationSec: null },
+      { position: 3, kind: 'video', thumbnailUrl: 'thumb:53', durationSec: 32 },
+      { position: 4, kind: 'image', thumbnailUrl: 'thumb:54', durationSec: null },
+    ],
+  });
+  // Whichever of the lists above a link opens, for queueing it item by item.
+  const galleryFor = (url) =>
+    url.includes('open.spotify.com/')
+      ? spotifyAlbum(url)
+      : isPhotoPost(url)
+        ? photoPost(url)
+        : isCarousel(url)
+          ? carousel(url)
+          : null;
 
   function detect(url) {
     const hosts = [
@@ -498,6 +726,25 @@
   // load, as when a press in the browser is what started the app.
   const inbox = params.has('handoff') ? [handoffItem()] : [];
 
+  /**
+   * TikTok's answer for a post its creator limited to signed-in adults, as the
+   * backend sends it. A link with `itzmav_` in it (the post this was measured
+   * on) or `agegate` gets it from Home's analysis, and as a download handed
+   * over from the browser -- try
+   * `__UD_MOCK__.handoff({ url: 'https://www.tiktok.com/@itzmav_/video/7670756126907960589', kind: 'page' })`.
+   * Only the desktop offers to try again: a phone has no session to lend.
+   */
+  const needsTiktokSignIn = (url) => url.includes('itzmav_') || url.includes('agegate');
+  const tiktokSignIn = () => ({
+    code: 'tiktokSignIn',
+    title: 'This post needs a TikTok sign-in',
+    message:
+      "TikTok shows it only to signed-in viewers. Turn on TikTok session in the browser extension, in the browser where you're signed in to TikTok, then try again.",
+    technical:
+      'TikTok shows this post only to a signed-in viewer: ERROR: [TikTok] 7670756126907960589: This post may not be comfortable for some audiences. Log in for access. Use --cookies-from-browser or --cookies for the authentication. See  https://github.com/yt-dlp/yt-dlp/wiki/FAQ#how-do-i-pass-cookies-to-yt-dlp  for how to manually pass cookies',
+    retryable: platform === 'windows',
+  });
+
   // `?unregistered=1`: the browsers can no longer start the helper, until
   // Repair is pressed in Settings.
   const bridge = { registered: !params.has('unregistered') };
@@ -539,6 +786,35 @@
   const picker = {
     picked: ['/data/user/0/io.universaldownloader.app/cache/imports/tatil klibi.mp4'],
   };
+
+  /**
+   * How a press on a finished file goes: 'ok', 'missing' (the row says the file
+   * was moved or deleted) or 'fail' (any other refusal, which the row names by
+   * the press that failed). A path with "missing" in it is always gone, as the
+   * history fixture's failed rows are.
+   */
+  const files = { result: params.get('files') ?? 'ok' };
+  function fileAnswer(path) {
+    if (files.result === 'missing' || /missing/i.test(String(path))) {
+      throw {
+        code: 'fileMissing',
+        title: 'File moved or deleted',
+        message: "It's no longer where it was saved.",
+        technical: `file not found: ${path}`,
+        retryable: false,
+      };
+    }
+    if (files.result === 'fail') {
+      throw {
+        code: 'unknown',
+        title: 'Something went wrong',
+        message: 'The download could not be completed.',
+        technical: 'mock: refused',
+        retryable: true,
+      };
+    }
+    return null;
+  }
   const fetching = {
     status: 'idle',
     percent: null,
@@ -682,6 +958,13 @@
       extensionVersion: '1.0.4',
       lastPushAt: Math.floor(now / 1000) - 600,
       session: 'fresh',
+      // None by default, which is every link until the extension's TikTok
+      // switch is turned on, and the state that shows the hint about it.
+      tiktokSession: tiktok,
+      tiktokLastPushAt:
+        tiktok === 'none' ? null : Math.floor(now / 1000) - (tiktok === 'stale' ? 9 * 86_400 : 60),
+      otherSession: other,
+      otherDomain: other === 'fresh' ? 'instagram.com' : null,
       hostPath: 'C:\\Users\\melik\\AppData\\Local\\Universal Downloader\\ud-bridge.exe',
       appVersion: '1.0.0',
       extensionId: 'oikcjjcihkfmgmmmjagilnfgnfilghic',
@@ -701,6 +984,7 @@
     detect_platform: ({ url }) => detect(url),
     analyze_url: async ({ url }) => {
       await wait(900);
+      if (needsTiktokSignIn(url)) throw tiktokSignIn();
       if (url.includes('fail')) {
         throw {
           code: 'unsupported',
@@ -721,6 +1005,9 @@
       }
       if (url.includes('open.spotify.com/')) return spotifyAlbum(url);
       if (url.includes('watch?v=anime')) return animeEpisode(url);
+      if (url.includes('tiktok.com/') && url.includes('/video/')) return tiktokVideo(url);
+      if (isPhotoPost(url)) return photoPost(url);
+      if (isCarousel(url)) return carousel(url);
       return metadataFor(url);
     },
     search_anime: async ({ query }) => {
@@ -738,7 +1025,16 @@
       if (!url.startsWith('thumb:')) throw new Error('no thumbnail');
       return thumbnail(url);
     },
-    summarize_plan: ({ metadata }) =>
+    // The TikTok video is known by its own streams rather than its platform: a
+    // TikTok short link reads as the default fixture, whose ids that plan would
+    // not find.
+    //
+    // A photo post answers with its picture plan, or the sound of the post
+    // when only sound is asked for. The carousel opens on a video, so it
+    // answers with that video's own 720p rendition: the default plan's 1080p
+    // '37' is not among its streams, and the Video stream menu would show
+    // '--' for it.
+    summarize_plan: ({ metadata, request }) =>
       metadata.platform === 'spotify'
         ? {
             label: 'AAC - M4A',
@@ -751,7 +1047,45 @@
             audioFormatId: 'spotify-pending',
             stageCount: 1,
           }
-        : commands.summarize_video_plan(),
+        : metadata.formats.some((entry) => entry.id.startsWith('bytevc1_'))
+          ? tiktokPlan(request)
+          : metadata.formats[0]?.kind === 'image'
+            ? request.mode === 'audio'
+              ? {
+                  label: 'Audio - M4A',
+                  qualityLabel: 'Audio',
+                  container: 'm4a',
+                  needsMerge: false,
+                  needsFfmpeg: false,
+                  estimatedBytes: null,
+                  videoFormatId: null,
+                  audioFormatId: 'soundtrack',
+                  stageCount: 1,
+                }
+              : {
+                  label: '1080x1350 - JPG',
+                  qualityLabel: '1080x1350',
+                  container: 'jpg',
+                  needsMerge: false,
+                  needsFfmpeg: false,
+                  estimatedBytes: null,
+                  videoFormatId: null,
+                  audioFormatId: null,
+                  stageCount: 1,
+                }
+            : metadata.platform === 'instagram' && metadata.mediaKind === 'gallery'
+              ? {
+                  label: '720p - MP4',
+                  qualityLabel: '720p',
+                  container: 'mp4',
+                  needsMerge: false,
+                  needsFfmpeg: false,
+                  estimatedBytes: 3_400_000,
+                  videoFormatId: '22',
+                  audioFormatId: null,
+                  stageCount: 1,
+                }
+              : commands.summarize_video_plan(),
     summarize_video_plan: () => ({
       label: '1080p - MP4',
       qualityLabel: '1080p',
@@ -769,23 +1103,39 @@
     // handoff from the browser turned into.
     enqueue_download: ({ request: asked }) => {
       const platformId = asked.platform ?? detect(asked.url);
-      const added = task(platformId, asked.title ?? asked.url, 'downloading', {
+      // A post that needs a TikTok sign-in fails the way the real queue
+      // reports it, which is the row a handoff from the browser lands on.
+      const refused = needsTiktokSignIn(asked.url);
+      const added = task(platformId, asked.title ?? asked.url, refused ? 'failed' : 'downloading', {
         url: asked.url,
         request: asked,
         createdAt: Date.now(),
         thumbnailUrl: asked.thumbnailUrl,
-        progress: progress({ totalBytes: 115_000_000, percent: 0, stage: 'video' }),
+        progress: progress(
+          refused ? {} : { totalBytes: 115_000_000, percent: 0, stage: 'video' },
+        ),
+        error: refused ? tiktokSignIn() : null,
       });
       tasks = [...tasks, added];
       changed();
       return added;
     },
+    // As `providers::gallery_requests` does: one task per position asked for,
+    // every one when none is named, titled with the post's number for it.
     enqueue_gallery: ({ request: asked, entries }) => {
-      if (!entries) return [commands.enqueue_download({ request: asked })];
-      return entries.map((position) => {
-        const song = ALBUM_SONGS[position - 1];
+      const post = galleryFor(asked.url);
+      if (!post) return [commands.enqueue_download({ request: asked })];
+      const listed = post.tracks.length ? post.tracks : post.items;
+      return (entries ?? listed.map((entry) => entry.position)).map((position) => {
+        const song = post.tracks[position - 1];
+        const item = post.items[position - 1];
         return commands.enqueue_download({
-          request: { ...asked, title: song ? song[0] : asked.title, entry: position },
+          request: {
+            ...asked,
+            entry: position,
+            title: song ? song.title : `${post.title} (${position})`,
+            thumbnailUrl: item?.thumbnailUrl ?? asked.thumbnailUrl,
+          },
         });
       });
     },
@@ -998,11 +1348,24 @@
     // decode. A single cell of the same drawn strip is close enough.
     frame_at: ({ height }) => stripChunk(0, 1, Math.round(((height ?? 68) * 16) / 9), height ?? 68),
 
+    // A new array every time: handed the same one after a removal, React keeps
+    // the old rows, because nothing compares unequal.
     list_history: ({ query }) =>
-      query ? history.filter((entry) => entry.title.toLowerCase().includes(query.toLowerCase())) : history,
-    count_history: () => history.length,
-    delete_history_entry: () => null,
-    clear_history: () => null,
+      history.filter((entry) => !query || entry.title.toLowerCase().includes(query.toLowerCase())),
+    count_history: ({ range }) => history.filter(inRange(range)).length,
+    delete_history_entry: ({ id }) => (removeWhere((entry) => entry.id === id), null),
+    clear_history: ({ range }) => {
+      if (params.get('clear') === 'fail') {
+        throw {
+          code: 'unknown',
+          title: 'Something went wrong',
+          message: 'The download could not be completed.',
+          technical: 'mock: database is locked',
+          retryable: true,
+        };
+      }
+      return removeWhere(inRange(range));
+    },
 
     path_exists: () => true,
     preview_filename: ({ template }) => `${template.replace(/[{}]/g, '')}.mp4`,
@@ -1024,7 +1387,6 @@
       activeDownloads: 1,
       queuedDownloads: 1,
     }),
-    get_log_dir: () => 'C:\\Users\\melik\\AppData\\Roaming\\UniversalDownloader\\logs',
     get_licenses: () => ({
       packages: [
         { name: 'react', version: '19.2.8', license: 'MIT', kind: 'npm', url: 'https://react.dev' },
@@ -1036,8 +1398,12 @@
     get_build_commit: () => '05b60a1c2b1b5d97eaf1e60eda459987c70f717b',
     sweep_temp_files: () => 0,
 
-    platform_open_file: () => null,
-    platform_open_downloads: () => null,
+    // Opening, showing and sharing a finished file; see `files` above.
+    open_file: ({ path }) => fileAnswer(path),
+    reveal_file: ({ path }) => fileAnswer(path),
+    share_file: ({ path }) => fileAnswer(path),
+    open_log_dir: () => null,
+
     platform_open_app_settings: () => null,
     // What the Android picker hands back once it has copied the choice into
     // the app's cache. Set `__UD_MOCK__.picked` from the console to pick
@@ -1182,5 +1548,7 @@
     get tasks() { return tasks; },
     get picked() { return picker.picked; },
     set picked(paths) { picker.picked = paths; },
+    get files() { return files.result; },
+    set files(result) { files.result = result; },
   };
 })();

@@ -4999,6 +4999,8 @@ dependencies = [
  "thiserror 2.0.20",
  "tokio",
  "urlencoding",
+ "windows",
+ "windows-collections",
  "windows-sys 0.59.0",
  "winreg 0.10.1",
  "zip",

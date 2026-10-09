@@ -146,6 +146,117 @@ impl Browser {
     }
 }
 
+/// A site whose sign-in a browser can lend.
+///
+/// YouTube's still travels as `push`, exactly as before this enum existed, so
+/// an extension and an app a version apart agree about it. Every other site's
+/// travels as `pushSite`, which a host from before this enum cannot parse and
+/// answers `malformed` -- it can never store a TikTok jar as YouTube's.
+///
+/// `Other` is not one site but a slot for whichever site the user last pressed
+/// İndir on with the extension's "Other sites" switch on: Instagram one minute,
+/// Vimeo the next. Its push names the site in `domain`, its jar holds that
+/// domain's cookies alone, and it lapses an hour after it was captured
+/// (`OTHER_SESSION_TTL_SECS`), because it is lent for one download rather than
+/// kept fresh the way YouTube's and TikTok's are.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Site {
+    Youtube,
+    Tiktok,
+    Other,
+}
+
+impl Site {
+    pub const ALL: [Site; 3] = [Site::Youtube, Site::Tiktok, Site::Other];
+}
+
+/// The registrable part of a host -- `bbc.co.uk` for `www.bbc.co.uk`,
+/// `facebook.com` for `m.facebook.com` -- or `None` for something that has no
+/// such part: a bare name like `localhost`, an IP address, or a public suffix
+/// on its own.
+///
+/// A heuristic, and deliberately the same one `registrableDomain` in
+/// `extension/sessions.js` uses, so the domain the extension reads cookies for
+/// is the domain this side accepts: the last two labels, or the last three
+/// when the second-to-last is one of the generic second levels a country code
+/// puts under itself (`co.uk`, `com.tr`, `ac.jp`). A full public suffix list
+/// would be more exact and would have to be kept up to date in two languages;
+/// the cost of the heuristic is that a rare suffix it does not know -- a
+/// `blogspot.com` subdomain, say -- is treated as one site with its siblings,
+/// which only ever means sending a cookie to a host that was already in the
+/// same browser jar.
+pub fn registrable_domain(host: &str) -> Option<String> {
+    const SECOND_LEVELS: [&str; 9] = ["co", "com", "net", "org", "gov", "edu", "ac", "gen", "bel"];
+    const K12: &str = "k12";
+
+    let host = host.trim_start_matches('.').trim_end_matches('.').to_ascii_lowercase();
+    let labels: Vec<&str> = host.split('.').collect();
+    if labels.len() < 2 || host.len() > 253 {
+        return None;
+    }
+    let label_ok = |label: &&str| {
+        !label.is_empty()
+            && label.len() <= 63
+            && !label.starts_with('-')
+            && !label.ends_with('-')
+            && label.bytes().all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
+    };
+    if !labels.iter().all(label_ok) {
+        return None;
+    }
+    let tld = labels[labels.len() - 1];
+    // A top level that is all digits is an IPv4 address, not a name.
+    if tld.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    let second = labels[labels.len() - 2];
+    let under_country = tld.len() == 2 && (SECOND_LEVELS.contains(&second) || second == K12);
+    let keep = if under_country { 3 } else { 2 };
+    if labels.len() < keep {
+        return None;
+    }
+    Some(labels[labels.len() - keep..].join("."))
+}
+
+/// Registrable names that belong to a site with a switch of its own, and so
+/// are never an "other" site: YouTube and Google (whose sign-in is the YouTube
+/// switch's), and TikTok. Compared with the name before the suffix, so
+/// `google.com.tr` and `youtube.de` are caught as well as the `.com`s.
+const OWN_SWITCH_NAMES: [&str; 9] = [
+    "youtube",
+    "youtu",
+    "youtube-nocookie",
+    "ytimg",
+    "google",
+    "googlevideo",
+    "tiktok",
+    "tiktokv",
+    "tiktokcdn",
+];
+
+/// Whether `domain` may name the site of an `other` push: a registrable domain
+/// written the way `registrable_domain` writes one -- lowercase, no scheme, no
+/// path, no port, no leading dot -- and not one of the sites with a switch of
+/// their own. Anything else is refused whole, as `malformed`, rather than
+/// stored under a name the engine would then match addresses against.
+pub fn other_domain_ok(domain: &str) -> bool {
+    if registrable_domain(domain).as_deref() != Some(domain) {
+        return false;
+    }
+    let name = domain.split('.').next().unwrap_or("");
+    !OWN_SWITCH_NAMES.contains(&name)
+}
+
+/// Whether `host` -- a cookie's domain or an address's host -- is `domain` or
+/// one of its subdomains. A leading dot, which a cookie for every subdomain
+/// carries, is ignored; case is too. `evilinstagram.com` is not under
+/// `instagram.com`, and neither is `instagram.com.evil.test`.
+pub fn under_domain(host: &str, domain: &str) -> bool {
+    let host = host.trim_start_matches('.').trim_end_matches('.').to_ascii_lowercase();
+    !domain.is_empty() && (host == domain || host.ends_with(&format!(".{domain}")))
+}
+
 /// One cookie as the extension read it from `chrome.cookies`.
 ///
 /// Field names match the Chrome API so the extension forwards what it got
@@ -175,7 +286,15 @@ pub enum Request {
     /// how the popup learns whether the app is installed and what it thinks.
     Status(Peer),
     /// The session, pushed after a sign-in, a cookie change or the daily alarm.
+    /// YouTube's, and only ever YouTube's: that is what every extension before
+    /// 1.0.5 meant by it, and a push naming another site is refused.
     Push(Push),
+    /// Another site's session, pushed on the same occasions, naming the site
+    /// in `site`. A tag of its own rather than a field on `push`, because a
+    /// host from before it ignores a field it does not know and would have
+    /// stored the jar as YouTube's; it refuses an unknown tag as `malformed`
+    /// instead, which is the answer the extension turns its switch off on.
+    PushSite(Push),
     /// The user pressed Connect in a profile while another profile holds the
     /// binding. Deliberate and user-initiated, and the only way a second
     /// profile can take over -- a push never steals the binding silently.
@@ -198,10 +317,10 @@ pub enum Request {
     /// download runs, then stops before a byte of media moves. Nothing is left
     /// in the inbox and the app is not started.
     ///
-    /// Answered with a `preview`, or with `protected` or `unavailable` when
-    /// there is none to give. A host from before this request answers
-    /// `malformed`, which the popup reads as "no details" -- the reason this
-    /// did not need a new wire version.
+    /// Answered with a `preview`, or with `protected`, `signIn` or
+    /// `unavailable` when there is none to give. A host from before this
+    /// request answers `malformed`, which the popup reads as "no details" --
+    /// the reason this did not need a new wire version.
     Probe(Download),
 }
 
@@ -270,9 +389,20 @@ fn unknown_browser() -> Browser {
 pub struct Push {
     #[serde(flatten)]
     pub peer: Peer,
-    /// False when the profile is not signed in to YouTube. The host deletes the
-    /// stored session on a signed-out push rather than keeping a jar that has
-    /// outlived its sign-in.
+    /// Whose session this is. Absent on a `push`, which is YouTube's; required
+    /// on a `pushSite`, which the host refuses without one.
+    #[serde(default)]
+    pub site: Option<Site>,
+    /// The site an `other` push is for, as `registrable_domain` writes it:
+    /// `instagram.com`, `bbc.co.uk`. Required on one that carries cookies and
+    /// checked by `other_domain_ok`; a signed-out `other` push with none may
+    /// leave it out, since all it asks is that the jar be deleted, whoever's it
+    /// was. Ignored on every other site's push, whose domain is fixed.
+    #[serde(default)]
+    pub domain: Option<String>,
+    /// False when the profile is not signed in to that site. The host deletes
+    /// that site's stored session on a signed-out push rather than keeping a
+    /// jar that has outlived its sign-in.
     pub signed_in: bool,
     /// A masked hint at the account, for the app to show. Never an exact
     /// address the user did not ask to have displayed.
@@ -280,6 +410,27 @@ pub struct Push {
     pub account_hint: Option<String>,
     pub captured_at: i64,
     pub cookies: Vec<Cookie>,
+}
+
+impl Push {
+    /// Whether an `other` push names its site in a way that can be stored.
+    ///
+    /// A push carrying cookies has to say whose they are, and in the one
+    /// spelling `other_domain_ok` accepts: the jar is matched against the
+    /// addresses the engine reads by that name, so a scheme, a path, a public
+    /// suffix on its own or YouTube's own domain under the wrong switch would
+    /// each mean lending the cookies somewhere they were not meant for. A
+    /// signed-out push with nothing in it may name no site at all -- it is how
+    /// the extension's switch going off deletes whatever jar is held, without
+    /// remembering whose it was -- but one that names a site names it properly.
+    pub fn check_other(&self) -> Result<(), &'static str> {
+        match self.domain.as_deref() {
+            Some(domain) if other_domain_ok(domain) => Ok(()),
+            Some(_) => Err("the push names a site that cannot have an other-site session"),
+            None if !self.signed_in && self.cookies.is_empty() => Ok(()),
+            None => Err("the push does not say which site its cookies are for"),
+        }
+    }
 }
 
 /// Host -> extension. Exactly one per request.
@@ -353,7 +504,8 @@ pub enum ErrorCode {
     /// The extension is newer than this app and speaks something it does not
     /// understand. The popup says to update the app rather than failing blankly.
     Version,
-    /// Malformed message, or one too large to be a cookie jar.
+    /// Malformed message, or one too large to be a cookie jar -- and a push
+    /// that does not say whose session it carries, or says it on the wrong tag.
     Malformed,
     Internal,
     /// A probe found a service that encrypts what it streams. Nothing the app
@@ -366,6 +518,13 @@ pub enum ErrorCode {
     /// so they are one code, and the download itself is where the app
     /// explains which it was.
     Unavailable,
+    /// A probe found a post the site shows only to a signed-in viewer -- a
+    /// TikTok post behind audience controls, say. The popup says so rather
+    /// than "no details", because the browser's own session is the answer to
+    /// it. A probe never borrows that session itself (see the host), so this
+    /// is said whether or not one is stored. A popup from before this code
+    /// reads it as "no details".
+    SignIn,
 }
 
 /// What the host tells the popup about itself. Read the module header before
@@ -396,12 +555,33 @@ pub struct HostStatus {
     /// which leaves it out, from one that simply has not been asked yet.
     #[serde(default)]
     pub can_download: bool,
+    /// The sites whose sessions this host stores. Absent from a host older
+    /// than the list, which stored YouTube's alone -- and that absence is how
+    /// the popup knows not to offer another site's switch against it.
+    #[serde(default)]
+    pub sites: Vec<Site>,
+    /// TikTok's session, as `session` is YouTube's: whether one exists and how
+    /// old it is, never what it holds.
+    #[serde(default)]
+    pub tiktok_session: SessionState,
+    /// The other-site session: `fresh` for the hour after İndir lent one,
+    /// `none` otherwise. It is never `stale` -- a lapsed one is deleted, not
+    /// kept to explain anything.
+    #[serde(default)]
+    pub other_session: SessionState,
+    /// Which site that session is for, while it is fresh, and only to the
+    /// bound profile, as the account hint is. A site's name, never anything
+    /// its cookies hold. Left out otherwise, so an older popup reads the rest
+    /// unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub other_domain: Option<String>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum SessionState {
     /// No session stored: never connected, signed out, or deliberately forgotten.
+    #[default]
     None,
     /// Stored and inside its lifetime.
     Fresh,
@@ -476,6 +656,15 @@ impl From<DownloadPreview> for Preview {
 /// worth less than the risk of keeping it.
 pub const SESSION_TTL_SECS: i64 = 60 * 60 * 24 * 7;
 
+/// How long an other-site session is kept after it was captured.
+///
+/// An hour, not a week: the extension sends one only when the user presses
+/// İndir on that site and never refreshes it in the background, so it exists
+/// for the download that press started -- its analysis, its transfer, the
+/// queue's own retries of both. A jar of some arbitrary site's cookies kept
+/// any longer than that is liability with nothing to show for it.
+pub const OTHER_SESSION_TTL_SECS: i64 = 60 * 60;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -492,6 +681,10 @@ mod tests {
             account_hint: None,
             last_push_at: None,
             can_download: true,
+            sites: vec![],
+            tiktok_session: SessionState::None,
+            other_session: SessionState::None,
+            other_domain: None,
         }
     }
 
@@ -556,6 +749,192 @@ mod tests {
         assert!(protected.get("preview").is_none());
         let unavailable = serde_json::to_value(Response::err(ErrorCode::Unavailable, "x")).unwrap();
         assert_eq!(unavailable["error"]["code"], "unavailable");
+        let sign_in = serde_json::to_value(Response::err(ErrorCode::SignIn, "x")).unwrap();
+        assert_eq!(sign_in["error"]["code"], "signIn");
+    }
+
+    #[test]
+    fn a_site_push_names_its_site() {
+        let request: Request = serde_json::from_value(serde_json::json!({
+            "type": "pushSite", "site": "tiktok", "v": 1, "profileId": "p",
+            "extensionVersion": "1.0.5", "signedIn": true, "capturedAt": 1_700_000_000,
+            "cookies": [],
+        }))
+        .unwrap();
+        let Request::PushSite(push) = request else {
+            panic!("not read as a site push");
+        };
+        assert_eq!(push.site, Some(Site::Tiktok));
+        assert!(push.signed_in);
+
+        // A plain push, as every extension before 1.0.5 sends it, names none.
+        let plain: Request = serde_json::from_value(serde_json::json!({
+            "type": "push", "v": 1, "profileId": "p", "extensionVersion": "1.0.4",
+            "signedIn": true, "capturedAt": 1_700_000_000, "cookies": [],
+        }))
+        .unwrap();
+        let Request::Push(push) = plain else {
+            panic!("not read as a push");
+        };
+        assert_eq!(push.site, None);
+    }
+
+    /// A site this host has no jar for is not stored as some other site's:
+    /// the whole message fails to read, and the host answers `malformed`.
+    #[test]
+    fn an_unknown_site_is_refused_whole() {
+        let request = serde_json::from_value::<Request>(serde_json::json!({
+            "type": "pushSite", "site": "instagram", "v": 1, "profileId": "p",
+            "extensionVersion": "1.0.5", "signedIn": true, "capturedAt": 1_700_000_000,
+            "cookies": [],
+        }));
+        assert!(request.is_err());
+    }
+
+    #[test]
+    fn the_status_says_which_sites_this_host_stores() {
+        let current = HostStatus {
+            sites: Site::ALL.to_vec(),
+            ..status()
+        };
+        let text = serde_json::to_value(&current).unwrap();
+        assert_eq!(text["sites"], serde_json::json!(["youtube", "tiktok", "other"]));
+        assert_eq!(text["tiktokSession"], "none");
+        assert_eq!(text["otherSession"], "none");
+        // No site to name, so no field: an older popup sees nothing new.
+        assert!(text.get("otherDomain").is_none(), "{text}");
+        let lending = HostStatus {
+            other_session: SessionState::Fresh,
+            other_domain: Some("instagram.com".into()),
+            ..status()
+        };
+        let text = serde_json::to_value(&lending).unwrap();
+        assert_eq!(text["otherSession"], "fresh");
+        assert_eq!(text["otherDomain"], "instagram.com");
+
+        // A status from a host older than the list still reads, as one that
+        // stores YouTube's session alone.
+        let older: HostStatus = serde_json::from_value(serde_json::json!({
+            "appVersion": "1.0.0", "hostPath": "C:\\ud-bridge.exe", "enabled": true,
+            "bound": true, "session": "fresh",
+        }))
+        .unwrap();
+        assert!(older.sites.is_empty());
+        assert_eq!(older.tiktok_session, SessionState::None);
+        assert_eq!(older.other_session, SessionState::None);
+        assert_eq!(older.other_domain, None);
+    }
+
+    fn other_push(body: serde_json::Value) -> Push {
+        let mut request = serde_json::json!({
+            "type": "pushSite", "site": "other", "v": 1, "profileId": "p",
+            "extensionVersion": "1.0.5", "signedIn": true, "capturedAt": 1_700_000_000,
+            "cookies": [{ "domain": ".instagram.com", "name": "sessionid", "value": "v", "path": "/", "secure": true }],
+        });
+        for (key, value) in body.as_object().unwrap() {
+            request[key] = value.clone();
+        }
+        let Request::PushSite(push) = serde_json::from_value(request).unwrap() else {
+            panic!("not read as a site push");
+        };
+        push
+    }
+
+    #[test]
+    fn an_other_push_names_its_site_by_registrable_domain() {
+        let push = other_push(serde_json::json!({ "domain": "instagram.com" }));
+        assert_eq!(push.site, Some(Site::Other));
+        assert_eq!(push.domain.as_deref(), Some("instagram.com"));
+        assert_eq!(push.check_other(), Ok(()));
+
+        for kept in ["x.com", "facebook.com", "bbc.co.uk", "trendyol.com.tr", "vimeo.com", "xn--80ak6aa92e.com"] {
+            let push = other_push(serde_json::json!({ "domain": kept }));
+            assert_eq!(push.check_other(), Ok(()), "{kept}");
+        }
+    }
+
+    /// Everything that is not a bare registrable domain of some other site is
+    /// refused, and the host answers `malformed`.
+    #[test]
+    fn an_other_push_with_a_bad_domain_is_refused() {
+        for refused in [
+            "https://instagram.com",
+            "instagram.com/p/1",
+            "instagram.com:443",
+            "www.instagram.com",
+            ".instagram.com",
+            "Instagram.com",
+            "instagram",
+            "localhost",
+            "co.uk",
+            "com.tr",
+            "127.0.0.1",
+            "[::1]",
+            "",
+            "insta gram.com",
+            "-bad.com",
+            "youtube.com",
+            "youtu.be",
+            "google.com",
+            "google.com.tr",
+            "tiktok.com",
+            "tiktokcdn.com",
+        ] {
+            let push = other_push(serde_json::json!({ "domain": refused }));
+            assert!(push.check_other().is_err(), "accepted {refused:?}");
+        }
+        // Cookies with no site to put them under.
+        let nameless = other_push(serde_json::json!({}));
+        assert!(nameless.check_other().is_err());
+        let signed_in_empty = other_push(serde_json::json!({ "cookies": [] }));
+        assert!(signed_in_empty.check_other().is_err());
+        // A signed-out push with nothing in it only deletes, and needs no site.
+        let drop = other_push(serde_json::json!({ "signedIn": false, "cookies": [] }));
+        assert_eq!(drop.check_other(), Ok(()));
+        // But a signed-out push that names one names it properly.
+        let bad_drop = other_push(serde_json::json!({ "signedIn": false, "cookies": [], "domain": "co.uk" }));
+        assert!(bad_drop.check_other().is_err());
+    }
+
+    #[test]
+    fn a_registrable_domain_is_the_last_two_labels_or_three_under_a_country() {
+        for (host, domain) in [
+            ("www.bbc.co.uk", Some("bbc.co.uk")),
+            ("x.com", Some("x.com")),
+            ("m.facebook.com", Some("facebook.com")),
+            ("www.trendyol.com.tr", Some("trendyol.com.tr")),
+            ("WWW.Instagram.COM", Some("instagram.com")),
+            (".instagram.com", Some("instagram.com")),
+            ("old.reddit.com.", Some("reddit.com")),
+            ("a.b.c.example.ac.jp", Some("example.ac.jp")),
+            // A two-letter top level without a known second level is a site.
+            ("www.example.de", Some("example.de")),
+            ("bit.ly", Some("bit.ly")),
+            ("co.uk", None),
+            ("localhost", None),
+            ("192.168.1.10", None),
+            ("", None),
+            ("exa_mple.com", None),
+        ] {
+            assert_eq!(registrable_domain(host).as_deref(), domain, "{host}");
+        }
+    }
+
+    #[test]
+    fn a_host_is_under_a_domain_only_as_itself_or_a_subdomain() {
+        for (host, under) in [
+            ("instagram.com", true),
+            (".instagram.com", true),
+            ("www.instagram.com", true),
+            ("scontent.cdninstagram.com", false),
+            ("evilinstagram.com", false),
+            ("instagram.com.evil.test", false),
+            ("I.Instagram.com", true),
+            ("", false),
+        ] {
+            assert_eq!(under_domain(host, "instagram.com"), under, "{host}");
+        }
+        assert!(!under_domain("instagram.com", ""));
     }
 
     #[test]

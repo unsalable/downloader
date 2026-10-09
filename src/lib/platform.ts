@@ -1,7 +1,4 @@
 import { platform } from '@tauri-apps/plugin-os';
-import { openPath, revealItemInDir } from '@tauri-apps/plugin-opener';
-
-import * as ipc from '@/services/ipc';
 
 /**
  * Whether this is the phone build. Read once: it cannot change while the app
@@ -11,6 +8,9 @@ import * as ipc from '@/services/ipc';
  * shortcuts all assume a mouse and a file system the user can browse. On a
  * phone those give way to a bottom navigation bar, the system file picker and
  * the share sheet.
+ *
+ * Opening, showing and sharing a finished file do not branch on it: the
+ * backend does each the way its own platform does (see `useFileActions`).
  */
 export const IS_MOBILE: boolean = (() => {
   try {
@@ -20,16 +20,3 @@ export const IS_MOBILE: boolean = (() => {
     return false;
   }
 })();
-
-/** Open a finished file in the app the OS associates with it. */
-export function openFile(path: string): Promise<void> {
-  return IS_MOBILE ? ipc.platformOpenFile(path) : openPath(path);
-}
-
-/**
- * Show where a file is. A phone has no folder window to select it in, so the
- * system's Downloads view -- which is where it is -- stands in.
- */
-export function revealFile(path: string): Promise<void> {
-  return IS_MOBILE ? ipc.platformOpenDownloads() : revealItemInDir(path);
-}

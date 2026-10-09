@@ -189,13 +189,22 @@ pub struct MediaMetadata {
     /// Every item of a carousel, gallery or album, in the source's order. The
     /// fields above describe the first one, which is what the link downloads
     /// as a whole; a request names any other by its position. Not sent to the
-    /// UI, for the same reason stream addresses are not.
+    /// UI, for the same reason stream addresses are not; the interface gets
+    /// `items` instead.
     #[serde(skip)]
     pub entries: Vec<MediaMetadata>,
     /// The songs of an album or playlist, for the interface to list and pick
     /// from. Empty for everything else.
     #[serde(default)]
     pub tracks: Vec<TrackSummary>,
+    /// The items of a carousel or gallery, for the interface to show and pick
+    /// from: what `entries` holds, without the streams. Empty for a single
+    /// item, and for an album, whose songs are `tracks`.
+    ///
+    /// Defaulted because the interface sends metadata back to have a plan
+    /// summarised, and that copy need not carry it.
+    #[serde(default)]
+    pub items: Vec<GalleryItem>,
     /// What a song is, from the service it was shared from. Written into the
     /// finished file as its tags.
     #[serde(skip)]
@@ -222,6 +231,25 @@ pub struct TrackSummary {
     pub position: u32,
     pub title: String,
     pub artists: String,
+    pub duration_sec: Option<f64>,
+}
+
+/// One item of a carousel or gallery, as the interface shows it to be picked
+/// from. Made from `entries` by `providers::gallery`, in the same order, so the
+/// grid and a download can never disagree about which picture position 3 is.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct GalleryItem {
+    /// 1-based, the same position a download request names it by.
+    pub position: u32,
+    /// A photo, a video, or a song of a set -- so a video among photos can be
+    /// told apart, and a photo left out where only sound is asked for. Never
+    /// `Gallery`.
+    pub kind: MediaKind,
+    /// A picture of it for the grid, fetched through `get_thumbnail` like any
+    /// other: a small rendition where the source lists one, otherwise the same
+    /// picture the item itself previews with.
+    pub thumbnail_url: Option<String>,
     pub duration_sec: Option<f64>,
 }
 
@@ -475,6 +503,35 @@ pub struct HistoryEntry {
     pub request: Option<DownloadRequest>,
 }
 
+/// How far back a clearing of the history reaches. The windows are rolling --
+/// the last 24 hours, the last 7 days -- measured back from now on the same
+/// clock (`util::now_ms`) that stamped each entry's `created_at` when its
+/// download finished, so the cut and the stamps can never disagree. A calendar
+/// "today" would need the user's time zone, which the backend does not keep,
+/// and is not what was asked for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum HistoryRange {
+    Day,
+    Week,
+    All,
+}
+
+impl HistoryRange {
+    const HOUR_MS: i64 = 3_600_000;
+
+    /// The earliest `created_at` inside the range, or `None` for all of it.
+    /// An entry stamped exactly at the cutoff belongs to the range, and one
+    /// stamped in the future (the clock went back) counts as recent.
+    pub fn cutoff(self, now_ms: i64) -> Option<i64> {
+        match self {
+            Self::Day => Some(now_ms - 24 * Self::HOUR_MS),
+            Self::Week => Some(now_ms - 7 * 24 * Self::HOUR_MS),
+            Self::All => None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum ToolKind {
@@ -618,7 +675,17 @@ pub struct BridgeStatus {
     pub account_hint: Option<String>,
     pub extension_version: Option<String>,
     pub last_push_at: Option<i64>,
+    /// YouTube's session, which is what this field has always described.
     pub session: crate::bridge::SessionState,
+    /// TikTok's, lent by the extension's own switch for it. The account hint
+    /// above stays YouTube's alone.
+    pub tiktok_session: crate::bridge::SessionState,
+    pub tiktok_last_push_at: Option<i64>,
+    /// The one other site İndir last lent a sign-in for: `fresh` for an hour
+    /// after the press, `none` otherwise.
+    pub other_session: crate::bridge::SessionState,
+    /// Which site that is, while it is fresh.
+    pub other_domain: Option<String>,
     pub host_path: Option<String>,
     pub app_version: String,
     pub extension_id: String,
@@ -1180,6 +1247,28 @@ mod tests {
         assert!(SourceContext::default().headers().is_empty());
     }
 
+    /// The interface hands metadata back to have a plan summarised, and a copy
+    /// made before galleries listed their items -- or one that leaves them out
+    /// -- must still read.
+    #[test]
+    fn media_metadata_from_the_interface_reads_without_items() {
+        let mut written = serde_json::to_value(crate::providers::tests_support::blank()).unwrap();
+        assert!(written.as_object_mut().unwrap().remove("items").is_some());
+        let read: MediaMetadata = serde_json::from_value(written).unwrap();
+        assert!(read.items.is_empty());
+
+        let item = GalleryItem {
+            position: 2,
+            kind: MediaKind::Image,
+            thumbnail_url: Some("https://cdn.test/b.jpg".into()),
+            duration_sec: None,
+        };
+        let text = serde_json::to_string(&item).unwrap();
+        for key in ["\"position\"", "\"thumbnailUrl\"", "\"durationSec\"", "\"kind\":\"image\""] {
+            assert!(text.contains(key), "{key} missing from {text}");
+        }
+    }
+
     #[test]
     fn a_source_is_written_in_camel_case() {
         let source: SourceContext =
@@ -1187,5 +1276,22 @@ mod tests {
         assert_eq!(source.page_url.as_deref(), Some("https://p.example/"));
         assert_eq!(source.user_agent.as_deref(), Some("UA"));
         assert_eq!(source.referer, None);
+    }
+
+    #[test]
+    fn a_history_range_reaches_back_a_day_a_week_or_all_the_way() {
+        let now = 1_800_000_000_000;
+        assert_eq!(HistoryRange::Day.cutoff(now), Some(now - 86_400_000));
+        assert_eq!(HistoryRange::Week.cutoff(now), Some(now - 604_800_000));
+        assert_eq!(HistoryRange::All.cutoff(now), None);
+        // What the interface sends, and nothing else.
+        for (text, range) in [
+            ("\"day\"", HistoryRange::Day),
+            ("\"week\"", HistoryRange::Week),
+            ("\"all\"", HistoryRange::All),
+        ] {
+            assert_eq!(serde_json::from_str::<HistoryRange>(text).unwrap(), range);
+        }
+        assert!(serde_json::from_str::<HistoryRange>("\"month\"").is_err());
     }
 }

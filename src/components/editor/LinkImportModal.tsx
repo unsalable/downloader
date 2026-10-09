@@ -12,6 +12,7 @@ import { errorMessage, useTranslation } from '@/i18n';
 import { cn } from '@/lib/cn';
 import { formatBytes, formatDuration, formatTimecode } from '@/lib/format';
 import { COLLAPSE } from '@/lib/motion';
+import { IS_MOBILE } from '@/lib/platform';
 import * as ipc from '@/services/ipc';
 import { useEditorStore } from '@/stores/useEditorStore';
 import type { MediaMetadata } from '@/types';
@@ -119,7 +120,7 @@ export function LinkImportModal({ open, onClose, onFetched }: LinkImportModalPro
     }
     if (fetchState.status === 'failed') {
       setFetching(false);
-      setFetchError(fetchState.error ? errorMessage(fetchState.error) : null);
+      setFetchError(fetchState.error ? errorMessage(fetchState.error, IS_MOBILE) : null);
       return;
     }
     if (fetchState.status === 'canceled') {
@@ -141,7 +142,7 @@ export function LinkImportModal({ open, onClose, onFetched }: LinkImportModalPro
     } catch (caught) {
       setMetadata(null);
       setRange(null);
-      setCheckError(errorMessage(ipc.toAppError(caught)));
+      setCheckError(errorMessage(ipc.toAppError(caught), IS_MOBILE));
     } finally {
       setChecking(false);
     }
@@ -164,7 +165,7 @@ export function LinkImportModal({ open, onClose, onFetched }: LinkImportModalPro
       });
     } catch (caught) {
       setFetching(false);
-      setFetchError(errorMessage(ipc.toAppError(caught)));
+      setFetchError(errorMessage(ipc.toAppError(caught), IS_MOBILE));
     }
   }, [chosen, fetching, maxHeight, metadata, range, url]);
 

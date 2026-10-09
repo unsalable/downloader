@@ -54,7 +54,7 @@ const CUT_SHARE: f64 = 50.0;
 
 /// Containers an export may be written into. An extension that reached the
 /// command line unchecked would be an output path nobody chose.
-const CONTAINERS: [&str; 4] = ["mp4", "mkv", "mov", "webm"];
+pub(crate) const CONTAINERS: [&str; 4] = ["mp4", "mkv", "mov", "webm"];
 
 /// The range a chosen video bitrate is held to, in kilobits a second. Why these
 /// two is said where they are applied, in [`checked_options`].

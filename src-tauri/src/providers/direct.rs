@@ -175,6 +175,7 @@ impl DirectProvider {
             warnings: Vec::new(),
             entries: Vec::new(),
             tracks: Vec::new(),
+            items: Vec::new(),
             music: None,
         })
     }

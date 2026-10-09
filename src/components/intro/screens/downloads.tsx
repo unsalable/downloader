@@ -1,4 +1,4 @@
-import { FolderOpen, Pause, X } from 'lucide-react';
+import { Pause, Share, X } from 'lucide-react';
 import { memo } from 'react';
 import { interpolate } from 'remotion';
 
@@ -91,7 +91,7 @@ function crossfade(frame: number, at: number, length: number) {
 
 /**
  * The screen at film frame `f`. Nothing on it moves before it comes in or
- * once the folder has popped in, so it is drawn for a frame held inside that
+ * once Share has popped in, so it is drawn for a frame held inside that
  * stretch: mounted with the scene and hidden until it is wanted, it is not
  * drawn again on every frame of the film.
  */
@@ -138,7 +138,7 @@ const DownloadsPage = memo(function DownloadsPage({ f, strings }: { f: number; s
           </div>
 
           <div className="flex shrink-0 items-center gap-0.5">
-            <PauseToFolder frame={f} />
+            <PauseToShare frame={f} />
             <Cancel />
           </div>
         </div>
@@ -245,11 +245,15 @@ const Readout = memo(function Readout({ percent, speed, eta, live, merging, done
   );
 });
 
-/** The first action: Pause while it runs, then the folder the file is in, arriving with a small pop. */
-function PauseToFolder({ frame }: { frame: number }) {
+/**
+ * The first action: Pause while it runs, then Share, arriving with a small
+ * pop. A finished row on the phone offers Share where the desktop has the
+ * folder (DownloadCard), so that is what the film's phone shows too.
+ */
+function PauseToShare({ frame }: { frame: number }) {
   const swap = crossfade(frame, DONE, 6);
-  // Sprung from the frame the folder starts to show, or the pop would be
-  // spent before it could be seen.
+  // Sprung from the frame Share starts to show, or the pop would be spent
+  // before it could be seen.
   const pop = mix(0.8, 1, springFrom(frame, DONE + 2, SPRING.snap));
   return (
     <span className="grid size-9 shrink-0 place-items-center rounded-[8px] text-fg-muted">
@@ -257,7 +261,7 @@ function PauseToFolder({ frame }: { frame: number }) {
         <Pause size={15} style={{ gridArea: '1 / 1', opacity: swap.old }} />
       )}
       {swap.next > 0 && (
-        <FolderOpen
+        <Share
           size={15}
           style={{ gridArea: '1 / 1', opacity: swap.next, transform: pop < 1 ? `scale(${pop})` : undefined }}
         />

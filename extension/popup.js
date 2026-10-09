@@ -1,5 +1,7 @@
 // The popup: what this tab is playing, a button to hand each one to the app,
-// and the YouTube session switch.
+// and the session switches -- YouTube's always, TikTok's on TikTok's own pages
+// and anywhere while it is on, and the other sites' one on every other site's
+// pages and anywhere while it is on.
 //
 // It holds no state worth keeping and talks to no one but the service worker,
 // which owns the native messaging channel -- so the popup closing halfway
@@ -11,6 +13,7 @@
 // and https addresses; nothing here assigns HTML.
 
 import { displayHost, formatDuration, formatEstimate, isHttpUrl } from './media.js';
+import { onTikTok, onYouTube } from './sessions.js';
 
 const t = (key) => chrome.i18n.getMessage(key);
 const el = (id) => document.getElementById(id);
@@ -65,6 +68,13 @@ const NOTICES = {
 };
 
 let problem = null;
+
+// Whether this popup opened over one of YouTube's or TikTok's pages. Each
+// site's switch is offered there and only there, whatever state it is in: a
+// switch that is on keeps working everywhere, and the site is where to go to
+// turn it off. The other sites' switch is always in view.
+let onYouTubeTab = false;
+let onTikTokTab = false;
 
 function showProblem(next) {
   problem = next;
@@ -183,7 +193,8 @@ async function send(button, row) {
 
   const result = reply?.result ?? null;
   if (result?.ok) {
-    // Sent stays sent: pressing it again would queue the same download twice.
+    // Sent stays sent: the app already has it open, and a second press would
+    // only open it again.
     // In a row of the list the check says it alone -- the word would take the
     // room the row's details need -- and the word is still its name.
     button.dataset.state = 'sent';
@@ -274,6 +285,13 @@ function apply(item, answer) {
     item.meta.textContent = t('kindProtected');
     return;
   }
+  // A post the site shows only to a signed-in viewer has no details to give a
+  // probe, which never lends a session. İndir stays: whether it gets the post
+  // is what this line says.
+  if (answer?.signIn) {
+    item.meta.textContent = t(answer.withSession ? 'rowWithSession' : 'rowSignIn');
+    return;
+  }
   const preview = answer?.preview;
   if (!preview) {
     item.meta.textContent = firstMeta(row.meta);
@@ -325,8 +343,8 @@ function renderList(reply) {
   if (items.length > 0) void describe(items);
 }
 
-// The switch is on when this profile holds the binding and the user has not
-// turned it off; the line under the title says what that means right now.
+// YouTube's switch is on when this profile holds the binding and the user has
+// not turned it off; the line under the title says what that means right now.
 function renderLink(reply) {
   const result = reply?.result;
   const status = result?.ok ? result.status : null;
@@ -348,10 +366,87 @@ function renderLink(reply) {
     key = !reply.signedIn ? 'linkSignedOut' : status.session === 'fresh' ? 'linkOn' : 'linkStale';
   }
 
+  el('youtubeRow').hidden = !onYouTubeTab;
   const toggle = el('linkSwitch');
   toggle.setAttribute('aria-checked', String(on));
   toggle.disabled = !usable;
   el('linkLine').textContent = t(key);
+}
+
+// TikTok's switch, drawn as YouTube's is, with two differences. It needs an
+// app that keeps a TikTok session, which one from before it does not. And its
+// line names another profile's binding whatever the switch says, because
+// turning it on here takes that binding over, and the app then deletes every
+// session the other profile lent -- worth knowing before the press, not after.
+function renderTiktok(reply) {
+  const result = reply?.result;
+  const status = result?.ok ? result.status : null;
+  const turnedOn = reply?.tiktokOn === true;
+  el('tiktokRow').hidden = !onTikTokTab;
+  let on = false;
+  let usable = true;
+  let key = 'tiktokOffHint';
+
+  if (!status) {
+    usable = false;
+  } else if (!status.enabled) {
+    usable = false;
+    key = 'linkDisabled';
+  } else if (!Array.isArray(status.sites) || !status.sites.includes('tiktok')) {
+    usable = false;
+    key = 'noticeUpdate';
+  } else if (!status.bound) {
+    key = status.boundBrowser ? 'linkOther' : 'tiktokOffHint';
+  } else if (turnedOn) {
+    on = true;
+    key = !reply.tiktokSignedIn ? 'tiktokSignedOut' : status.tiktokSession === 'fresh' ? 'tiktokOn' : 'linkStale';
+  }
+
+  const toggle = el('tiktokSwitch');
+  toggle.setAttribute('aria-checked', String(on));
+  toggle.disabled = !usable;
+  el('tiktokLine').textContent = t(key);
+}
+
+// The other sites' switch, drawn as TikTok's is: it needs an app that keeps
+// an other-site session, and its line names another profile's binding before
+// the press that would take it over. On, it says what İndir will do, since
+// nothing is read or held until then; off, what it is for.
+function renderOther(reply) {
+  const result = reply?.result;
+  const status = result?.ok ? result.status : null;
+  const turnedOn = reply?.otherOn === true;
+  let on = false;
+  let usable = true;
+  let key = 'otherOffHint';
+
+  if (!status) {
+    usable = false;
+  } else if (!status.enabled) {
+    usable = false;
+    key = 'linkDisabled';
+  } else if (!Array.isArray(status.sites) || !status.sites.includes('other')) {
+    usable = false;
+    key = 'noticeUpdate';
+  } else if (!status.bound) {
+    key = status.boundBrowser ? 'linkOther' : 'otherOffHint';
+  } else if (turnedOn) {
+    on = true;
+    key = 'otherOn';
+  }
+
+  const toggle = el('otherSwitch');
+  toggle.setAttribute('aria-checked', String(on));
+  toggle.disabled = !usable;
+  el('otherLine').textContent = t(key);
+}
+
+// Every answer carries every switch's facts, and any press can move the
+// others -- a claim empties every jar -- so all are drawn from each one.
+function renderSessions(reply) {
+  renderLink(reply);
+  renderTiktok(reply);
+  renderOther(reply);
 }
 
 // The worker's answer, or null when there was none to be had.
@@ -366,25 +461,31 @@ async function ask(action, fields = {}) {
 async function checkApp() {
   const reply = await ask('status');
   showProblem(problemOf(reply?.result));
-  renderLink(reply);
+  renderSessions(reply);
 }
 
-el('linkSwitch').addEventListener('click', async () => {
-  const toggle = el('linkSwitch');
-  const turningOn = toggle.getAttribute('aria-checked') !== 'true';
-  // The knob moves at once; the answer then sets it where it really is.
-  toggle.setAttribute('aria-checked', String(turningOn));
-  toggle.disabled = true;
-  const reply = await ask(turningOn ? 'connect' : 'forget');
-  if (reply?.result?.ok) {
-    showProblem(problemOf(reply.result));
-    renderLink(reply);
-  } else {
-    // A refusal carries no status to draw the switch from; asking again does,
-    // and says whether the app is gone or only its setting is off.
-    await checkApp();
-  }
-});
+const SWITCHES = { youtube: 'linkSwitch', tiktok: 'tiktokSwitch', other: 'otherSwitch' };
+
+for (const [site, id] of Object.entries(SWITCHES)) {
+  el(id).addEventListener('click', async () => {
+    const toggle = el(id);
+    const turningOn = toggle.getAttribute('aria-checked') !== 'true';
+    // The knob moves at once; the answer then sets it where it really is.
+    // No switch takes a press meanwhile: they share one binding, and a
+    // second press would be decided on what the first has not finished.
+    toggle.setAttribute('aria-checked', String(turningOn));
+    for (const other of Object.values(SWITCHES)) el(other).disabled = true;
+    const reply = await ask(turningOn ? 'connect' : 'forget', { site });
+    if (reply?.result?.ok) {
+      showProblem(problemOf(reply.result));
+      renderSessions(reply);
+    } else {
+      // A refusal carries no status to draw the switches from; asking again
+      // does, and says whether the app is gone or only its setting is off.
+      await checkApp();
+    }
+  });
+}
 
 el('noticeAction').textContent = t('btnRetry');
 el('noticeAction').addEventListener('click', () => checkApp());
@@ -399,6 +500,11 @@ async function start() {
   const host = displayHost(tab?.url);
   el('host').textContent = host;
   el('host').hidden = host === '';
+  // Shown before the app answers, so the card does not grow under the pointer.
+  onYouTubeTab = onYouTube(tab?.url);
+  el('youtubeRow').hidden = !onYouTubeTab;
+  onTikTokTab = onTikTok(tab?.url);
+  el('tiktokRow').hidden = !onTikTokTab;
 
   void checkApp();
   const reply = Number.isInteger(tab?.id) ? await ask('scan', { tabId: tab.id }) : null;

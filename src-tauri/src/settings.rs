@@ -89,8 +89,10 @@ pub struct Settings {
     pub custom_user_agent: Option<String>,
     pub debug_logging: bool,
 
-    /// Whether a signed-in browser may lend the app its YouTube session, for
-    /// content the user pays for. Desktop only; see `bridge`.
+    /// Whether a signed-in browser may lend the app its YouTube and TikTok
+    /// sessions, for content the user pays for or is old enough for. One
+    /// switch for both; the extension has one for each. Desktop only; see
+    /// `bridge`.
     ///
     /// On by default, because nothing happens until the user deliberately
     /// installs the extension and presses Connect -- making them find a toggle

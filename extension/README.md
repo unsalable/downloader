@@ -6,12 +6,19 @@ native messaging channel to the app on the same computer:
 - **It sends the videos playing in the browser to the app.** It notices the
   video and audio the open tabs fetch, lists them in its popup, and when the
   user presses **İndir** hands that one item to the app, which comes to the
-  front and downloads it at the user's default quality. The extension never
+  front with the video open on its Home screen, where the user picks the quality
+  and the watermark and downloads it. The extension never
   downloads anything itself.
-- **It lends the app the profile's YouTube session**, when the user turns the
-  switch on, so members-only videos the user pays for can be downloaded. Chrome
-  127 encrypts its cookie database against other programs on the same machine,
-  which is what stopped the download engine reading it directly.
+- **It lends the app the profile's YouTube and TikTok sessions**, each only
+  while the user has its switch on, so members-only videos the user pays for
+  and age-restricted posts the user's own TikTok account can see can be
+  downloaded. Chrome 127 encrypts its cookie database against other programs on
+  the same machine, which is what stopped the download engine reading it
+  directly. A third switch, **Diğer siteler** (Other sites), lends one more:
+  the sign-in of the site whose page **İndir** is pressed on, read at that
+  press for that site's registrable domain alone and sent just before the
+  download as a `pushSite` with `site: "other"` and the `domain`. Never in the
+  background, never YouTube's or TikTok's, and the app keeps it an hour.
 
 Nothing here listens on a port. Chrome starts `ud-bridge.exe` itself, only for
 this extension's ids, and only because the app wrote a registry value under the
@@ -24,8 +31,9 @@ from there. No host reply ever carries cookie material.
 | File | What it does |
 |---|---|
 | `media.js` | Pure helpers, no `chrome.*`: what a response is (`classify`), HLS and DASH manifests (`parseHls`, `parseDash`), and the popup's list (`rows`). Shared by the worker and the popup. |
+| `sessions.js` | Pure helpers for the lent sessions: which domain each site's cookies are read from, which of them mean a sign-in, which changes are worth a push, the push's wire head (`push` for YouTube, `pushSite` for any other site), and for the other sites' switch which site a page is (`registrableDomain`, `otherSiteOf`). |
 | `background.js` | The service worker (an ES module). Watches `webRequest`, keeps a list per tab in `chrome.storage.session`, draws the badge, answers the popup, talks to the host. |
-| `popup.*` | The list, the **İndir** buttons and the YouTube session switch. |
+| `popup.*` | The list, the **İndir** buttons and the session switches (TikTok's only on TikTok pages, the other sites' only on other sites' pages, each also while it is on). |
 | `welcome.*` | Opened once, on install. |
 | `theme.css`, `fonts/` | The app's tokens and its typeface (Inter, OFL; the licence ships beside it). |
 
@@ -54,7 +62,8 @@ of `src-tauri/src/providers/detect.rs`) list nothing at all.
 
 The tests are `node --test scripts/extension/`, outside this folder so the
 store package never carries them. They also check that `PROTECTED` still
-matches `detect.rs`.
+matches `detect.rs`, that the sites in `sessions.js` are the host's `Site`
+names, and that every sign-in cookie it names is one the app's log masks.
 
 ## Loading it for development
 
@@ -120,18 +129,23 @@ interaction.
 ## What the store listing has to say
 
 The single purpose is *sending the videos playing in the user's browser to
-Universal Downloader, a program on the same computer*. Lending the YouTube
-session is part of the same purpose: it is what lets the app download the
-members-only videos the user can already watch. The permissions map onto it:
+Universal Downloader, a program on the same computer*. Lending the YouTube and
+TikTok sessions is part of the same purpose: it is what lets the app download
+the members-only videos and age-restricted posts the user can already watch.
+So is lending, on İndir, the session of the site the user pressed it on: the
+post that site shows only to the user's own account.
+The permissions map onto it:
 
 - `webRequest` with `<all_urls>` -- seeing which videos a tab plays. There is
   no narrower pattern: the videos come from whatever server the site uses.
 - `scripting` -- reading the page's video elements and title when the popup
   opens, and re-reading a stream's playlist inside the page for its quality.
 - `nativeMessaging` -- the only channel out. No remote endpoint, no analytics.
-- `cookies` -- youtube.com only, only while the switch is on.
-- `storage` -- a profile id, the switch, and the per-tab lists (session
-  storage, gone when the browser closes).
+- `cookies` -- youtube.com and tiktok.com, each only while its switch is on;
+  and with Other sites on, the site of the page İndir is pressed on, at that
+  press only.
+- `storage` -- a profile id, the three switches, the host's last word on the
+  link, and the per-tab lists (session storage, gone when the browser closes).
 - `alarms` -- a daily refresh, so a lent session does not go stale unnoticed.
 
 Two things to know before every upload:

@@ -3,3 +3,4 @@
 // and a directory resolves to its index. This index is how the one command
 // keeps working on both.
 import './media.test.mjs';
+import './sessions.test.mjs';

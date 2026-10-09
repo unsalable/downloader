@@ -40,8 +40,24 @@ pub enum AppError {
     #[error("limited to channel members: {detail}")]
     MembershipRequired { detail: String },
 
+    /// A TikTok post shown only to a signed-in viewer: one its creator limited
+    /// to adults with audience controls, a private post or account, or one
+    /// TikTok put behind its login page. Kept apart from `Forbidden` because,
+    /// like a membership, it is a refusal the desktop has an answer to -- a
+    /// browser signed in to TikTok can lend its session. `session_tried` says
+    /// that answer was already given and TikTok still said no, which is a
+    /// different sentence for the user, and not one worth repeating.
+    #[error("TikTok shows this post only to a signed-in viewer: {detail}")]
+    TiktokSignIn { detail: String, session_tried: bool },
+
     #[error("not found ({status})")]
     NotFound { status: u16, detail: String },
+
+    /// A finished file that is no longer where the app saved it. Kept apart from
+    /// `Io` so the interface can say exactly that, and only that: any other
+    /// refusal to open a file is not evidence that it is gone.
+    #[error("file not found: {0}")]
+    FileMissing(String),
 
     /// A song shared from a music service whose recording could not be found
     /// anywhere the app can download from.
@@ -107,7 +123,16 @@ impl AppError {
             Self::NetworkBlocked(_) => "networkBlocked",
             Self::Forbidden { .. } => "forbidden",
             Self::MembershipRequired { .. } => "membershipRequired",
+            Self::TiktokSignIn {
+                session_tried: false,
+                ..
+            } => "tiktokSignIn",
+            Self::TiktokSignIn {
+                session_tried: true,
+                ..
+            } => "tiktokNotForAccount",
             Self::NotFound { .. } => "notFound",
+            Self::FileMissing(_) => "fileMissing",
             Self::NoMatch(_) => "noMatch",
             Self::Protected(_) => "protected",
             Self::RangeUnavailable(_) => "rangeUnavailable",
@@ -131,18 +156,42 @@ impl AppError {
     /// nothing on its own: the message tells the user to connect their browser,
     /// and "Try again" is the button they reach for once they have.
     pub fn retryable(&self) -> bool {
-        matches!(
-            self,
-            Self::Network(_)
-                | Self::Offline(_)
-                | Self::NetworkBlocked(_)
-                | Self::Forbidden { .. }
-                | Self::MembershipRequired { .. }
-                | Self::Engine(_)
-                | Self::Io(_)
-                | Self::DiskFull
-                | Self::Other(_)
-        )
+        match self {
+            // Like a membership on the desktop: the user turns the browser's
+            // TikTok session on, then presses Try again. Never once the session
+            // was tried -- the queue repeats a retryable failure on its own
+            // (`queue.rs`), and each repeat would spend the account on a post
+            // TikTok will not show it -- and never on a phone, which has no
+            // session to lend.
+            Self::TiktokSignIn { session_tried, .. } => !*session_tried && cfg!(windows),
+            other => matches!(
+                other,
+                Self::Network(_)
+                    | Self::Offline(_)
+                    | Self::NetworkBlocked(_)
+                    | Self::Forbidden { .. }
+                    | Self::MembershipRequired { .. }
+                    | Self::Engine(_)
+                    | Self::Io(_)
+                    | Self::DiskFull
+                    | Self::Other(_)
+            ),
+        }
+    }
+
+    /// The same refusal, seen on the run the stored session was lent for.
+    ///
+    /// Only TikTok's wall changes: it is the one refusal whose sentence to the
+    /// user depends on whether a session was already behind the request. Every
+    /// other error passes through as it came.
+    pub fn after_session(self) -> Self {
+        match self {
+            Self::TiktokSignIn { detail, .. } => Self::TiktokSignIn {
+                detail,
+                session_tried: true,
+            },
+            other => other,
+        }
     }
 
     fn english(&self) -> (&'static str, &'static str) {
@@ -173,10 +222,22 @@ impl AppError {
                 "This video is for channel members",
                 "YouTube only serves it to an account that holds the channel's membership. Connect your browser in Settings and Universal Downloader will offer that sign-in the next time you try this link.",
             ),
+            // Covers audience controls, a private post and TikTok's own login
+            // page alike, so it says what TikTok does rather than guessing
+            // which of the three the creator chose.
+            "tiktokSignIn" => (
+                "This post needs a TikTok sign-in",
+                "TikTok shows it only to signed-in viewers. Turn on TikTok session in the browser extension, in the browser where you're signed in to TikTok, then try again.",
+            ),
+            "tiktokNotForAccount" => (
+                "TikTok won't show this post to the linked account either",
+                "The account may look under 18 to TikTok, or the post may be for followers only.",
+            ),
             "notFound" => (
                 "This media no longer exists",
                 "The post may have been deleted or made private.",
             ),
+            "fileMissing" => ("File moved or deleted", "It's no longer where it was saved."),
             "noMatch" => (
                 "This song couldn't be found",
                 "No recording of it turned up on YouTube.",
@@ -312,5 +373,58 @@ impl serde::Serialize for AppError {
         S: serde::Serializer,
     {
         self.to_info().serialize(serializer)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn wall() -> AppError {
+        AppError::TiktokSignIn {
+            detail: "ERROR: [TikTok] 1: This post may not be comfortable for some audiences. Log in for access.".into(),
+            session_tried: false,
+        }
+    }
+
+    /// A refusal seen with the session behind it is told apart, and never
+    /// offered again: the queue would otherwise repeat it on its own, each
+    /// time spending the user's TikTok account on a post it will not be shown.
+    #[test]
+    fn after_session_turns_a_tiktok_wall_into_the_account_refusal() {
+        let first = wall();
+        assert_eq!(first.code(), "tiktokSignIn");
+        assert_eq!(first.retryable(), cfg!(windows));
+
+        let second = first.after_session();
+        assert_eq!(second.code(), "tiktokNotForAccount");
+        assert!(!second.retryable());
+        assert!(second
+            .technical()
+            .is_some_and(|text| text.contains("comfortable for some audiences")));
+
+        // Every other failure is what it was, session or not.
+        let forbidden = AppError::Forbidden {
+            status: 403,
+            detail: "x".into(),
+        }
+        .after_session();
+        assert_eq!(forbidden.code(), "forbidden");
+        assert!(forbidden.retryable());
+        let membership = AppError::MembershipRequired { detail: "x".into() }.after_session();
+        assert_eq!(membership.code(), "membershipRequired");
+
+        // Both have sentences of their own, not the "something went wrong"
+        // every unknown code falls back to.
+        let fallback = AppError::Other("x".into()).to_info();
+        for err in [wall(), wall().after_session()] {
+            let info = err.to_info();
+            assert!(
+                !info.title.is_empty() && !info.message.is_empty(),
+                "{info:?}"
+            );
+            assert_ne!(info.title, fallback.title);
+            assert_ne!(info.message, fallback.message);
+        }
     }
 }

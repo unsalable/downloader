@@ -22,7 +22,7 @@ import { cn } from '@/lib/cn';
 import { COLLAPSE } from '@/lib/motion';
 import { IS_MOBILE } from '@/lib/platform';
 import * as ipc from '@/services/ipc';
-import type { BridgeStatus, Settings } from '@/types';
+import type { BridgeSessionState, BridgeStatus, Settings } from '@/types';
 
 /**
  * How often the section re-reads the link while it is on screen.
@@ -80,23 +80,62 @@ export function useBridgeStatus(
 }
 
 /**
- * Which of the YouTube sign-in's states the user is looking at.
+ * Which of the browser sign-ins' states the user is looking at, taken across
+ * every site the browser lends one for.
  *
- * Ordered by what has to be fixed first. A stale session is reported as its
- * own state rather than as a connection, because a card that says "connected"
- * while the popup says otherwise is worse than either being wrong alone.
+ * Ordered by what has to be fixed first. A browser lending any sign-in that
+ * is fresh is connected: each site's own line below says which. A stale
+ * session is reported as its own state rather than as a connection, because a
+ * card that says "connected" while the popup says otherwise is worse than
+ * either being wrong alone.
  *
  * A browser that cannot start the helper is not one of these: it stops the
  * extension handing over videos as much as the sign-in, whether or not the
  * sign-in is on, so the extension's own row reports it (see `ExtensionRow`).
  */
-type LinkPhase = 'waiting' | 'signedOut' | 'quiet' | 'connected';
+export type LinkPhase = 'waiting' | 'signedOut' | 'quiet' | 'connected';
 
-function phaseOf(status: BridgeStatus): LinkPhase {
+/**
+ * Taken across YouTube's and TikTok's sign-ins alone. The other-site one is
+ * lent for an hour each time İndir is pressed on such a site, so it says
+ * nothing about whether the connection is alive -- a state built on it would
+ * read "connected" for an hour after a download and "signed out" after that,
+ * with nothing having changed. Its own line below says whether one is held.
+ */
+export function phaseOf(status: BridgeStatus): LinkPhase {
   if (!status.connected) return 'waiting';
-  if (status.session === 'stale') return 'quiet';
-  if (status.session === 'none') return 'signedOut';
-  return 'connected';
+  const sessions = [status.session, status.tiktokSession];
+  if (sessions.includes('fresh')) return 'connected';
+  if (sessions.includes('stale')) return 'quiet';
+  return 'signedOut';
+}
+
+/** What each site's line says about its session. */
+const SITE_STATE: Record<BridgeSessionState, TranslationKey> = {
+  fresh: 'settings.linkSiteFresh',
+  stale: 'settings.linkSiteStale',
+  none: 'settings.linkSiteNone',
+};
+
+/**
+ * The site the other-site sign-in is held for, or null when none is. Only a
+ * fresh one is named: a lapsed one has already been deleted, and the line
+ * then says there is none, as it does for a site never lent.
+ */
+export function otherSite(status: BridgeStatus): string | null {
+  return status.otherSession === 'fresh' && status.otherDomain ? status.otherDomain : null;
+}
+
+/**
+ * When the browser last handed a sign-in over, whichever site's it was: the
+ * question the line answers is whether the connection is alive, and a push
+ * from either says it is.
+ */
+export function lastRefreshed(status: BridgeStatus): number | null {
+  const times = [status.lastPushAt, status.tiktokLastPushAt].filter(
+    (time): time is number => time != null,
+  );
+  return times.length > 0 ? Math.max(...times) : null;
 }
 
 interface Presentation {
@@ -134,7 +173,7 @@ const PHASES: Record<LinkPhase, Presentation> = {
 };
 
 /**
- * How long ago the browser last handed the session over, in the reader's own
+ * How long ago the browser last handed a sign-in over, in the reader's own
  * language. Relative rather than a timestamp: the question this line answers is
  * whether the connection is alive, and "three days ago" answers it where a date
  * and a time leave the arithmetic to the user.
@@ -212,6 +251,8 @@ export function BrowserLinkCard({ settings, update, initialStatus = null }: Brow
   const look = phase ? PHASES[phase] : null;
   const StateIcon = look?.icon;
   const browser = status?.browser ?? t('settings.linkBrowserFallback');
+  const refreshed = status ? lastRefreshed(status) : null;
+  const other = status ? otherSite(status) : null;
 
   // "Chrome is connected" is not an answer when two Chrome windows are open, so
   // a connected link is headed by the profile as well whenever the extension
@@ -272,7 +313,7 @@ export function BrowserLinkCard({ settings, update, initialStatus = null }: Brow
                   {/* All of these describe a browser that is bound; beside
                       "no browser connected" they would describe a ghost. */}
                   {status.connected &&
-                    (status.accountHint || status.lastPushAt != null || status.extensionVersion) && (
+                    (status.accountHint || refreshed != null || status.extensionVersion) && (
                       <div
                         className={cn(
                           'mt-1.5 flex flex-wrap gap-x-3 gap-y-0.5 text-fg-muted',
@@ -282,10 +323,10 @@ export function BrowserLinkCard({ settings, update, initialStatus = null }: Brow
                         {status.accountHint && (
                           <span>{t('settings.linkAccount', { account: status.accountHint })}</span>
                         )}
-                        {status.lastPushAt != null && (
+                        {refreshed != null && (
                           <span>
                             {t('settings.linkRefreshed', {
-                              when: relativeTime(status.lastPushAt, language),
+                              when: relativeTime(refreshed, language),
                             })}
                           </span>
                         )}
@@ -298,6 +339,42 @@ export function BrowserLinkCard({ settings, update, initialStatus = null }: Brow
                         )}
                       </div>
                     )}
+
+                  {/* One line per site the browser can lend a sign-in for,
+                      because the extension has a switch for each and the
+                      state above only says whether any of them is working.
+                      The names are the sites' own and are not translated. */}
+                  {status.connected && (
+                    <>
+                      <dl
+                        className={cn(
+                          'mt-2 grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 leading-relaxed',
+                          BODY_SIZE,
+                        )}
+                      >
+                        <dt className="text-fg">YouTube</dt>
+                        <dd className="text-fg-muted">{t(SITE_STATE[status.session])}</dd>
+                        <dt className="text-fg">TikTok</dt>
+                        <dd className="text-fg-muted">{t(SITE_STATE[status.tiktokSession])}</dd>
+                        {/* Whichever site İndir last lent a sign-in for,
+                            named by its domain while it is held. */}
+                        <dt className="text-fg">{t('settings.linkOtherSites')}</dt>
+                        <dd className="min-w-0 truncate text-fg-muted">
+                          {other
+                            ? t('settings.linkOtherFresh', { site: other })
+                            : t('settings.linkSiteNone')}
+                        </dd>
+                      </dl>
+                      {/* TikTok's switch is new and off until turned on, so
+                          the one place that says it exists is here, beside
+                          the line that says it is not in use. */}
+                      {status.tiktokSession === 'none' && (
+                        <p className={cn('mt-1.5 leading-relaxed text-fg-muted', BODY_SIZE)}>
+                          {t('settings.linkTiktokHint')}
+                        </p>
+                      )}
+                    </>
+                  )}
 
                   {/* Quiet buttons have no fill to line up, so the row is
                       pulled out by their padding and the first label starts
@@ -381,8 +458,8 @@ export function extensionOffer(status: BridgeStatus | null): ExtensionOffer {
 /**
  * The extension itself: what it does, and where to get it.
  *
- * It hands the browser's videos over whether or not the YouTube sign-in is
- * on, so it has a row of its own above the switch. That makes this row the
+ * It hands the browser's videos over whether or not the sign-ins are on, so
+ * it has a row of its own above the switch. That makes this row the
  * place for a browser that can no longer start the helper as well: that stops
  * both, so it is shown whatever the switch says.
  */

@@ -28,11 +28,15 @@ use crate::downloader::plan::KeptRange;
 use crate::error::{AppError, AppResult};
 use crate::providers::engine;
 use crate::settings::Settings;
-use crate::{log_debug, logging, process, tools};
+use crate::{bridge, log_debug, logging, process, tools};
 
 /// A sentinel-prefixed, space-separated progress line. Parsing this is far more
 /// robust than scraping the human-readable progress bar.
-const PROGRESS_TEMPLATE: &str = "download:@P %(progress.downloaded_bytes)s %(progress.total_bytes)s %(progress.total_bytes_estimate)s %(progress.speed)s %(progress.eta)s";
+///
+/// The last field names the format the line is about. A run that fetches two
+/// formats counts each from zero, and without it the second one's first line
+/// reads as the whole run going backwards.
+const PROGRESS_TEMPLATE: &str = "download:@P %(progress.downloaded_bytes)s %(progress.total_bytes)s %(progress.total_bytes_estimate)s %(progress.speed)s %(progress.eta)s %(info.format_id)s";
 
 pub struct EngineDownload<'a> {
     pub url: &'a str,
@@ -48,6 +52,13 @@ pub struct EngineDownload<'a> {
     /// Request headers the source has to be asked with: the page and browser
     /// a handed-over link was playing in. Empty for everything else.
     pub headers: &'a [(String, String)],
+    /// The page a handed-over link was playing on. The other-site session is
+    /// lent by it as well as by the address (see `bridge::lends_other`).
+    pub page_url: Option<&'a str>,
+    /// The selector names two formats and only the sound of the second is
+    /// wanted: it is a rendition with a picture of its own, the only place the
+    /// source keeps its sound. See [`crate::downloader::plan::DownloadPlan::sound_from_muxed`].
+    pub sound_from_second: bool,
 }
 
 /// Download once with nothing behind it, and -- only for a refusal a linked
@@ -57,13 +68,29 @@ pub struct EngineDownload<'a> {
 /// is the overwhelmingly common case and must never cause the stored session to
 /// be written to disk. `--continue` means the second attempt picks up whatever
 /// the first managed to write, so nothing is downloaded twice.
+///
+/// The other-site session is the one exception, as it is in `analyze`: lent
+/// to the first attempt of a link on the site İndir was just pressed on, and
+/// never to a second.
 pub async fn run(
     options: EngineDownload<'_>,
     settings: &Settings,
     control: Arc<TaskControl>,
     on_progress: &mut (dyn FnMut(ProgressSample) + Send),
 ) -> AppResult<u64> {
-    let refusal = match attempt(&options, settings, &control, on_progress, None).await {
+    let other = bridge::other_lease(settings, options.url, options.page_url);
+    let other_jar = other
+        .as_ref()
+        .map(|lease| lease.path().to_string_lossy().into_owned());
+    let first = attempt(&options, settings, &control, on_progress, other_jar.as_deref()).await;
+    if let Some(lease) = &other {
+        match &first {
+            Ok(_) => lease.fold_back(),
+            Err(err) => lease.refused(options.url, err),
+        }
+    }
+    drop(other);
+    let refusal = match first {
         Ok(size) => return Ok(size),
         Err(err) => err,
     };
@@ -73,7 +100,12 @@ pub async fn run(
     };
 
     let jar = session.path().to_string_lossy().into_owned();
-    let retried = attempt(&options, settings, &control, on_progress, Some(jar.as_str())).await;
+    // A wall that stands with the session behind it is not the one that asked
+    // for it: it is not offered again, and the user is told the account itself
+    // was refused.
+    let retried = attempt(&options, settings, &control, on_progress, Some(jar.as_str()))
+        .await
+        .map_err(AppError::after_session);
 
     // The engine rewrites the jar it was handed, carrying over whatever Google
     // rotated while the download ran; folding that back is what keeps the
@@ -141,6 +173,7 @@ async fn attempt(
 
     let mut reader = BufReader::new(stdout).lines();
     let mut last_sample: Option<ProgressSample> = None;
+    let mut run_progress = RunProgress::default();
     let mut last_emit = Instant::now();
     let mut poll = tokio::time::interval(Duration::from_millis(250));
     poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
@@ -150,7 +183,8 @@ async fn attempt(
             line = reader.next_line() => {
                 match line {
                     Ok(Some(line)) => {
-                        if let Some(sample) = parse_progress(&line) {
+                        if let Some(sample) = parse_progress(&line).or_else(|| already_on_disk(&line)) {
+                            let sample = run_progress.fold(progress_part(&line), sample);
                             // Rate-limit the emission, not the parsing: the
                             // engine can print several times a second.
                             if last_emit.elapsed() >= Duration::from_millis(400) {
@@ -282,6 +316,38 @@ fn download_args(
     if let Some(container) = options.merge_container {
         args.push("--merge-output-format".into());
         args.push(container.to_string());
+    }
+
+    if options.sound_from_second {
+        // Without this the engine allows one picture per file and settles it
+        // by dropping the second format outright: `V+M` comes back as `V`
+        // alone, the silent file this flag exists to prevent (measured,
+        // 2026.08.19).
+        args.push("--video-multistreams".into());
+        // With it, the engine's merger maps every picture of both inputs --
+        // measured, `-map 0:v:0 -map 1:a:0 -map 1:v:0`, a file with the
+        // second rendition's picture as a second video track. Its own output
+        // arguments come after those maps, so a negative map there takes that
+        // picture back out.
+        //
+        // Both this and the section below lean on the order in which this
+        // engine lays out an FFmpeg command line, and the engine is updated
+        // from its latest release underneath the app. Should that order ever
+        // flip, the file gains a stray track rather than losing its sound; the
+        // ignored TikTok test in tests/pipeline.rs is what notices.
+        args.push("--ppa".into());
+        args.push("Merger+ffmpeg_o:-map -1:v".into());
+        if options.section.is_some() {
+            // A section skips the merger: one FFmpeg reads both formats and
+            // keeps the first stream of each (`-map 0:0 -map 1:0`). TikTok's
+            // rendition happens to list its sound first; one that lists its
+            // picture first arrived with two pictures and no sound. Whatever
+            // was taken from the second input is replaced by its sound. Only
+            // with a section: a single-format FFmpeg download has no input 1
+            // to take it from.
+            args.push("--downloader-args".into());
+            args.push("ffmpeg_o:-map -1 -map 1:a:0".into());
+        }
     }
 
     // Point the engine at the same FFmpeg the app manages, so it never picks up
@@ -480,6 +546,76 @@ fn parse_progress(line: &str) -> Option<ProgressSample> {
     })
 }
 
+/// Which of a run's formats an `@P` line is about: its last field. `None` for
+/// a line that does not name one.
+fn progress_part(line: &str) -> Option<&str> {
+    line.strip_prefix("@P")?
+        .split_whitespace()
+        .nth(5)
+        .filter(|part| *part != "NA")
+}
+
+/// A format the engine found complete on disk from an earlier run, which it
+/// reports as a size with no count: `@P NA 36463968 NA NA NA bytevc1_...`.
+///
+/// Measured (2026.08.19) on a resumed two-format run. Read as nothing, the
+/// finished first part never reached [`RunProgress`], and the bar counted the
+/// second part alone against the size of both. Only a line that names its
+/// format is read this way; the count is the size, since it is all there.
+fn already_on_disk(line: &str) -> Option<ProgressSample> {
+    let mut fields = line.strip_prefix("@P")?.split_whitespace();
+    if fields.next()? != "NA" {
+        return None;
+    }
+    let size = parse_number(fields.next()?)? as u64;
+    progress_part(line)?;
+    Some(ProgressSample {
+        received: size,
+        total: Some(size),
+        speed_bps: 0.0,
+        eta_sec: None,
+        percent: Some(100.0),
+        resumable: true,
+    })
+}
+
+/// Progress across every file of a run, rather than each file's own.
+///
+/// A run that fetches two formats reports each from zero. Measured on a TikTok
+/// video whose sound comes out of a second rendition the size of the first,
+/// the bar stood at 49% when the picture finished and at 0% a moment later.
+/// What the finished files came to is carried into the later ones' counts.
+#[derive(Default)]
+struct RunProgress {
+    part: Option<String>,
+    carried: u64,
+    last_received: u64,
+}
+
+impl RunProgress {
+    fn fold(&mut self, part: Option<&str>, mut sample: ProgressSample) -> ProgressSample {
+        if let Some(part) = part {
+            if self.part.as_deref() != Some(part) {
+                if self.part.is_some() {
+                    self.carried += self.last_received;
+                }
+                self.part = Some(part.to_string());
+            }
+        }
+        self.last_received = sample.received;
+        if self.carried == 0 {
+            return sample;
+        }
+        sample.received += self.carried;
+        sample.total = sample.total.map(|total| total + self.carried);
+        sample.percent = sample
+            .total
+            .filter(|total| *total > 0)
+            .map(|total| (sample.received as f64 / total as f64 * 100.0).clamp(0.0, 100.0));
+        sample
+    }
+}
+
 fn parse_number(value: &str) -> Option<f64> {
     if value.is_empty() || value == "NA" || value == "None" {
         return None;
@@ -500,6 +636,8 @@ mod tests {
             section,
             force_keyframes,
             headers: &[],
+            page_url: None,
+            sound_from_second: false,
         }
     }
 
@@ -772,6 +910,125 @@ mod tests {
         assert!(parse_progress("[download] Destination: video.mp4").is_none());
         assert!(parse_progress("").is_none());
         assert!(parse_progress("@P").is_none());
+    }
+
+    fn borrowing(section: Option<KeptRange>) -> Vec<String> {
+        let mut options = options(section, false);
+        options.format_selector = "bytevc1_1080p_1511769-0+h264_720p_1207492-0";
+        options.sound_from_second = true;
+        download_args(&options, Vec::new(), None)
+    }
+
+    #[test]
+    fn sound_out_of_a_second_rendition_keeps_one_picture_and_that_sound() {
+        // Measured with yt-dlp 2026.08.19: without the first flag the second
+        // format is dropped and the file is silent; without the second the
+        // file carries both pictures.
+        let args = borrowing(None);
+        assert!(args.iter().any(|arg| arg == "--video-multistreams"));
+        assert_eq!(value_after(&args, "--ppa").as_deref(), Some("Merger+ffmpeg_o:-map -1:v"));
+        assert!(
+            !args.iter().any(|arg| arg == "--downloader-args"),
+            "a whole download goes through the merger, and a single-format FFmpeg \
+             download handed `-map 1:a:0` would have no second input to take it from"
+        );
+        assert_eq!(args.last().unwrap(), "https://example.test/watch?v=x");
+    }
+
+    #[test]
+    fn a_section_of_a_borrowed_sound_maps_the_sound_and_not_the_first_stream() {
+        let args = borrowing(Some(range(10.0, 15.0)));
+        assert_eq!(
+            value_after(&args, "--downloader-args").as_deref(),
+            Some("ffmpeg_o:-map -1 -map 1:a:0")
+        );
+        assert!(args.iter().any(|arg| arg == "--video-multistreams"));
+        assert_eq!(args.last().unwrap(), "https://example.test/watch?v=x");
+    }
+
+    #[test]
+    fn an_ordinary_merge_asks_for_none_of_it() {
+        for section in [None, Some(range(10.0, 15.0))] {
+            let args = args_for(section, false);
+            for flag in ["--video-multistreams", "--ppa", "--downloader-args"] {
+                assert!(!args.iter().any(|arg| arg == flag), "{flag}");
+            }
+        }
+    }
+
+    #[test]
+    fn the_progress_line_names_the_format_it_is_about() {
+        assert_eq!(
+            progress_part("@P 1024 37655063 NA 97497.6 386 h264_720p_1207492-0"),
+            Some("h264_720p_1207492-0")
+        );
+        // A line from before the field existed still parses, and names nothing.
+        assert_eq!(progress_part("@P 1024 37655063 NA 97497.6 386"), None);
+        assert!(parse_progress("@P 1024 37655063 NA 97497.6 386 h264_720p_1207492-0").is_some());
+    }
+
+    #[test]
+    fn a_run_of_two_formats_never_goes_backwards() {
+        // The run the engine reported for the TikTok video on 2026-10-08, cut
+        // down to a few lines: the picture, then the rendition whose sound is
+        // taken.
+        let lines = [
+            "@P 1024 36463968 NA NA NA bytevc1_1080p_1511769-0",
+            "@P 18000000 36463968 NA 2.4e7 1 bytevc1_1080p_1511769-0",
+            "@P 36463968 36463968 NA 2.4e7 0 bytevc1_1080p_1511769-0",
+            "@P 1024 37655063 NA 97497.6 386 h264_720p_1207492-0",
+            "@P 37655063 37655063 NA 2.4e7 0 h264_720p_1207492-0",
+        ];
+        let mut run = RunProgress::default();
+        let mut previous = 0u64;
+        let mut samples = Vec::new();
+        for line in lines {
+            let sample = run.fold(progress_part(line), parse_progress(line).unwrap());
+            assert!(sample.received >= previous, "{line}: {} after {previous}", sample.received);
+            previous = sample.received;
+            samples.push(sample);
+        }
+        assert_eq!(samples[3].received, 36_463_968 + 1024);
+        assert_eq!(samples[3].total, Some(36_463_968 + 37_655_063));
+        assert_eq!(samples[4].received, 36_463_968 + 37_655_063);
+        assert_eq!(samples[4].percent, Some(100.0));
+    }
+
+    #[test]
+    fn a_single_format_run_is_reported_as_it_comes() {
+        let mut run = RunProgress::default();
+        let line = "@P 500 1000 NA 100.0 5 137";
+        let sample = run.fold(progress_part(line), parse_progress(line).unwrap());
+        assert_eq!(sample.received, 500);
+        assert_eq!(sample.total, Some(1000));
+        assert_eq!(sample.percent, Some(50.0));
+    }
+
+    #[test]
+    fn a_resumed_run_counts_the_part_it_already_had() {
+        // The lines the engine printed when the picture was already on disk.
+        let lines = [
+            "@P NA 36463968 NA NA NA bytevc1_1080p_1511769-1",
+            "@P 1024 37655063 NA NA NA h264_720p_1207492-1",
+            "@P 37655063 37655063 NA 2.2e7 NA h264_720p_1207492-1",
+        ];
+        let mut run = RunProgress::default();
+        let samples: Vec<ProgressSample> = lines
+            .iter()
+            .map(|line| {
+                let sample = parse_progress(line).or_else(|| already_on_disk(line)).unwrap();
+                run.fold(progress_part(line), sample)
+            })
+            .collect();
+        assert_eq!(samples[0].received, 36_463_968);
+        assert_eq!(samples[1].received, 36_463_968 + 1024);
+        assert_eq!(samples[2].received, 36_463_968 + 37_655_063);
+        assert_eq!(samples[2].percent, Some(100.0));
+
+        // Only a line that names its format, and only with a size in it.
+        assert!(already_on_disk("@P NA 36463968 NA NA NA").is_none());
+        assert!(already_on_disk("@P NA NA NA NA NA bytevc1_1080p_1511769-1").is_none());
+        assert!(already_on_disk("@P 1024 37655063 NA NA NA h264_720p_1207492-1").is_none());
     }
 
     #[test]

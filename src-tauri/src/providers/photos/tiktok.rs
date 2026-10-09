@@ -494,6 +494,12 @@ mod tests {
         assert_eq!(second.formats[0].container, "jpg");
         assert_eq!(second.formats[0].quality_label, "1080x1350");
         assert!(second.formats[0].url.as_deref().unwrap().contains("/photomode/1~"));
+
+        // The pictures to pick from, each drawn with itself. The soundtrack is
+        // the post's, not an item to pick.
+        assert_eq!(post.items.len(), 3);
+        assert!(post.items.iter().all(|item| item.kind == MediaKind::Image));
+        assert!(post.items[1].thumbnail_url.as_deref().unwrap().contains("/photomode/1~"));
     }
 
     #[test]
@@ -501,6 +507,7 @@ mod tests {
         let post = parse_page(&page(photo_post(1), 0), "https://www.tiktok.com/@natgeo/photo/1").unwrap().unwrap();
         assert_eq!(post.media_kind, MediaKind::Image);
         assert_eq!(post.formats.len(), 2);
+        assert!(post.items.is_empty());
     }
 
     #[test]

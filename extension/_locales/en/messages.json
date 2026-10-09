@@ -14,7 +14,7 @@
   },
   "btnDownload": {
     "message": "Get",
-    "description": "Button on each row. Hands the video to the app, which downloads it at once. Kept to a short word: the popup is 340 px wide, and a longer label cuts the row's quality and length short."
+    "description": "Button on each row. Hands the video to the app, which opens it so the quality can be chosen there. Kept to a short word: the popup is 340 px wide, and a longer label cuts the row's quality and length short."
   },
   "btnSent": {
     "message": "Sent",
@@ -62,10 +62,54 @@
   "linkStale": { "message": "Not refreshed for a while" },
   "linkOffHint": {
     "message": "For members-only videos",
-    "description": "Under the switch while it is off: what turning it on is for."
+    "description": "Under the YouTube switch while it is off: what turning it on is for."
   },
   "linkDisabled": { "message": "Off in Universal Downloader" },
-  "linkOther": { "message": "Another profile is connected" },
+  "linkOther": {
+    "message": "Another profile is connected",
+    "description": "Under either switch while another browser profile holds the connection. Turning the switch on here takes it over."
+  },
+
+  "tiktokTitle": {
+    "message": "TikTok session",
+    "description": "Title of the switch that lends this profile's TikTok sign-in to the app. Shown on TikTok pages, and on any page while it is on."
+  },
+  "tiktokOn": {
+    "message": "Connected for age-restricted posts",
+    "description": "Under the TikTok switch while it is on and the app holds a current TikTok sign-in."
+  },
+  "tiktokSignedOut": {
+    "message": "Not signed in to TikTok",
+    "description": "Under the TikTok switch while it is on but the browser is not signed in to TikTok."
+  },
+  "tiktokOffHint": {
+    "message": "For age-restricted posts",
+    "description": "Under the TikTok switch while it is off: what turning it on is for."
+  },
+  "otherTitle": {
+    "message": "Other sites",
+    "description": "Title of the switch that lends the sign-in of the site Get is pressed on -- any site but YouTube and TikTok -- to the app, for that download. Shown on such sites' pages, and on any page while it is on."
+  },
+  "otherOn": {
+    "message": "Only for the site you press Get on",
+    "description": "Under the Other sites switch while it is on: pressing Get on a page hands the app that one site's sign-in, for that download, and nothing else."
+  },
+  "otherOffHint": {
+    "message": "For Instagram, X and more",
+    "description": "Under the Other sites switch while it is off: what turning it on is for. The names are examples of sites, left untranslated."
+  },
+  "rowSignIn": {
+    "message": "Needs your TikTok sign-in",
+    "description": "Details line of a row whose post TikTok shows only to signed-in viewers, while the TikTok switch is off or the browser is signed out. The Get button stays."
+  },
+  "rowWithSession": {
+    "message": "Downloads with your TikTok sign-in",
+    "description": "Details line of a row whose post TikTok shows only to signed-in viewers, while the TikTok switch is on and the browser is signed in."
+  },
+  "sessionsTitle": {
+    "message": "Sign-ins",
+    "description": "Heading on the welcome page, above the paragraph about the session switches."
+  },
 
   "welcomeTitle": { "message": "Universal Downloader Connector is ready" },
   "step1Title": { "message": "Open Universal Downloader once" },
@@ -74,16 +118,17 @@
   "step2Body": { "message": "On any site. The extension notices what the page plays." },
   "step3Title": { "message": "Click the toolbar icon, then Get" },
   "step3Body": {
-    "message": "Universal Downloader comes to the front and downloads it at your default quality."
+    "message": "Universal Downloader comes to the front with the video open, where you choose the quality and the watermark and download it."
   },
   "welcomeSession": {
-    "message": "For members-only YouTube videos, turn on YouTube session in the popup. It lends your YouTube sign-in to the app on this computer, and stays off until you turn it on."
+    "message": "For members-only YouTube videos, turn on YouTube session in the popup; for age-restricted TikTok posts, TikTok session, which the popup shows on TikTok; for posts on other sites that only your account can see, Other sites, which lends the sign-in of the site you press Get on, for that download. Each lends only to the app on this computer, and stays off until you turn it on.",
+    "description": "Welcome page paragraph under the Sign-ins heading. The three switch names are the popup's titles for them."
   },
   "pinTitle": { "message": "Keep it within reach" },
   "pinBody": {
     "message": "Chrome hides new extensions behind the puzzle-piece button next to the address bar. Click it, then the pin beside Universal Downloader Connector."
   },
   "privacyBody": {
-    "message": "The extension sends nothing anywhere but to Universal Downloader on this computer, and the app downloads a video only when you press Get."
+    "message": "The extension sends nothing anywhere but to Universal Downloader on this computer, and the app downloads a video only when you choose to."
   }
 }

@@ -71,6 +71,20 @@ windows-sys = { version = "0.59", features = [
     "Win32_System_JobObjects",
     "Win32_System_Threading",
 ] }
+# The share sheet (IDataTransferManagerInterop, DataTransferManager and
+# StorageFile) and COM for ShellExecute. The same 0.61 that tauri, wry and tao
+# already compile -- named here only to switch these features on, not a second
+# copy -- and it has to move with tauri's, whose `WebviewWindow::hwnd` hands
+# back its HWND. windows-collections is where its IIterable lives; it is in the
+# tree already.
+windows = { version = "0.61", features = [
+    "ApplicationModel_DataTransfer", # DataTransferManager, DataPackage, DataRequest
+    "Storage_Streams",               # StorageFile is gated on it (+Storage: IStorageItem)
+    "Win32_UI_Shell",                # IDataTransferManagerInterop
+    "Win32_Foundation",              # HWND
+    "Win32_System_Com",              # CoInitializeEx for ShellExecute
+] }
+windows-collections = "0.2"
 
 [profile.release]
 panic = "abort"

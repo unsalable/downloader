@@ -18,10 +18,15 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::bridge::protocol::{Browser, Cookie, Peer, Push, SessionState, SESSION_TTL_SECS};
+use crate::bridge::protocol::{
+    Browser, Cookie, Peer, Push, SessionState, Site, OTHER_SESSION_TTL_SECS, SESSION_TTL_SECS,
+};
 use crate::bridge::store;
 use crate::error::{AppError, AppResult};
 
+/// YouTube's session is described by the top-level fields, which every build
+/// since the first reads and writes; every other site's has a record of its
+/// own under the site's name.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LinkState {
@@ -48,7 +53,43 @@ pub struct LinkState {
     pub cookie_names: Vec<String>,
 
     #[serde(default)]
+    pub tiktok: SiteRecord,
+
+    /// The other-site session's, with the site it is for in `domain`. Absent
+    /// from every file written before there was one, and dropped by any build
+    /// from before it that rewrites the file -- which leaves a jar with no
+    /// push time, and so one that reads as lapsed and is deleted.
+    #[serde(default)]
+    pub other: SiteRecord,
+
+    #[serde(default)]
     pub last_error: Option<String>,
+}
+
+/// What `state.json` says about a session other than YouTube's.
+///
+/// A binary from before this record rewrites the file with load-modify-write
+/// (see `update`) and drops the field it does not know. The session then reads
+/// as having no push time, which `session_state` treats as stale until the
+/// browser next pushes -- the safe reading, and one that heals by itself.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SiteRecord {
+    #[serde(default)]
+    pub last_push_at: Option<i64>,
+
+    #[serde(default)]
+    pub cookie_count: usize,
+
+    /// Names only, as for YouTube's jar.
+    #[serde(default)]
+    pub cookie_names: Vec<String>,
+
+    /// Which site the session is for. Only the other-site record has one --
+    /// TikTok's domain is fixed -- and it is left out of the file when absent,
+    /// so TikTok's record is written exactly as it was before the field.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub domain: Option<String>,
 }
 
 /// The browser profile currently allowed to push.
@@ -74,6 +115,8 @@ impl Default for LinkState {
             last_push_at: None,
             cookie_count: 0,
             cookie_names: Vec::new(),
+            tiktok: SiteRecord::default(),
+            other: SiteRecord::default(),
             last_error: None,
         }
     }
@@ -139,48 +182,128 @@ pub(super) fn bind(peer: &Peer) -> AppResult<()> {
     update(|state| state.bound = Some(bound_from(peer)))
 }
 
-/// Record a stored push: how many cookies, which names, and when.
+/// Record a stored push of `site`'s session: how many cookies were kept, which
+/// names, and when.
+pub(super) fn record_push(push: &Push, site: Site, kept: &[Cookie]) -> AppResult<()> {
+    update(|state| apply_push(state, push, site, kept))
+}
+
+/// What recording a push changes, apart from the file it is written to.
 ///
-/// This also binds when nothing is bound yet, which is what makes the first
-/// push after installing the extension connect without a second step.
-pub(super) fn record_push(push: &Push) -> AppResult<()> {
+/// Recording a push does not bind. Binding is `claim`, and only `claim`,
+/// because a push that could bind would make "Turn off" last exactly until the
+/// next cookie change: Forget clears the binding and the push arriving seconds
+/// later would quietly re-create it.
+fn apply_push(state: &mut LinkState, push: &Push, site: Site, kept: &[Cookie]) {
+    match site {
+        Site::Youtube => {
+            state.account_hint = push.account_hint.clone();
+            state.last_push_at = Some(push.captured_at);
+            state.cookie_count = kept.len();
+            state.cookie_names = names_of(kept);
+        }
+        // The account hint stays YouTube's: it is the one Settings shows, and a
+        // TikTok push carrying none must not wipe it.
+        Site::Tiktok => {
+            state.tiktok = SiteRecord {
+                last_push_at: Some(push.captured_at),
+                cookie_count: kept.len(),
+                cookie_names: names_of(kept),
+                domain: None,
+            }
+        }
+        // The capture time is the extension's clock, and it decides when the
+        // jar lapses; one from the future is taken as now, so a wrong clock
+        // can shorten an hour but never stretch it.
+        Site::Other => {
+            state.other = SiteRecord {
+                last_push_at: Some(push.captured_at.min(chrono::Utc::now().timestamp())),
+                cookie_count: kept.len(),
+                cookie_names: names_of(kept),
+                domain: push.domain.clone(),
+            }
+        }
+    }
+
+    refresh_bound(state, &push.peer);
+    state.last_error = None;
+}
+
+/// Record a push that left `site` with nothing to lend -- the profile signed
+/// out, or nothing of the site's was in it. The session's record goes, as
+/// `clear_session` drops it, and the push still says which extension the bound
+/// profile runs.
+pub(super) fn record_signed_out(push: &Push, site: Site) -> AppResult<()> {
     update(|state| {
-        // Recording a push does not bind. Binding is `claim`, and only
-        // `claim`, because a push that could bind would make "Turn off" last
-        // exactly until the next cookie change: Forget clears the binding and
-        // the push arriving seconds later would quietly re-create it.
-        state.account_hint = push.account_hint.clone();
-        state.last_push_at = Some(push.captured_at);
-        state.cookie_count = push.cookies.len();
-        state.cookie_names = names_of(&push.cookies);
-        state.last_error = None;
+        clear(state, site);
+        refresh_bound(state, &push.peer);
     })
+}
+
+/// Bring the binding up to date with what the bound profile says about itself.
+///
+/// The bound profile's extension updates itself, and only a claim used to
+/// record which version it was -- so Settings went on naming the version the
+/// browser was connected with, long after the browser had moved on. A push is
+/// only ever accepted from the bound profile, so what it says is the truth.
+fn refresh_bound(state: &mut LinkState, peer: &Peer) {
+    let Some(bound) = state
+        .bound
+        .as_mut()
+        .filter(|bound| bound.profile_id == peer.profile_id)
+    else {
+        return;
+    };
+    bound.extension_version = peer.extension_version.clone();
+    // An extension that could not tell which browser it runs in says nothing
+    // new, and the name it was bound with is the better one.
+    if peer.browser != Browser::Unknown {
+        bound.browser = peer.browser;
+    }
 }
 
 /// Record the jar the engine rotated during a run.
 ///
-/// Deliberately does not touch `last_push_at`: that field means "when the
+/// Deliberately does not touch the push time: that field means "when the
 /// browser last spoke to us", and it is what decides whether the session has
 /// gone stale. A download refreshing cookies says nothing about whether the
 /// browser is still running with the extension enabled, and bumping it here
 /// would let a session that no browser has touched for a month look fresh
 /// forever.
-pub(super) fn record_rotation(cookies: &[Cookie]) -> AppResult<()> {
-    update(|state| {
-        state.cookie_count = cookies.len();
-        state.cookie_names = names_of(cookies);
+pub(super) fn record_rotation(site: Site, cookies: &[Cookie]) -> AppResult<()> {
+    update(|state| match site {
+        Site::Youtube => {
+            state.cookie_count = cookies.len();
+            state.cookie_names = names_of(cookies);
+        }
+        Site::Tiktok => {
+            state.tiktok.cookie_count = cookies.len();
+            state.tiktok.cookie_names = names_of(cookies);
+        }
+        Site::Other => {
+            state.other.cookie_count = cookies.len();
+            state.other.cookie_names = names_of(cookies);
+        }
     })
 }
 
-/// Drop everything that describes a stored session, keeping the binding: a
-/// profile that signed out is still the connected profile.
-pub(super) fn clear_session() -> AppResult<()> {
-    update(|state| {
-        state.account_hint = None;
-        state.last_push_at = None;
-        state.cookie_count = 0;
-        state.cookie_names = Vec::new();
-    })
+/// Drop everything that describes `site`'s stored session, keeping the
+/// binding: a profile that signed out is still the connected profile.
+pub(super) fn clear_session(site: Site) -> AppResult<()> {
+    update(|state| clear(state, site))
+}
+
+fn clear(state: &mut LinkState, site: Site) {
+    match site {
+        Site::Youtube => {
+            state.account_hint = None;
+            state.last_push_at = None;
+            state.cookie_count = 0;
+            state.cookie_names = Vec::new();
+        }
+        Site::Tiktok => state.tiktok = SiteRecord::default(),
+        Site::Other => state.other = SiteRecord::default(),
+    }
 }
 
 /// Leave a note for the interface and the support paste. Best effort by
@@ -238,8 +361,15 @@ fn names_of(cookies: &[Cookie]) -> Vec<String> {
     cookies.iter().map(|cookie| cookie.name.clone()).collect()
 }
 
+/// Whether an other-site session captured at `captured_at` is still inside
+/// its hour at `now`. One with no capture time recorded is not: the record was
+/// lost, and a jar nobody can date is a jar to delete.
+pub(super) fn other_fresh(captured_at: Option<i64>, now: i64) -> bool {
+    captured_at.is_some_and(|at| now - at <= OTHER_SESSION_TTL_SECS)
+}
+
 impl LinkState {
-    /// How much a stored session is worth right now.
+    /// How much `site`'s stored session is worth right now.
     ///
     /// The blob on disk is the authority for whether a session exists at all;
     /// `state.json` only describes it. They are written a moment apart by the
@@ -247,15 +377,37 @@ impl LinkState {
     /// -- a jar the app cannot see may as well not exist, and a record with no
     /// jar behind it would have the interface promising a download that then
     /// fails with nothing to explain it.
-    pub fn session_state(&self) -> SessionState {
-        if !store::session_exists() {
+    pub fn session_state(&self, site: Site) -> SessionState {
+        if !store::session_exists(site) {
             return SessionState::None;
         }
+        self.session_state_at(site, chrono::Utc::now().timestamp())
+    }
+
+    /// `session_state` for a jar that exists, at `now`: the part of it that
+    /// touches no file, which is what the tests can ask about.
+    ///
+    /// The other-site session has no stale state. It is lent for the download
+    /// İndir started and lapses an hour after it was captured; past that it
+    /// is no session at all, and the next sweep (`drop_lapsed`) deletes it.
+    pub(super) fn session_state_at(&self, site: Site, now: i64) -> SessionState {
+        let last_push_at = match site {
+            Site::Youtube => self.last_push_at,
+            Site::Tiktok => self.tiktok.last_push_at,
+            Site::Other => {
+                return if other_fresh(self.other.last_push_at, now) {
+                    SessionState::Fresh
+                } else {
+                    SessionState::None
+                };
+            }
+        };
 
         // No recorded push time means the record was lost while the jar
-        // survived. Treating that as ancient rather than as fresh is the
-        // conservative reading, and a reconnect costs the user one click.
-        let age = chrono::Utc::now().timestamp() - self.last_push_at.unwrap_or(0);
+        // survived -- an older build rewriting this file drops TikTok's, for
+        // one. Treating that as ancient rather than as fresh is the
+        // conservative reading, and the next push from the browser heals it.
+        let age = now - last_push_at.unwrap_or(0);
         if age > SESSION_TTL_SECS {
             SessionState::Stale
         } else {
@@ -281,31 +433,48 @@ impl LinkState {
         load()
     }
 
-    /// Store a pushed session and record it.
+    /// Store a pushed session as `site`'s and record it.
     ///
     /// Whether this peer is *allowed* to push is the caller's decision, not
     /// this function's: the host answers an unpaired profile with an error
     /// rather than with a silent refusal, and only it knows how to say so.
-    pub fn accept_push(push: &Push) -> AppResult<()> {
-        store::save(push)
+    /// Which site the push is for is the caller's to have checked too.
+    pub fn accept_push(push: &Push, site: Site) -> AppResult<()> {
+        store::save(push, site)
     }
 
-    /// Move the binding to `peer`, which is what the Connect button does.
+    /// Move the binding to `peer`, which is what the Connect button does --
+    /// and what either of the extension's session switches does when another
+    /// profile holds the binding.
+    ///
+    /// Taking the binding from another profile deletes every jar that profile
+    /// pushed, not only the one for the site whose switch was pressed: the
+    /// binding is one, and so is the answer to whose sessions these are.
     pub fn claim(peer: &Peer) -> AppResult<()> {
         // A stored jar belongs to the profile that pushed it. Carrying it over
         // to a profile that just took the binding would present one account's
         // session as another's, which is how a work profile ends up quietly
         // downloading with a personal membership.
         if !load().is_bound_to(&peer.profile_id) {
-            store::forget()?;
+            store::forget_all()?;
         }
         bind(peer)
     }
 
-    /// Delete the session and the binding, from either side of the link.
+    /// Delete every session and the binding, from either side of the link.
     pub fn forget() -> AppResult<()> {
-        store::forget()?;
+        store::forget_all()?;
         unbind()
+    }
+
+    /// Delete the other-site session once its hour is up.
+    ///
+    /// The engine never leases a lapsed one, so this is not what keeps it
+    /// from being used; it is what keeps it from being kept. Swept by the host
+    /// on every request it handles, and by the app as it starts and whenever
+    /// Settings reads the link -- the moments something is running to do it.
+    pub fn drop_lapsed() {
+        store::drop_lapsed();
     }
 }
 
@@ -400,5 +569,149 @@ mod tests {
         };
         let text = serde_json::to_string(&state).unwrap();
         assert!(!text.contains("the-actual-session"), "{text}");
+    }
+
+    fn push(profile_id: &str, version: &str, site: Site) -> Push {
+        Push {
+            peer: Peer {
+                profile_id: profile_id.to_string(),
+                extension_version: version.to_string(),
+                ..peer()
+            },
+            site: Some(site),
+            domain: (site == Site::Other).then(|| "instagram.com".to_string()),
+            signed_in: true,
+            account_hint: None,
+            captured_at: 1_900_000_000,
+            cookies: vec![Cookie {
+                domain: ".tiktok.com".to_string(),
+                name: "sessionid".to_string(),
+                value: "the-actual-tiktok-session".to_string(),
+                path: "/".to_string(),
+                secure: true,
+                http_only: true,
+                expiration_date: None,
+            }],
+        }
+    }
+
+    /// Every state file written before TikTok's record existed has to open,
+    /// as one with no TikTok session in it.
+    #[test]
+    fn a_state_file_from_before_tiktok_still_opens() {
+        let state: LinkState = serde_json::from_str(r#"{"enabled":true,"lastPushAt":5}"#).unwrap();
+        assert_eq!(state.last_push_at, Some(5));
+        assert_eq!(state.tiktok, SiteRecord::default());
+    }
+
+    #[test]
+    fn a_tiktok_push_is_recorded_apart_from_youtubes_and_never_its_values() {
+        let mut state = LinkState {
+            account_hint: Some("m•••@gmail.com".to_string()),
+            last_push_at: Some(7),
+            ..LinkState::default()
+        };
+        let pushed = push("profile-a", "1.0.5", Site::Tiktok);
+        apply_push(&mut state, &pushed, Site::Tiktok, &pushed.cookies);
+
+        assert_eq!(state.last_push_at, Some(7));
+        assert_eq!(state.account_hint.as_deref(), Some("m•••@gmail.com"));
+        assert_eq!(state.tiktok.last_push_at, Some(1_900_000_000));
+        assert_eq!(state.tiktok.cookie_count, 1);
+
+        let text = serde_json::to_string(&state).unwrap();
+        assert!(
+            text.contains(
+                r#""tiktok":{"lastPushAt":1900000000,"cookieCount":1,"cookieNames":["sessionid"]}"#
+            ),
+            "{text}"
+        );
+        assert!(!text.contains("the-actual-tiktok-session"), "{text}");
+    }
+
+    /// Every state file written before the other-site record existed opens,
+    /// as one with no other-site session -- and TikTok's record is written
+    /// exactly as it was, with no `domain` for an older build to trip on.
+    #[test]
+    fn a_state_file_from_before_other_sites_still_opens() {
+        let state: LinkState = serde_json::from_str(
+            r#"{"enabled":true,"tiktok":{"lastPushAt":9,"cookieCount":1,"cookieNames":["sessionid"]}}"#,
+        )
+        .unwrap();
+        assert_eq!(state.tiktok.last_push_at, Some(9));
+        assert_eq!(state.other, SiteRecord::default());
+        assert_eq!(state.session_state_at(Site::Other, 9), SessionState::None);
+
+        let text = serde_json::to_string(&state).unwrap();
+        assert!(!text.contains("domain"), "{text}");
+    }
+
+    #[test]
+    fn an_other_push_is_recorded_with_its_site_and_never_its_values() {
+        let mut state = LinkState {
+            last_push_at: Some(7),
+            ..LinkState::default()
+        };
+        let mut pushed = push("profile-a", "1.0.5", Site::Other);
+        pushed.cookies[0].domain = ".instagram.com".into();
+        pushed.captured_at = 1_700_000_000;
+        apply_push(&mut state, &pushed, Site::Other, &pushed.cookies);
+
+        assert_eq!(state.last_push_at, Some(7));
+        assert_eq!(state.tiktok, SiteRecord::default());
+        assert_eq!(state.other.last_push_at, Some(1_700_000_000));
+        assert_eq!(state.other.domain.as_deref(), Some("instagram.com"));
+        assert_eq!(state.other.cookie_names, ["sessionid"]);
+
+        let text = serde_json::to_string(&state).unwrap();
+        assert!(text.contains(r#""domain":"instagram.com""#), "{text}");
+        assert!(!text.contains("the-actual-tiktok-session"), "{text}");
+
+        // Fresh for its hour, then no session at all -- never stale.
+        assert_eq!(state.session_state_at(Site::Other, 1_700_000_000 + 3_600), SessionState::Fresh);
+        assert_eq!(state.session_state_at(Site::Other, 1_700_000_000 + 3_601), SessionState::None);
+
+        clear(&mut state, Site::Other);
+        assert_eq!(state.other, SiteRecord::default());
+    }
+
+    /// The extension's clock decides when the jar lapses, and a clock that
+    /// runs ahead may shorten the hour but never stretch it.
+    #[test]
+    fn an_other_push_from_the_future_is_dated_now() {
+        let mut state = LinkState::default();
+        let mut pushed = push("profile-a", "1.0.5", Site::Other);
+        pushed.captured_at = i64::MAX / 2;
+        apply_push(&mut state, &pushed, Site::Other, &pushed.cookies);
+        let recorded = state.other.last_push_at.unwrap();
+        assert!(recorded <= chrono::Utc::now().timestamp());
+    }
+
+    /// Chrome and Firefox update the extension on their own, and Settings
+    /// names the version it reports; only a claim used to record it.
+    #[test]
+    fn a_push_refreshes_the_bound_extension_version() {
+        let mut state = LinkState {
+            bound: Some(bound_from(&Peer {
+                extension_version: "1.0.4".to_string(),
+                ..peer()
+            })),
+            ..LinkState::default()
+        };
+
+        let ours = push("profile-a", "1.0.5", Site::Youtube);
+        apply_push(&mut state, &ours, Site::Youtube, &ours.cookies);
+        assert_eq!(state.bound.as_ref().unwrap().extension_version, "1.0.5");
+
+        let theirs = push("profile-b", "2.0.0", Site::Tiktok);
+        apply_push(&mut state, &theirs, Site::Tiktok, &theirs.cookies);
+        assert_eq!(state.bound.as_ref().unwrap().extension_version, "1.0.5");
+        assert_eq!(state.bound.as_ref().unwrap().profile_id, "profile-a");
+
+        // A push that signs a site out says the same about the extension.
+        let signed_out = push("profile-a", "1.0.6", Site::Tiktok);
+        clear(&mut state, Site::Tiktok);
+        refresh_bound(&mut state, &signed_out.peer);
+        assert_eq!(state.bound.as_ref().unwrap().extension_version, "1.0.6");
     }
 }

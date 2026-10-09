@@ -27,7 +27,9 @@ use std::time::{Duration, Instant};
 use once_cell::sync::Lazy;
 
 use crate::error::{AppError, AppResult};
-use crate::model::{FormatKind, MediaFormat, MediaKind, MediaMetadata, PlatformId, SourceContext};
+use crate::model::{
+    DownloadRequest, FormatKind, GalleryItem, MediaFormat, MediaKind, MediaMetadata, PlatformId, SourceContext,
+};
 use crate::settings::Settings;
 use crate::{log_debug, log_warn, tools};
 
@@ -172,7 +174,7 @@ pub async fn analyze_with_source(
         if MediaProvider::can_handle(&engine, url) {
             log_debug!("providers", "trying engine for {}", info.host);
             match MediaProvider::analyze(&engine, url, settings, source).await {
-                Ok(metadata) => return Ok(photos::complete(metadata, mixed, settings).await),
+                Ok(metadata) => return photos::complete(metadata, mixed, settings).await,
                 Err(AppError::Unsupported(detail)) => {
                     log_debug!("providers", "engine does not know {}: {detail}", info.host);
                     engine_error = Some(AppError::Unsupported(detail));
@@ -285,6 +287,10 @@ pub fn forget_analysis(url: &str) {
 /// the post with their position -- the source's own per-item titles are
 /// usually all the same, and files named that way would only be told apart by
 /// the order they happened to finish in. A single item is simply that item.
+///
+/// The items are also listed for the interface as `items`, which is all it
+/// learns of them: enough to draw each one and say what it is, and the
+/// position a download names it by.
 pub fn gallery(
     title: Option<String>,
     canonical_url: Option<String>,
@@ -310,6 +316,18 @@ pub fn gallery(
     }
     post.media_kind = MediaKind::Gallery;
     post.entry_count = Some(items.len() as u32);
+    post.items = items
+        .iter()
+        .enumerate()
+        .map(|(index, item)| GalleryItem {
+            position: index as u32 + 1,
+            kind: item.media_kind,
+            thumbnail_url: item.thumbnail_url.clone(),
+            // A running time of nothing, or of not-a-number, is the source
+            // not knowing; the tile says "video" instead of "0:00".
+            duration_sec: item.duration_sec.filter(|seconds| seconds.is_finite() && *seconds > 0.0),
+        })
+        .collect();
     post.entries = items;
     Some(post)
 }
@@ -335,6 +353,61 @@ pub fn select_entry(metadata: MediaMetadata, entry: Option<u32>) -> AppResult<Me
             status: 404,
             detail: format!("item {position} is no longer part of this post, which now has {count}"),
         })
+}
+
+/// The requests a gallery is queued as: one per item asked for, in the order
+/// the source lists them, each naming its item by position and titled as it.
+///
+/// `positions` picks items by their 1-based place in the post; `None` takes
+/// every one. A position the post does not have is refused rather than
+/// skipped: the user ticked a picture they were shown, and quietly queueing
+/// fewer -- or none, and still moving them to Downloads -- would hide that the
+/// post changed in between.
+///
+/// Each item is its own task, so it has its own progress, retry and history
+/// row, and that row's "download again" re-runs `entry`: the one picture, not
+/// the post. Its title keeps the post's numbering, "(2)" even when the second
+/// picture is the only one taken, so the file says which picture it is and a
+/// later download of the third does not land beside an unnumbered twin.
+pub fn gallery_requests(
+    metadata: &MediaMetadata,
+    request: &DownloadRequest,
+    positions: Option<&[u32]>,
+) -> AppResult<Vec<DownloadRequest>> {
+    // A post of one item answers to position 1, as in `select_entry`.
+    let count = metadata.entries.len().max(1);
+    if let Some(positions) = positions {
+        if positions.is_empty() {
+            return Err(AppError::Other("no item of the post was picked".into()));
+        }
+        if let Some(missing) = positions.iter().find(|p| **p == 0 || **p as usize > count) {
+            return Err(AppError::NotFound {
+                status: 404,
+                detail: format!("item {missing} is no longer part of this post, which now has {count}"),
+            });
+        }
+    }
+    if metadata.entries.is_empty() || (metadata.entries.len() < 2 && positions.is_none()) {
+        return Ok(vec![request.clone()]);
+    }
+    Ok(metadata
+        .entries
+        .iter()
+        .enumerate()
+        .filter(|(index, _)| positions.is_none_or(|picked| picked.contains(&(*index as u32 + 1))))
+        .map(|(index, entry)| {
+            let mut item = request.clone();
+            item.entry = Some(index as u32 + 1);
+            item.title = Some(entry.title.clone());
+            item.thumbnail_url = entry.thumbnail_url.clone().or_else(|| request.thumbnail_url.clone());
+            // Streams picked by hand belong to the item they were picked on.
+            if index > 0 {
+                item.video_format_id = None;
+                item.audio_format_id = None;
+            }
+            item
+        })
+        .collect())
 }
 
 /// Make an item ready to download: a song listed from an album or playlist is
@@ -426,6 +499,7 @@ pub(crate) mod tests_support {
             warnings: Vec::new(),
             entries: Vec::new(),
             tracks: Vec::new(),
+            items: Vec::new(),
             music: None,
         }
     }
@@ -461,6 +535,7 @@ mod tests {
             warnings: Vec::new(),
             entries: Vec::new(),
             tracks: Vec::new(),
+            items: Vec::new(),
             music: None,
         }
     }
@@ -479,6 +554,161 @@ mod tests {
             )],
             ..metadata("https://example.test/p/1", "https://example.test/p/1")
         }
+    }
+
+    fn video(title: &str, file: &str, seconds: f64) -> MediaMetadata {
+        let mut stream = image_format("video", format!("https://cdn.test/{file}.mp4"), Some(720), Some(1280), Vec::new());
+        stream.kind = FormatKind::Muxed;
+        stream.has_video = true;
+        stream.has_audio = true;
+        stream.container = "mp4".into();
+        MediaMetadata {
+            title: title.into(),
+            media_kind: MediaKind::Video,
+            thumbnail_url: Some(format!("https://cdn.test/{file}.jpg")),
+            duration_sec: Some(seconds),
+            formats: vec![stream],
+            ..metadata("https://example.test/p/1", "https://example.test/p/1")
+        }
+    }
+
+    /// What Home asks for a post as a whole, before it is split into items.
+    fn asked() -> DownloadRequest {
+        DownloadRequest {
+            url: "https://example.test/p/1".into(),
+            mode: crate::model::DownloadMode::Image,
+            quality: crate::model::QualityPreference::Best,
+            video_format_id: None,
+            audio_format_id: None,
+            container: None,
+            watermark: crate::model::WatermarkPreference::Any,
+            output_dir: None,
+            title: Some("Post".into()),
+            thumbnail_url: Some("https://cdn.test/cover.jpg".into()),
+            platform: None,
+            entry: None,
+            audio_language: None,
+            source: None,
+        }
+    }
+
+    fn three_photos() -> MediaMetadata {
+        gallery(
+            Some("Post".into()),
+            None,
+            vec![photo("a", "a.jpg"), photo("b", "b.jpg"), photo("c", "c.jpg")],
+        )
+        .unwrap()
+    }
+
+    fn entries_of(requests: &[DownloadRequest]) -> Vec<Option<u32>> {
+        requests.iter().map(|request| request.entry).collect()
+    }
+
+    #[test]
+    fn a_gallery_lists_its_items_for_the_interface() {
+        let post = gallery(
+            Some("Post".into()),
+            None,
+            vec![photo("a", "a.jpg"), video("b", "b", 14.0), photo("c", "c.jpg")],
+        )
+        .unwrap();
+
+        let positions: Vec<u32> = post.items.iter().map(|item| item.position).collect();
+        assert_eq!(positions, [1, 2, 3]);
+        let kinds: Vec<MediaKind> = post.items.iter().map(|item| item.kind).collect();
+        assert_eq!(kinds, [MediaKind::Image, MediaKind::Video, MediaKind::Image]);
+        for (item, entry) in post.items.iter().zip(&post.entries) {
+            assert_eq!(item.thumbnail_url, entry.thumbnail_url);
+        }
+        assert_eq!(post.items[1].duration_sec, Some(14.0));
+        assert_eq!(post.items[0].duration_sec, None);
+
+        // A running time the source did not really know is no running time.
+        for unknown in [0.0, f64::NAN] {
+            let post = gallery(None, None, vec![video("a", "a", unknown), photo("b", "b.jpg")]).unwrap();
+            assert_eq!(post.items[0].duration_sec, None);
+        }
+
+        let single = gallery(Some("Post".into()), None, vec![photo("a", "a.jpg")]).unwrap();
+        assert!(single.items.is_empty());
+    }
+
+    #[test]
+    fn a_gallery_queues_only_the_items_picked_under_their_own_numbers() {
+        let requests = gallery_requests(&three_photos(), &asked(), Some(&[2])).unwrap();
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0].entry, Some(2));
+        assert_eq!(requests[0].title.as_deref(), Some("Post (2)"));
+        assert_eq!(requests[0].thumbnail_url.as_deref(), Some("https://cdn.test/b.jpg"));
+    }
+
+    #[test]
+    fn nothing_named_queues_every_item_in_order() {
+        let post = three_photos();
+        let every = gallery_requests(&post, &asked(), None).unwrap();
+        assert_eq!(entries_of(&every), [Some(1), Some(2), Some(3)]);
+
+        // In the post's order, and once each, however they were asked for.
+        let some = gallery_requests(&post, &asked(), Some(&[3, 1, 3])).unwrap();
+        assert_eq!(entries_of(&some), [Some(1), Some(3)]);
+    }
+
+    #[test]
+    fn streams_picked_by_hand_stay_with_the_first_item() {
+        let request = DownloadRequest {
+            video_format_id: Some("137".into()),
+            audio_format_id: Some("140".into()),
+            ..asked()
+        };
+        let requests = gallery_requests(&three_photos(), &request, Some(&[1, 3])).unwrap();
+        assert_eq!(requests[0].video_format_id.as_deref(), Some("137"));
+        assert_eq!(requests[0].audio_format_id.as_deref(), Some("140"));
+        assert_eq!(requests[1].entry, Some(3));
+        assert_eq!(requests[1].video_format_id, None);
+        assert_eq!(requests[1].audio_format_id, None);
+    }
+
+    #[test]
+    fn a_position_the_post_does_not_have_is_refused() {
+        let post = three_photos();
+        for positions in [&[4][..], &[2, 4][..]] {
+            let err = gallery_requests(&post, &asked(), Some(positions)).unwrap_err();
+            assert_eq!(err.code(), "notFound");
+            assert!(err.technical().is_some_and(|detail| detail.contains("now has 3")), "{err:?}");
+        }
+        assert_eq!(gallery_requests(&post, &asked(), Some(&[0])).unwrap_err().code(), "notFound");
+        assert!(gallery_requests(&post, &asked(), Some(&[])).is_err());
+    }
+
+    #[test]
+    fn a_single_item_is_queued_as_the_link_itself() {
+        let single = photo("only", "a.jpg");
+        for positions in [None, Some(&[1][..])] {
+            let requests = gallery_requests(&single, &asked(), positions).unwrap();
+            assert_eq!(requests.len(), 1);
+            assert_eq!(requests[0].entry, None);
+            assert_eq!(requests[0].title.as_deref(), Some("Post"));
+            assert_eq!(requests[0].thumbnail_url.as_deref(), Some("https://cdn.test/cover.jpg"));
+        }
+        assert_eq!(gallery_requests(&single, &asked(), Some(&[2])).unwrap_err().code(), "notFound");
+    }
+
+    /// A list of one song still has its one entry, and naming it is what makes
+    /// that song's download look it up.
+    #[test]
+    fn a_list_of_one_song_still_names_it() {
+        let list = MediaMetadata {
+            entries: vec![photo("Song", "a.jpg")],
+            ..metadata("https://example.test/list", "https://example.test/list")
+        };
+        let whole = gallery_requests(&list, &asked(), None).unwrap();
+        assert_eq!(entries_of(&whole), [None]);
+        assert_eq!(whole[0].title.as_deref(), Some("Post"));
+
+        let named = gallery_requests(&list, &asked(), Some(&[1])).unwrap();
+        assert_eq!(entries_of(&named), [Some(1)]);
+        assert_eq!(named[0].title.as_deref(), Some("Song"));
     }
 
     #[test]

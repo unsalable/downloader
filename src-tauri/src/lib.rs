@@ -17,6 +17,7 @@ pub mod error;
 pub mod export;
 pub mod ffmpeg;
 pub mod filename;
+pub mod files;
 pub mod logging;
 pub mod model;
 pub mod net;
@@ -180,7 +181,7 @@ pub fn run() {
             // also what brings a manifest an older build wrote up to the
             // extension ids this one accepts.
             //
-            // Whatever the YouTube session toggle says: the host also carries
+            // Whatever the browser sessions toggle says: the host also carries
             // the videos the extension sends to download, and the toggle only
             // decides whether it may store cookies.
             #[cfg(windows)]
@@ -286,17 +287,18 @@ pub fn run() {
             commands::clear_history,
             commands::path_exists,
             commands::preview_filename,
+            commands::open_file,
+            commands::reveal_file,
+            commands::share_file,
+            commands::open_log_dir,
             commands::cache_stats,
             commands::clear_cache,
             commands::get_diagnostics,
-            commands::get_log_dir,
             commands::get_licenses,
             commands::get_app_version,
             commands::sweep_temp_files,
             commands::provisional_download_label,
             commands::new_task_id,
-            commands::platform_open_file,
-            commands::platform_open_downloads,
             commands::platform_open_app_settings,
             commands::platform_pick_media_files,
             commands::platform_set_system_bars,

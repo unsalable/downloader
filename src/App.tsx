@@ -15,7 +15,7 @@ import { openLayers, onLayersChange } from '@/hooks/useBackLayer';
 import { useClipboardMonitor } from '@/hooks/useClipboardMonitor';
 import { useHotkeys } from '@/hooks/useHotkeys';
 import { cn } from '@/lib/cn';
-import { requestFromHandoff } from '@/lib/handoff';
+import { homeFromHandoff } from '@/lib/handoff';
 import {
   PHONE_SCREEN,
   PHONE_TAB_BAR,
@@ -574,42 +574,34 @@ export function App() {
 
   // A video handed over by the browser extension waits in the bridge's inbox
   // until the app takes it: once at start-up, for the press that launched the
-  // app, and again whenever the running app is told another has come in. Each
-  // one is queued straight away with the default options -- the user picked it
-  // in the browser and asked for it to download, so there is nothing left to
-  // ask -- one after another, in the order they arrived.
+  // app, and again whenever the running app is told another has come in. It
+  // opens on Home, analysed, with the default options chosen: İndir in the
+  // browser picks the video, and the quality, the watermark and the rest are
+  // chosen here, where they always are, before anything is downloaded.
   //
-  // One pull at a time: two at once would each queue whatever they found, and
-  // the order would be a race's. A signal that comes in meanwhile is
-  // remembered and answered by one more pull when this one is done.
+  // Home holds one link at a time, so of several taken at once the last one
+  // pressed is the one shown -- the press the user is looking for an answer
+  // to. One pull at a time: two at once would race to fill the field. A signal
+  // that comes in meanwhile is remembered and answered by one more pull when
+  // this one is done.
   const handoffPull = useRef({ busy: false, again: false });
   useEffect(() => {
     if (IS_MOBILE || !settingsReady) return;
     const state = handoffPull.current;
 
-    const queue = async (handoffs: Handoff[]) => {
-      let queued = false;
-      let failed: string | null = null;
-      for (const handoff of handoffs) {
-        const current = useSettingsStore.getState().settings;
-        try {
-          if (!current) throw new Error('settings are not loaded');
-          await ipc.enqueueDownload(requestFromHandoff(handoff, current));
-          queued = true;
-        } catch {
-          failed ??= handoff.url;
-        }
-      }
+    const show = (handoffs: Handoff[]) => {
+      const latest = handoffs[handoffs.length - 1];
+      const current = useSettingsStore.getState().settings;
+      if (!latest || !current) return;
+      const { url, options, context } = homeFromHandoff(latest, current);
       // Out of the first run's way, as for a link shared in on a phone: the
-      // user has just asked for a download and is waiting on it, not on the
+      // user has just pressed İndir and is waiting on that, not on the
       // welcome. Aside for this session only.
       setIntroReplay(false);
       setIntroDone(true);
-      // A link that could not be queued goes to Home instead, which analyses
-      // it and says beside it what is wrong -- the first such link, as Home
-      // holds one at a time. Whatever did queue is on Downloads all the same.
-      if (failed) goHomeWithUrl(failed);
-      else if (queued) goToDownloads();
+      setRoute('home');
+      setUrl(url);
+      void analyze(url, { ...options, outputDir: null }, context);
     };
 
     const pull = async () => {
@@ -622,7 +614,7 @@ export function App() {
         do {
           state.again = false;
           const handoffs = await ipc.takeHandoffs().catch((): Handoff[] => []);
-          if (handoffs.length > 0) await queue(handoffs);
+          if (handoffs.length > 0) show(handoffs);
         } while (state.again);
       } finally {
         state.busy = false;
@@ -643,7 +635,7 @@ export function App() {
         () => {},
       );
     };
-  }, [goHomeWithUrl, goToDownloads, settingsReady]);
+  }, [analyze, setRoute, setUrl, settingsReady]);
 
   // A link on the clipboard is only offered, under the empty field on Home.
   // It takes the user nowhere: they may be in the middle of something else.
@@ -740,7 +732,9 @@ export function App() {
           settings={settings}
           inputRef={urlInputRef}
           onGoToDownloads={goToDownloads}
-          onOpenSettings={() => setRoute('settings')}
+          // A section to point at opens Settings already at it; the desktop
+          // keeps it for the settings route, and the phone opens it as its page.
+          onOpenSettings={(section) => (section ? setSettingsSection(section) : setRoute('settings'))}
         />
       )}
       {route === 'downloads' && <DownloadsPage onGoHome={() => setRoute('home')} />}

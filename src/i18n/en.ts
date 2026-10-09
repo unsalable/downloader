@@ -68,10 +68,18 @@ export const en = {
   'options.videoStream': 'Video stream',
   'options.audioStream': 'Audio stream',
   'options.none': 'None',
+  'options.withSound': '{quality} + audio',
+  'options.soundOf': 'Sound of the {quality} video',
 
   'action.download': 'Download',
-  'action.downloadAll': 'Download all ({n})',
   'action.downloadCount': 'Download ({n})',
+  // Some of a post's items picked, by what they are.
+  'action.downloadPhoto': 'Download photo',
+  'action.downloadPhotos': 'Download {n} photos',
+  'action.downloadVideo': 'Download video',
+  'action.downloadVideos': 'Download {n} videos',
+  'action.downloadItem': 'Download item',
+  'action.downloadItems': 'Download {n} items',
 
   'anime.title': 'On official channels',
   'anime.searching': 'Searching…',
@@ -81,6 +89,17 @@ export const en = {
   'tracks.title': 'Songs',
   'tracks.selectAll': 'Select all',
   'tracks.selectNone': 'Deselect all',
+
+  // The grid a carousel's items are picked from: its heading, and what each
+  // tile is read out as.
+  'gallery.photos': 'Photos',
+  'gallery.videos': 'Videos',
+  'gallery.mixed': 'Photos and videos',
+  'gallery.items': 'Items',
+  'gallery.photoN': 'Photo {n}',
+  'gallery.videoN': 'Video {n}',
+  'gallery.itemN': 'Item {n}',
+
   'action.preparing': 'Preparing…',
 
   'downloads.title': 'Downloads',
@@ -97,6 +116,7 @@ export const en = {
   'downloads.remove': 'Remove',
   'downloads.openFileNamed': 'Open file: {title}',
   'downloads.showInFolder': 'Show in folder',
+  'downloads.share': 'Share',
   'downloads.details': 'Details',
   'downloads.pauseAll': 'Pause all',
   'downloads.resumeAll': 'Resume all',
@@ -181,10 +201,28 @@ export const en = {
   'history.requeued': 'Added to queue',
   'history.delete': 'Remove from history',
   'history.clearAll': 'Clear history',
-  'history.clearConfirm': 'Remove every entry from history?',
-  'history.clearConfirmBody':
-    'This only clears the list. Files already on your disk are not touched.',
+  'history.clear': 'Clear',
+  'history.clearConfirmBody': 'The files themselves are not deleted.',
+  'history.clearRange': 'Time range',
+  'history.range.day': 'Last 24 hours',
+  'history.range.week': 'Last 7 days',
+  'history.range.all': 'All history',
+  // English drops "from history" here: the dialog's title already says it, and
+  // the sentence then fits on one line of the desktop's dialog.
+  'history.clearCount.day.none': 'No downloads in the last 24 hours.',
+  'history.clearCount.day.one': '{n} download from the last 24 hours will be removed.',
+  'history.clearCount.day.many': '{n} downloads from the last 24 hours will be removed.',
+  'history.clearCount.week.none': 'No downloads in the last 7 days.',
+  'history.clearCount.week.one': '{n} download from the last 7 days will be removed.',
+  'history.clearCount.week.many': '{n} downloads from the last 7 days will be removed.',
+  'history.clearCount.all.none': 'History is empty.',
+  'history.clearCount.all.one': '{n} download will be removed.',
+  'history.clearCount.all.many': 'All {n} downloads will be removed.',
+  'history.clearFailed': "Couldn't clear the history. Try again.",
   'file.missing': 'File moved or deleted',
+  'file.openFailed': "Couldn't open the file",
+  'file.revealFailed': "Couldn't show the folder",
+  'file.shareFailed': "Couldn't share the file",
   'history.noResults': 'No entries match "{query}".',
 
   'settings.title': 'Settings',
@@ -197,7 +235,7 @@ export const en = {
   'settings.hotkeys': 'Shortcuts',
   'settings.generalSummary': 'Clipboard, notifications',
   'settings.downloadsSummary': 'Folder, quality, simultaneous downloads',
-  'settings.connectionSummary': 'Browser extension and YouTube sign-in',
+  'settings.connectionSummary': 'Browser extension and sign-ins',
   'settings.appearanceSummary': 'Theme, language, motion',
   'settings.performanceSummary': 'Low resource mode, cache',
   'settings.advancedSummary': 'Download engine, network, reset',
@@ -236,18 +274,18 @@ export const en = {
   'settings.browserExtension': 'Browser extension',
   'settings.browserExtensionHint':
     'Sends the videos playing in your browser to this app with one click.',
-  'settings.browserLink': 'YouTube sign-in',
+  'settings.browserLink': 'Browser sign-ins',
   'settings.browserLinkHint':
-    'Uses your browser’s YouTube sign-in for videos only your account can watch. It stays encrypted on this PC.',
+    'Uses your browser’s YouTube and TikTok sign-ins for videos only your account can watch, and with Other sites on in the extension, the sign-in of the site you press Get on. They stay encrypted on this PC; other sites’ are deleted after an hour.',
   'settings.linkBroken': 'Browsers cannot start the helper',
   'settings.linkBrokenHint':
     'The entry that lets the extension reach this app is missing, or it points somewhere else. A browser update, a cleanup tool or a second copy of the app can do that. Repair writes it back.',
   'settings.linkWaiting': 'No browser connected yet',
   'settings.linkWaitingHint':
-    'In the browser you are signed in to YouTube with, click the extension and turn on its "YouTube session" switch.',
+    'In the browser you are signed in to YouTube or TikTok with, click the extension and turn on its session switch.',
   'settings.linkSignedOut': 'No sign-in stored',
   'settings.linkSignedOutHint':
-    '{browser} is linked, but it is not signed in to YouTube -- or the sign-in was cleared. Sign in there and the extension hands the session over on its own.',
+    '{browser} is linked, but it is not signed in to YouTube or TikTok -- or the sign-in was cleared. Sign in there and the extension hands it over on its own.',
   'settings.linkQuiet': 'The connection has gone quiet',
   'settings.linkQuietHint':
     '{browser} has not handed over a fresh sign-in for a while, so the app has stopped using the one it holds. Opening that browser once brings it back by itself: nothing to reinstall, nothing to press.',
@@ -259,6 +297,13 @@ export const en = {
   'settings.linkAccount': 'Looks like {account}',
   'settings.linkRefreshed': 'Last refreshed {when}',
   'settings.linkExtensionVersion': 'Extension {version}',
+  'settings.linkSiteFresh': 'Signed in',
+  'settings.linkSiteStale': 'Not refreshed for a while',
+  'settings.linkSiteNone': 'Not signed in',
+  'settings.linkOtherSites': 'Other sites',
+  'settings.linkOtherFresh': '{site} · signed in',
+  'settings.linkTiktokHint':
+    'For age-restricted TikTok posts, sign in to TikTok in the browser, then turn on TikTok session in the extension.',
   'settings.linkBrowserFallback': 'The browser',
   'settings.linkRepair': 'Repair',
   'settings.linkRepairFailed': 'Could not repair the connection',
@@ -554,8 +599,21 @@ export const en = {
   'error.membershipRequired.title': 'This video is for channel members',
   'error.membershipRequired.message':
     "YouTube only serves it to an account that holds the channel's membership. Connect your browser in Settings and Universal Downloader will offer that sign-in the next time you try this link.",
+  'error.membershipRequired.messageMobile':
+    "YouTube only serves it to an account that holds the channel's membership. The phone can't use that sign-in; the desktop app can download it.",
+  'error.tiktokSignIn.title': 'This post needs a TikTok sign-in',
+  'error.tiktokSignIn.message':
+    "TikTok shows it only to signed-in viewers. Turn on TikTok session in the browser extension, in the browser where you're signed in to TikTok, then try again.",
+  'error.tiktokSignIn.messageMobile':
+    "TikTok shows it only to signed-in viewers. The phone can't use a TikTok sign-in yet; the desktop app can download it.",
+  'error.tiktokSignIn.action': 'Show in Settings',
+  'error.tiktokNotForAccount.title': "TikTok won't show this post to the linked account either",
+  'error.tiktokNotForAccount.message':
+    'The account may look under 18 to TikTok, or the post may be for followers only.',
   'error.notFound.title': 'This media no longer exists',
   'error.notFound.message': 'The post may have been deleted or made private.',
+  'error.fileMissing.title': 'File moved or deleted',
+  'error.fileMissing.message': "It's no longer where it was saved.",
   'error.noMatch.title': "This song couldn't be found",
   'error.noMatch.message': 'No recording of it turned up on YouTube.',
   'error.protected.title': "This service can't be downloaded from",

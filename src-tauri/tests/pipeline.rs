@@ -450,3 +450,122 @@ async fn an_x_video_downloads_with_its_sound() {
         .expect("the sound alone should be offered too");
     assert!(sound.audio.is_some());
 }
+
+/// A TikTok video whose sharpest picture has no sound and whose sound is never
+/// offered apart. The file keeps the 1080p picture and the sound out of the
+/// 720p rendition -- one picture, one sound, nothing else -- and the sound
+/// alone still comes out as an M4A.
+///
+/// TikTok refuses the direct transfer with a 403, so this runs the engine
+/// path with `--video-multistreams` and the merger's negative map, which is
+/// what a unit test cannot: it depends on how this yt-dlp builds its merge.
+/// The app installs the engine's latest release and keeps it updated, so this
+/// is worth running after every engine update rather than once: a change
+/// there shows up as a stray second picture in the file, not as silence.
+#[tokio::test]
+#[ignore = "contacts TikTok through the engine and downloads about 110 MB"]
+async fn a_tiktok_video_whose_best_picture_is_silent_downloads_with_its_sound() {
+    use universal_downloader_lib::downloader;
+    use universal_downloader_lib::model::DownloadRequest;
+
+    let settings = settings();
+    ensure_engine(&settings).await;
+
+    let url = "https://www.tiktok.com/@edat673243/video/7691247381555268877";
+    let metadata = providers::analyze(url, &settings).await.expect("the video should be readable");
+    let chosen = plan::build(&metadata, DownloadMode::Video, QualityPreference::Best, None, None, None, WatermarkPreference::Any)
+        .unwrap();
+    eprintln!("best: {} ({:?})", chosen.selector_for_engine(), chosen.estimated_bytes);
+    assert!(chosen.sound_from_muxed(), "the 1080p picture is published without sound");
+
+    let output = std::env::temp_dir().join(format!("ud-tiktok-{}", std::process::id()));
+    std::fs::create_dir_all(&output).unwrap();
+    let ffprobe = tools::ffmpeg_path().unwrap().with_file_name(if cfg!(windows) { "ffprobe.exe" } else { "ffprobe" });
+    let streams = |path: &std::path::Path| -> Vec<(String, Option<u64>)> {
+        let probe = std::process::Command::new(&ffprobe)
+            .args(["-v", "error", "-show_entries", "stream=codec_type,height", "-of", "json"])
+            .arg(path)
+            .output()
+            .unwrap();
+        let report: serde_json::Value = serde_json::from_slice(&probe.stdout).unwrap();
+        report["streams"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|stream| (stream["codec_type"].as_str().unwrap().to_string(), stream["height"].as_u64()))
+            .collect()
+    };
+
+    for mode in [DownloadMode::Video, DownloadMode::Audio] {
+        let request = DownloadRequest {
+            url: url.into(),
+            mode,
+            quality: QualityPreference::Best,
+            video_format_id: None,
+            audio_format_id: None,
+            container: None,
+            watermark: WatermarkPreference::Any,
+            output_dir: Some(output.to_string_lossy().into_owned()),
+            title: None,
+            thumbnail_url: None,
+            platform: None,
+            entry: None,
+            audio_language: None,
+            source: None,
+        };
+        let mut last_received = 0u64;
+        let mut sink = |progress: universal_downloader_lib::model::DownloadProgress| {
+            if progress.stage == universal_downloader_lib::model::DownloadStage::Video {
+                assert!(progress.received_bytes >= last_received, "progress went backwards");
+                last_received = progress.received_bytes;
+            }
+        };
+        let outcome = downloader::execute("tiktoktest", &request, &settings, Arc::new(TaskControl::new()), &mut sink)
+            .await
+            .expect("the download should succeed");
+        let found = streams(&outcome.output_path);
+        eprintln!("{mode:?}: {} -> {found:?}", outcome.output_path.display());
+
+        let pictures: Vec<_> = found.iter().filter(|(kind, _)| kind == "video").collect();
+        let sounds = found.iter().filter(|(kind, _)| kind == "audio").count();
+        assert_eq!(sounds, 1, "{mode:?}: exactly one sound track");
+        match mode {
+            DownloadMode::Video => {
+                assert_eq!(pictures.len(), 1, "the 720p picture must not ride along");
+                assert_eq!(pictures[0].1, Some(1080));
+                assert_eq!(outcome.output_path.extension().unwrap(), "mp4");
+            }
+            _ => {
+                assert!(pictures.is_empty());
+                assert_eq!(outcome.output_path.extension().unwrap(), "m4a");
+            }
+        }
+    }
+
+    std::fs::remove_dir_all(&output).unwrap();
+}
+
+/// A TikTok post its creator limited to signed-in adults says so, rather than
+/// reading as a refusal with nothing to offer.
+///
+/// With the browser link off: this asks what the app says to someone who has
+/// lent it nothing, and the developer's own TikTok session -- if this machine
+/// holds one -- would make the answer depend on that account instead.
+#[tokio::test]
+#[ignore = "contacts a live media host"]
+async fn an_age_restricted_tiktok_asks_for_a_tiktok_sign_in() {
+    let settings = Settings {
+        browser_link_enabled: false,
+        ..settings()
+    };
+    ensure_engine(&settings).await;
+
+    let err = providers::analyze(
+        "https://www.tiktok.com/@itzmav_/video/7670756126907960589",
+        &settings,
+    )
+    .await
+    .expect_err("the post is shown only to a signed-in viewer");
+    eprintln!("{err}");
+    assert_eq!(err.code(), "tiktokSignIn");
+}

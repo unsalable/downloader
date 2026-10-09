@@ -285,7 +285,8 @@ impl RangeFetchManager {
         let engine = crate::downloader::engine_target(&job.plan, &job.metadata, &[]);
 
         let manager = Arc::clone(self);
-        let mut sink = move |sample: ProgressSample| manager.on_progress(&sample, ranged);
+        let planned = job.plan.estimated_bytes;
+        let mut sink = move |sample: ProgressSample| manager.on_progress(&sample, ranged, planned);
 
         let outcome = engine_dl::run(
             EngineDownload {
@@ -296,6 +297,10 @@ impl RangeFetchManager {
                 section: job.section,
                 force_keyframes: job.exact,
                 headers: &engine.headers,
+                // The editor reads a link typed or pasted into it, with no
+                // page behind it; the address alone decides what is lent.
+                page_url: None,
+                sound_from_second: engine.sound_from_second,
             },
             &settings,
             control,
@@ -375,7 +380,7 @@ impl RangeFetchManager {
         })
     }
 
-    fn on_progress(&self, sample: &ProgressSample, ranged: bool) {
+    fn on_progress(&self, sample: &ProgressSample, ranged: bool, planned: Option<u64>) {
         self.publish(|state| {
             // A late sample from a fetch that has already finished must not put
             // a running bar back on a finished screen.
@@ -383,9 +388,26 @@ impl RangeFetchManager {
                 return;
             }
             state.received_bytes = sample.received;
-            state.percent = if ranged { None } else { sample.percent };
+            state.percent = if ranged { None } else { whole_percent(sample, planned) };
         });
     }
+}
+
+/// How far a whole fetch has come, against what the plan said every format of
+/// it comes to.
+///
+/// The engine only learns the size of a format as it starts on it, so a fetch
+/// of two -- a picture and the rendition its sound is taken from, each the size
+/// of the other -- reports the first against itself: read that way, the bar
+/// reaches the end with the picture and falls back to half when the sound
+/// begins. The plan knew both from the start. A sample that has outgrown the
+/// plan's figure is believed instead, as the queue's own progress does.
+fn whole_percent(sample: &ProgressSample, planned: Option<u64>) -> Option<f64> {
+    let total = match (planned, sample.total) {
+        (Some(planned), Some(reported)) => planned.max(reported),
+        (planned, reported) => planned.or(reported)?,
+    };
+    (total > 0).then(|| (sample.received as f64 / total as f64 * 100.0).clamp(0.0, 100.0))
 }
 
 // -- what a fetch is allowed to be ------------------------------------------
@@ -638,6 +660,7 @@ mod tests {
             warnings: Vec::new(),
             entries: Vec::new(),
             tracks: Vec::new(),
+            items: Vec::new(),
             music: None,
         }
     }
@@ -682,6 +705,35 @@ mod tests {
         assert!(asked_range(&request(None, None), Some(635.0)).unwrap().is_none());
         assert!(asked_range(&request(Some(10.0), None), Some(635.0)).unwrap().is_none());
         assert!(asked_range(&request(None, Some(20.0)), Some(635.0)).unwrap().is_none());
+    }
+
+    fn sample(received: u64, total: Option<u64>) -> ProgressSample {
+        ProgressSample {
+            received,
+            total,
+            speed_bps: 0.0,
+            eta_sec: None,
+            percent: None,
+            resumable: true,
+        }
+    }
+
+    #[test]
+    fn a_whole_fetch_of_two_formats_is_measured_against_both() {
+        // The TikTok picture finished, as the engine reports it before it has
+        // started on the rendition the sound is taken from: complete, against
+        // its own size alone.
+        let planned = Some(36_463_968 + 37_655_063);
+        let picture = whole_percent(&sample(36_463_968, Some(36_463_968)), planned).unwrap();
+        assert!((picture - 49.2).abs() < 0.1, "{picture}");
+        let both = whole_percent(&sample(74_119_031, Some(74_119_031)), planned).unwrap();
+        assert_eq!(both, 100.0);
+
+        // A run that outgrows the plan's figure is believed, and without one
+        // the run's own total is all there is.
+        assert_eq!(whole_percent(&sample(50, Some(200)), Some(100)), Some(25.0));
+        assert_eq!(whole_percent(&sample(50, Some(100)), None), Some(50.0));
+        assert_eq!(whole_percent(&sample(50, None), None), None);
     }
 
     #[test]

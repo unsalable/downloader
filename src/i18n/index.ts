@@ -58,18 +58,42 @@ export function translate(key: TranslationKey, values?: TranslateValues): string
   );
 }
 
+/** A dictionary entry for a key built at runtime, or null when none answers. */
+function lookUp(key: string): string | null {
+  const text = translate(key as TranslationKey);
+  return text === key ? null : text;
+}
+
 /**
- * What to say about a failure the backend reported.
+ * The two lines said about a failure the backend reported.
  *
  * The backend writes in English and knows nothing of the chosen language, so
- * its sentence is the fallback rather than the answer: the code is looked up
+ * its sentences are the fallback rather than the answer: the code is looked up
  * first, and only a code no dictionary answers to falls through to what came
  * back over the wire.
+ *
+ * A phone may have a sentence of its own (`error.<code>.messageMobile`) where
+ * the desktop's advice -- connect a browser, turn on its session -- cannot be
+ * followed there. Whether this is a phone is passed in rather than read here:
+ * the platform check would bring the IPC layer and the OS plugin into every
+ * module and test that only wants a translation.
  */
-export function errorMessage(error: AppErrorInfo): string {
-  const key = `error.${error.code}.message` as TranslationKey;
-  const text = translate(key);
-  return text === key ? error.message : text;
+export function errorCopy(
+  error: AppErrorInfo,
+  isMobile = false,
+): { title: string; message: string } {
+  return {
+    title: lookUp(`error.${error.code}.title`) ?? error.title,
+    message:
+      (isMobile ? lookUp(`error.${error.code}.messageMobile`) : null) ??
+      lookUp(`error.${error.code}.message`) ??
+      error.message,
+  };
+}
+
+/** What to say about a failure, as `errorCopy` words it, without its title. */
+export function errorMessage(error: AppErrorInfo, isMobile = false): string {
+  return errorCopy(error, isMobile).message;
 }
 
 /**

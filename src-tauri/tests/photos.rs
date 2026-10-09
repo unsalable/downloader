@@ -20,7 +20,7 @@ use universal_downloader_lib::model::{
     QualityPreference, WatermarkPreference,
 };
 use universal_downloader_lib::settings::Settings;
-use universal_downloader_lib::{paths, providers, tools};
+use universal_downloader_lib::{cache, paths, providers, tools};
 
 fn settings() -> Settings {
     Settings {
@@ -53,10 +53,15 @@ async fn analyze(url: &str) -> MediaMetadata {
 
 /// Download one item the way the queue does, into a folder of its own.
 async fn download(url: &str, entry: Option<u32>, mode: DownloadMode) -> DownloadOutcome {
+    run(&request(url, entry, mode)).await
+}
+
+/// What the queue would be handed for one item, saving into a folder of its own.
+fn request(url: &str, entry: Option<u32>, mode: DownloadMode) -> DownloadRequest {
     let folder = paths::temp_dir().unwrap().join("photo-tests");
     std::fs::create_dir_all(&folder).unwrap();
 
-    let request = DownloadRequest {
+    DownloadRequest {
         url: url.to_string(),
         mode,
         quality: QualityPreference::Best,
@@ -71,11 +76,15 @@ async fn download(url: &str, entry: Option<u32>, mode: DownloadMode) -> Download
         entry,
         audio_language: None,
         source: None,
-    };
+    }
+}
 
+/// Carry a request out as the queue does.
+async fn run(request: &DownloadRequest) -> DownloadOutcome {
+    let (url, entry) = (&request.url, request.entry);
     let task = format!("photo-test-{}", std::process::id());
     let mut sink = |_: DownloadProgress| {};
-    let outcome = downloader::execute(&task, &request, &settings(), TaskControl::shared(), &mut sink)
+    let outcome = downloader::execute(&task, request, &settings(), TaskControl::shared(), &mut sink)
         .await
         .unwrap_or_else(|err| panic!("{url} item {entry:?} did not download: {err}"));
     eprintln!("  saved {} ({} bytes)", outcome.output_path.display(), outcome.file_size);
@@ -145,6 +154,23 @@ async fn each_item_of_an_instagram_carousel_is_its_own_download() {
     let kinds: Vec<MediaKind> = metadata.entries.iter().map(|item| item.media_kind).collect();
     assert!(kinds.len() >= 2, "{kinds:?}");
     assert!(kinds.contains(&MediaKind::Image), "{kinds:?}");
+
+    // The grid the post is picked from lists the same items, and draws each
+    // photo with a small rendition rather than the original the item keeps.
+    let listed: Vec<MediaKind> = metadata.items.iter().map(|item| item.kind).collect();
+    assert_eq!(listed, kinds);
+    for (item, entry) in metadata.items.iter().zip(&metadata.entries) {
+        if item.kind != MediaKind::Image {
+            continue;
+        }
+        let small = item.thumbnail_url.as_deref().expect("a photo in the grid has a picture");
+        assert_ne!(Some(small), entry.thumbnail_url.as_deref(), "item {} is drawn with its original", item.position);
+        let data_url = cache::thumbnail_data_url(small, &settings())
+            .await
+            .unwrap_or_else(|err| panic!("the grid picture of item {} did not load: {err}", item.position));
+        let bytes = data_url.split_once(',').map_or(0, |(_, data)| data.len() * 3 / 4);
+        assert!(bytes < 200 * 1024, "item {}'s grid picture is {bytes} bytes", item.position);
+    }
 
     // Two different photos must be two different files -- the bug this
     // replaced downloaded the first item once per item.
@@ -228,8 +254,26 @@ async fn a_tiktok_photo_post_downloads_its_pictures() {
         metadata.formats.iter().any(|format| format.kind == FormatKind::Audio),
         "the soundtrack should be offered with the post"
     );
+    assert_eq!(metadata.items.len(), metadata.entries.len());
+    assert!(metadata
+        .items
+        .iter()
+        .all(|item| item.kind == MediaKind::Image && item.thumbnail_url.is_some()));
 
-    let outcome = download(url, Some(2), DownloadMode::Image).await;
+    // Only the second picture ticked: that one picture, under the post's
+    // number for it.
+    let picked = providers::gallery_requests(&metadata, &request(url, None, DownloadMode::Image), Some(&[2])).unwrap();
+    assert_eq!(picked.len(), 1);
+    assert_eq!(picked[0].entry, Some(2));
+    assert!(
+        picked[0].title.as_deref().is_some_and(|title| title.ends_with(" (2)")),
+        "{:?}",
+        picked[0].title
+    );
+
+    let outcome = run(&picked[0]).await;
+    let stem = outcome.output_path.file_stem().unwrap().to_string_lossy().into_owned();
+    assert!(stem.contains("(2)"), "{stem}");
     let (_, width, height) = image_size(&outcome.output_path);
     assert!(width >= 720 && height >= 720, "{width}x{height}");
     cleanup(&outcome);

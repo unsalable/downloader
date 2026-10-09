@@ -183,6 +183,7 @@ impl GenericProvider {
             warnings: vec!["generic".to_string()],
             entries: Vec::new(),
             tracks: Vec::new(),
+            items: Vec::new(),
             music: None,
         })
     }

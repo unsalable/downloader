@@ -189,9 +189,20 @@ impl Database {
         rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
     }
 
-    pub fn history_count(&self) -> AppResult<u32> {
+    /// How many entries were recorded at or after `since` (ms since the epoch),
+    /// or in all, when it is `None`. Two fixed statements rather than one with
+    /// `?1 IS NULL OR ...`, as `history_list` does it: both forms are answered
+    /// from `idx_downloads_created` alone.
+    pub fn history_count(&self, since: Option<i64>) -> AppResult<u32> {
         let conn = self.lock()?;
-        let count: i64 = conn.query_row("SELECT COUNT(*) FROM downloads", [], |row| row.get(0))?;
+        let count: i64 = match since {
+            Some(since) => conn.query_row(
+                "SELECT COUNT(*) FROM downloads WHERE created_at >= ?1",
+                params![since],
+                |row| row.get(0),
+            )?,
+            None => conn.query_row("SELECT COUNT(*) FROM downloads", [], |row| row.get(0))?,
+        };
         Ok(count as u32)
     }
 
@@ -201,10 +212,18 @@ impl Database {
         Ok(())
     }
 
-    pub fn history_clear(&self) -> AppResult<()> {
+    /// Remove the entries recorded at or after `since` (all of them when `None`)
+    /// and say how many went. Rows only: the files they point at are the user's,
+    /// and stay exactly where they are.
+    pub fn history_clear(&self, since: Option<i64>) -> AppResult<u32> {
         let conn = self.lock()?;
-        conn.execute("DELETE FROM downloads", [])?;
-        Ok(())
+        let removed = match since {
+            Some(since) => {
+                conn.execute("DELETE FROM downloads WHERE created_at >= ?1", params![since])?
+            }
+            None => conn.execute("DELETE FROM downloads", [])?,
+        };
+        Ok(removed as u32)
     }
 
     // -- queue -------------------------------------------------------------
@@ -350,6 +369,7 @@ pub fn platform_from_str(value: &str) -> PlatformId {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::model::HistoryRange;
 
     #[test]
     fn settings_count_as_saved_only_once_something_is_saved() {
@@ -466,5 +486,105 @@ mod tests {
         assert_eq!(read.language, "en");
         assert_eq!(read.default_container, None);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // -- clearing the history by range ---------------------------------------
+
+    const HOUR: i64 = 3_600_000;
+
+    fn entry(created_at: i64, file_path: &str) -> HistoryEntry {
+        HistoryEntry {
+            id: 0,
+            url: "https://www.youtube.com/watch?v=a".into(),
+            title: format!("at {created_at}"),
+            platform: PlatformId::Youtube,
+            thumbnail_url: None,
+            file_path: file_path.into(),
+            file_exists: true,
+            container: "mp4".into(),
+            quality_label: "1080p".into(),
+            file_size: Some(1),
+            created_at,
+            status: "completed".into(),
+            request: None,
+        }
+    }
+
+    #[test]
+    fn a_range_counts_and_clears_only_what_is_newer_than_its_start() {
+        let db = Database::open(Path::new(":memory:")).unwrap();
+        let now = crate::util::now_ms();
+        for hours in [1, 23, 25, 144, 192, 720] {
+            db.history_insert(&entry(now - hours * HOUR, "")).unwrap();
+        }
+
+        let day = HistoryRange::Day.cutoff(now);
+        let week = HistoryRange::Week.cutoff(now);
+        assert_eq!(db.history_count(day).unwrap(), 2);
+        assert_eq!(db.history_count(week).unwrap(), 4);
+        assert_eq!(db.history_count(None).unwrap(), 6);
+
+        // The day goes, and everything older than it stays, in its order.
+        assert_eq!(db.history_clear(day).unwrap(), 2);
+        let ages: Vec<i64> = db
+            .history_list(None, 10, 0)
+            .unwrap()
+            .iter()
+            .map(|entry| (now - entry.created_at) / HOUR)
+            .collect();
+        assert_eq!(ages, [25, 144, 192, 720]);
+
+        // The week takes what the day left of it, and all of it the rest.
+        assert_eq!(db.history_clear(week).unwrap(), 2);
+        assert_eq!(db.history_clear(None).unwrap(), 2);
+        assert_eq!(db.history_count(None).unwrap(), 0);
+    }
+
+    #[test]
+    fn an_entry_exactly_at_the_cutoff_belongs_to_the_range() {
+        let db = Database::open(Path::new(":memory:")).unwrap();
+        let cutoff = 1_800_000_000_000 - 24 * HOUR;
+        db.history_insert(&entry(cutoff, "")).unwrap();
+        db.history_insert(&entry(cutoff - 1, "")).unwrap();
+
+        assert_eq!(db.history_count(Some(cutoff)).unwrap(), 1);
+        assert_eq!(db.history_clear(Some(cutoff)).unwrap(), 1);
+        let left = db.history_list(None, 10, 0).unwrap();
+        assert_eq!(left.len(), 1);
+        assert_eq!(left[0].created_at, cutoff - 1);
+    }
+
+    #[test]
+    fn clearing_the_history_leaves_the_files_where_they_are() {
+        // The database is kept in memory, so nothing in the folder is held open
+        // when it is removed at the end -- on Windows an open file would keep
+        // the folder there.
+        let dir = scratch("clear-keeps-files");
+        let clip = dir.join("clip.mp4");
+        std::fs::write(&clip, b"video").unwrap();
+        let path = clip.to_string_lossy();
+
+        let db = Database::open(Path::new(":memory:")).unwrap();
+        let now = crate::util::now_ms();
+        db.history_insert(&entry(now, &path)).unwrap();
+        db.history_insert(&entry(1, &path)).unwrap();
+
+        // A range, and then the rest: neither reaches the file.
+        assert_eq!(db.history_clear(HistoryRange::Day.cutoff(now)).unwrap(), 1);
+        assert_eq!(db.history_clear(None).unwrap(), 1);
+        assert_eq!(std::fs::read(&clip).unwrap(), b"video");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn clearing_an_empty_range_removes_nothing() {
+        // What `clear_history` reads as nothing to compact afterwards.
+        let db = Database::open(Path::new(":memory:")).unwrap();
+        let now = crate::util::now_ms();
+        db.history_insert(&entry(now - 8 * 24 * HOUR, "")).unwrap();
+        db.history_insert(&entry(now - 30 * 24 * HOUR, "")).unwrap();
+
+        assert_eq!(db.history_clear(HistoryRange::Day.cutoff(now)).unwrap(), 0);
+        assert_eq!(db.history_count(None).unwrap(), 2);
     }
 }

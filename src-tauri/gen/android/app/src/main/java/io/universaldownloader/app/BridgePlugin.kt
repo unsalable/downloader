@@ -4,6 +4,7 @@ import android.Manifest
 import android.app.Activity
 import android.app.DownloadManager
 import android.content.ActivityNotFoundException
+import android.content.ClipData
 import android.content.Intent
 import android.content.pm.ActivityInfo
 import android.content.pm.PackageManager
@@ -235,15 +236,12 @@ class BridgePlugin(private val activity: Activity) : Plugin(activity) {
         val args = invoke.parseArgs(PathArgs::class.java)
         val file = File(args.path)
         if (!file.isFile) {
-            invoke.reject("${file.name} is no longer on this device")
+            invoke.reject("${file.name} is no longer on this device", FILE_MISSING)
             return
         }
         try {
-            val uri = FileProvider.getUriForFile(activity, "${activity.packageName}.fileprovider", file)
-            val type = MimeTypeMap.getSingleton()
-                .getMimeTypeFromExtension(file.extension.lowercase()) ?: "*/*"
             val intent = Intent(Intent.ACTION_VIEW)
-                .setDataAndType(uri, type)
+                .setDataAndType(shareableUri(file), mimeTypeOf(file) ?: "*/*")
                 .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
             activity.startActivity(intent)
             invoke.resolve()
@@ -253,6 +251,45 @@ class BridgePlugin(private val activity: Activity) : Plugin(activity) {
             invoke.reject(ex.message ?: "the file could not be opened")
         }
     }
+
+    /** Hand a finished file to another app through the system's share sheet. */
+    @Command
+    fun shareFile(invoke: Invoke) {
+        val args = invoke.parseArgs(PathArgs::class.java)
+        val file = File(args.path)
+        if (!file.isFile) {
+            invoke.reject("${file.name} is no longer on this device", FILE_MISSING)
+            return
+        }
+        try {
+            val uri = shareableUri(file)
+            val send = Intent(Intent.ACTION_SEND)
+                .setType(mimeTypeOf(file) ?: "*/*")
+                .putExtra(Intent.EXTRA_STREAM, uri)
+                .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            // The read grant travels on the ClipData, which the chooser carries
+            // over to whatever is picked; Android 10 and later also draws the
+            // sheet's preview of the file from it.
+            send.clipData = ClipData.newUri(activity.contentResolver, file.name, uri)
+            // A null title is the system's own, in the phone's language. This
+            // app is not excluded from the list: all it takes from the sheet
+            // is text, a link to download, so a file of any type the phone
+            // knows never lists it. Only the `*/*` above, for an extension it
+            // has no type for, can; picked there, it finds no link in what it
+            // was handed and does nothing.
+            activity.startActivity(Intent.createChooser(send, null))
+            invoke.resolve()
+        } catch (ex: Exception) {
+            invoke.reject(ex.message ?: "the file could not be shared")
+        }
+    }
+
+    /** A content:// address another app may read, through the manifest's FileProvider. */
+    private fun shareableUri(file: File): Uri =
+        FileProvider.getUriForFile(activity, "${activity.packageName}.fileprovider", file)
+
+    private fun mimeTypeOf(file: File): String? =
+        MimeTypeMap.getSingleton().getMimeTypeFromExtension(file.extension.lowercase())
 
     /**
      * A file written by path into shared storage is not in the media index
@@ -375,9 +412,8 @@ class BridgePlugin(private val activity: Activity) : Plugin(activity) {
             return
         }
         try {
-            val uri = FileProvider.getUriForFile(activity, "${activity.packageName}.fileprovider", file)
             val intent = Intent(Intent.ACTION_VIEW)
-                .setDataAndType(uri, "application/vnd.android.package-archive")
+                .setDataAndType(shareableUri(file), "application/vnd.android.package-archive")
                 .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
             activity.startActivity(intent)
             invoke.resolve()
@@ -469,5 +505,8 @@ class BridgePlugin(private val activity: Activity) : Plugin(activity) {
 
         /** Matched by `android.rs`, which reports it as a permission error. */
         private const val INSTALL_PERMISSION_DENIED = "INSTALL_PERMISSION_DENIED"
+
+        /** Matched by `android.rs`, which reports it as a file that is gone. */
+        private const val FILE_MISSING = "FILE_MISSING"
     }
 }

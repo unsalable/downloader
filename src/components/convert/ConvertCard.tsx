@@ -5,12 +5,14 @@ import { memo, useState } from 'react';
 import { IconButton } from '@/components/ui/IconButton';
 import { ROW_LINE } from '@/components/ui/ListGroup';
 import { Progress } from '@/components/ui/Progress';
+import { useFileActions } from '@/hooks/useFileActions';
 import { useTranslation } from '@/i18n';
 import type { TranslationKey } from '@/i18n';
 import { cn } from '@/lib/cn';
+import { PROBLEM_TEXT } from '@/lib/fileProblem';
 import { clampPercent, formatBytes } from '@/lib/format';
 import { COLLAPSE, LIST_ITEM } from '@/lib/motion';
-import { IS_MOBILE, openFile, revealFile } from '@/lib/platform';
+import { IS_MOBILE } from '@/lib/platform';
 import type { ConvertJob } from '@/types';
 
 interface ConvertCardProps {
@@ -47,6 +49,9 @@ export const ConvertCard = memo(function ConvertCard({
   const isDone = status === 'completed';
   const isAbandoned = status === 'failed' || status === 'canceled';
   const outputPath = isDone ? job.outputPath : null;
+  // Pressing the row is what finds out whether the file is still there; see
+  // DownloadCard.
+  const file = useFileActions(outputPath);
   const formats = describeFormats(job);
   const Icon = job.kind === 'audio' ? FileAudio : FileVideo;
 
@@ -106,8 +111,16 @@ export const ConvertCard = memo(function ConvertCard({
 
         {isDone && (
           <span className={cn(LINE, 'mt-0.5')}>
-            <span>{formats}</span>
-            {job.outputSizeBytes != null && <span>{formatBytes(job.outputSizeBytes)}</span>}
+            {file.problem ? (
+              <span className="min-w-0 max-w-full truncate text-error">
+                {t(PROBLEM_TEXT[file.problem])}
+              </span>
+            ) : (
+              <>
+                <span>{formats}</span>
+                {job.outputSizeBytes != null && <span>{formatBytes(job.outputSizeBytes)}</span>}
+              </>
+            )}
           </span>
         )}
 
@@ -161,7 +174,7 @@ export const ConvertCard = memo(function ConvertCard({
           <button
             type="button"
             data-open=""
-            onClick={() => void openFile(outputPath)}
+            onClick={file.open}
             aria-label={t('downloads.openFileNamed', { title: job.inputName })}
             className={cn(mainClass, 'cursor-pointer rounded-[12px] text-left')}
           >
@@ -189,12 +202,14 @@ export const ConvertCard = memo(function ConvertCard({
               onClick={() => onRetry(job.id)}
             />
           )}
-          {outputPath && (
+          {/* Kept on a phone, where it opens the system's Downloads view: a
+              conversion row has no Share to stand in for it. */}
+          {outputPath && file.problem !== 'missing' && (
             <IconButton
               icon={<FolderOpen size={15} />}
               label={t('downloads.showInFolder')}
               size={ACTION_SIZE}
-              onClick={() => void revealFile(outputPath)}
+              onClick={file.reveal}
             />
           )}
           {isDone || isAbandoned ? (

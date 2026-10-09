@@ -1,6 +1,5 @@
 import { motion } from 'motion/react';
 import { open } from '@tauri-apps/plugin-dialog';
-import { openPath } from '@tauri-apps/plugin-opener';
 import {
   Check,
   ChevronLeft,
@@ -120,7 +119,9 @@ interface SettingsPageProps {
   settings: Settings;
   /**
    * On a phone, the section open on its own page, or null for the list of
-   * sections. Owned by the app so the Back gesture can close it.
+   * sections. Owned by the app so the Back gesture can close it. On the
+   * desktop, the section to open at, when something elsewhere pointed here --
+   * the sections themselves are switched in place.
    */
   section?: SettingsSection | null;
   onSectionChange?: (section: SettingsSection | null) => void;
@@ -130,7 +131,15 @@ export function SettingsPage({ settings, section: openSection, onSectionChange }
   const { t } = useTranslation();
   const update = useSettingsStore((state) => state.update);
   const reset = useSettingsStore((state) => state.reset);
-  const [desktopSection, setDesktopSection] = useState<SettingsSection>('general');
+  // Opened at the section asked for from the first frame, rather than at
+  // General and then moved: an effect alone would show General first and
+  // then slide the other in, as if the user had asked twice.
+  const [desktopSection, setDesktopSection] = useState<SettingsSection>(
+    () => (!IS_MOBILE && openSection) || 'general',
+  );
+  useEffect(() => {
+    if (!IS_MOBILE && openSection) setDesktopSection(openSection);
+  }, [openSection]);
   const [confirmReset, setConfirmReset] = useState(false);
   const link = useBridgeStatus();
 
@@ -771,6 +780,9 @@ function AdvancedSection({
   const checks = useToolsStore((state) => state.checks);
   const checkUpdate = useToolsStore((state) => state.checkUpdate);
   const [installErrors, setInstallErrors] = useState<Partial<Record<ToolKind, string>>>({});
+  // The folder opening is its own answer; only a failure needs words, and they
+  // go where the hint was, under the button that failed.
+  const [logsFailed, setLogsFailed] = useState(false);
 
   const [proxy, setProxy] = useState(settings.proxyUrl ?? '');
   const [userAgent, setUserAgent] = useState(settings.customUserAgent ?? '');
@@ -919,14 +931,20 @@ function AdvancedSection({
         {!IS_MOBILE && (
           <SettingRow
             title={t('settings.logs')}
-            description={t('settings.logsHint')}
+            description={
+              logsFailed ? (
+                <span className="text-error">{t('file.revealFailed')}</span>
+              ) : (
+                t('settings.logsHint')
+              )
+            }
             control={
               <Button
                 size="sm"
                 variant="secondary"
-                onClick={async () => {
-                  const dir = await ipc.getLogDir();
-                  await openPath(dir);
+                onClick={() => {
+                  setLogsFailed(false);
+                  void ipc.openLogDir().catch(() => setLogsFailed(true));
                 }}
               >
                 {t('settings.openLogs')}

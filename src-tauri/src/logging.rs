@@ -366,6 +366,30 @@ mod tests {
         assert!(!safe.contains("tail-of-the-same-value"), "{safe}");
     }
 
+    /// TikTok's jar goes through the same engine and the same log, and its
+    /// sign-in is just as much a working login to whoever reads the paste.
+    #[test]
+    fn a_tiktok_session_never_reaches_the_log() {
+        let header = format!("Cookie: sessionid={SESSION}; sid_tt=second-{SESSION}");
+        let safe = redact(&header);
+        assert!(!safe.contains(SESSION), "{safe}");
+        assert!(safe.contains("sessionid=[redacted];"), "{safe}");
+
+        for row in [
+            format!("#HttpOnly_.tiktok.com\\tTRUE\\t/\\tTRUE\\t0\\tsessionid\\t{SESSION}"),
+            format!("#HttpOnly_.tiktok.com\tTRUE\t/\tTRUE\t0\tsessionid\t{SESSION}"),
+        ] {
+            let safe = redact(&row);
+            assert!(!safe.contains(SESSION), "{safe}");
+            assert!(safe.contains("sessionid"), "{safe}");
+        }
+
+        // The engine's own sentence about the wall is left whole: it is what
+        // the error card and a bug report need.
+        let wall = "ERROR: [TikTok] 7670756126907960589: This post may not be comfortable for some audiences. Log in for access. Use --cookies-from-browser or --cookies for the authentication.";
+        assert_eq!(redact(wall), wall);
+    }
+
     #[test]
     fn the_jar_handed_to_the_engine_is_not_written_beside_the_url() {
         let args = [

@@ -17,8 +17,8 @@ use crate::range::RangeFetchManager;
 use crate::model::{
     BridgeStatus, CacheStats, ConvertFormatInfo, ConvertJob, ConvertRequest, DiagnosticsSnapshot,
     DownloadRequest, DownloadTask, ExportRequest, ExportState, FetchState, HistoryEntry,
-    MediaMetadata, MediaProbe, PlatformId, RangeFetchRequest, TimelineRequest, TimelineState,
-    ToolInstallProgress, ToolKind, ToolUpdateCheck, ToolsState,
+    HistoryRange, MediaMetadata, MediaProbe, PlatformId, RangeFetchRequest, SourceContext,
+    TimelineRequest, TimelineState, ToolInstallProgress, ToolKind, ToolUpdateCheck, ToolsState,
 };
 use crate::queue::QueueManager;
 use crate::settings::Settings;
@@ -160,8 +160,8 @@ fn apply_autostart(app: &AppHandle, enabled: bool) {
     }
 }
 
-/// The toggle is about the YouTube session only. Off forgets the session and
-/// has the host refuse new ones, but leaves the host registered: it also
+/// The toggle is about the browser's sessions only. Off forgets every session
+/// and has the host refuse new ones, but leaves the host registered: it also
 /// carries the videos the extension sends to download, which lend the app
 /// nothing and must keep working. On registers again, which is what heals a
 /// registration an older build removed when it was turned off.
@@ -310,18 +310,23 @@ pub fn detect_platform(url: String) -> PlatformId {
     providers::detect::detect_platform(&url)
 }
 
+/// `source` is the page a link from the browser extension was playing on, with
+/// the headers it was fetched under: a stream from an embedded player is often
+/// refused without its Referer, and Home analyses such a link before anything
+/// is downloaded, so the analysis needs them as much as the download does.
 #[tauri::command]
 pub async fn analyze_url(
     app: AppHandle,
     state: State<'_, AppState>,
     url: String,
+    source: Option<SourceContext>,
 ) -> AppResult<MediaMetadata> {
     let settings = state.settings();
     let trimmed = url.trim();
     if trimmed.is_empty() {
         return Err(AppError::InvalidUrl("no address was given".into()));
     }
-    let metadata = match providers::analyze(trimmed, &settings).await {
+    let metadata = match providers::analyze_with_source(trimmed, &settings, source.as_ref()).await {
         Ok(metadata) => metadata,
         Err(err) => return Err(net::explain_failure(&app, err).await),
     };
@@ -407,7 +412,8 @@ pub fn enqueue_download(state: State<'_, AppState>, request: DownloadRequest) ->
 /// lists them, so it is what the tasks are made from, and what they download.
 ///
 /// `entries` picks some of the items by position, in the order the source
-/// lists them; `None` queues them all.
+/// lists them; `None` queues them all. A position the post no longer has is
+/// refused, and nothing is queued.
 #[tauri::command]
 pub async fn enqueue_gallery(
     state: State<'_, AppState>,
@@ -418,42 +424,17 @@ pub async fn enqueue_gallery(
     let metadata = match providers::recent_analysis(&request.url, &settings) {
         Some(metadata) => metadata,
         None => {
-            let metadata = providers::analyze(&request.url, &settings).await?;
+            let metadata = providers::analyze_with_source(&request.url, &settings, request.source.as_ref()).await?;
             providers::remember_analysis(&request.url, &settings, &metadata);
             metadata
         }
     };
 
-    if metadata.entries.len() < 2 && entries.is_none() {
-        return Ok(vec![state.queue.enqueue(request)]);
-    }
-    let wanted = |index: usize| {
-        entries
-            .as_ref()
-            .is_none_or(|positions| positions.contains(&(index as u32 + 1)))
-    };
-
+    let requests = providers::gallery_requests(&metadata, &request, entries.as_deref())?;
     // One creation time for the whole album: the Downloads screen lists newest
     // first, so entries stamped one by one would read backwards there.
     let created_at = util::now_ms();
-    Ok(metadata
-        .entries
-        .iter()
-        .enumerate()
-        .filter(|(index, _)| wanted(*index))
-        .map(|(index, entry)| {
-            let mut item = request.clone();
-            item.entry = Some(index as u32 + 1);
-            item.title = Some(entry.title.clone());
-            item.thumbnail_url = entry.thumbnail_url.clone().or_else(|| request.thumbnail_url.clone());
-            // Streams picked by hand belong to the item they were picked on.
-            if index > 0 {
-                item.video_format_id = None;
-                item.audio_format_id = None;
-            }
-            state.queue.enqueue_at(item, created_at)
-        })
-        .collect())
+    Ok(requests.into_iter().map(|item| state.queue.enqueue_at(item, created_at)).collect())
 }
 
 #[tauri::command]
@@ -690,9 +671,12 @@ pub fn list_history(
         .history_list(query.as_deref(), limit.unwrap_or(100).min(500), offset.unwrap_or(0))
 }
 
+/// How many entries `range` would take; the whole history when it is left
+/// out, which is what the History screen's own count asks for.
 #[tauri::command]
-pub fn count_history(state: State<'_, AppState>) -> AppResult<u32> {
-    state.db.history_count()
+pub fn count_history(state: State<'_, AppState>, range: Option<HistoryRange>) -> AppResult<u32> {
+    let since = range.unwrap_or(HistoryRange::All).cutoff(util::now_ms());
+    state.db.history_count(since)
 }
 
 #[tauri::command]
@@ -700,10 +684,25 @@ pub fn delete_history_entry(state: State<'_, AppState>, id: i64) -> AppResult<()
     state.db.history_delete(id)
 }
 
+/// Take `range` out of the history and say how many entries went. The cutoff
+/// is worked out here, on the clock that stamped the entries, rather than sent
+/// by the interface.
+///
+/// The file is compacted afterwards, and only when something left it. That is
+/// housekeeping, not the clear: by then the entries are gone, and a compaction
+/// that fails -- the browser link's helper holding the file past the busy
+/// timeout, no room for the copy VACUUM writes -- must not turn into "could not
+/// clear" for a clear that worked.
 #[tauri::command]
-pub fn clear_history(state: State<'_, AppState>) -> AppResult<()> {
-    state.db.history_clear()?;
-    state.db.vacuum()
+pub fn clear_history(state: State<'_, AppState>, range: Option<HistoryRange>) -> AppResult<u32> {
+    let since = range.unwrap_or(HistoryRange::All).cutoff(util::now_ms());
+    let removed = state.db.history_clear(since)?;
+    if removed > 0 {
+        if let Err(err) = state.db.vacuum() {
+            log_warn!("history", "could not compact the database after clearing: {err}");
+        }
+    }
+    Ok(removed)
 }
 
 // -- filesystem ------------------------------------------------------------
@@ -730,37 +729,41 @@ pub fn preview_filename(template: String) -> String {
     format!("{rendered}.mp4")
 }
 
+// -- finished files --------------------------------------------------------
+//
+// Opening, showing and sharing a file the app wrote, on every platform; see
+// `files` for why the webview may not open paths itself. All four are async:
+// a sync command runs on the main thread, and sharing on Windows waits for it.
+
+#[tauri::command]
+pub async fn open_file(app: AppHandle, path: String) -> AppResult<()> {
+    crate::files::open(app, path).await
+}
+
+#[tauri::command]
+pub async fn reveal_file(app: AppHandle, path: String) -> AppResult<()> {
+    crate::files::reveal(app, path).await
+}
+
+#[tauri::command]
+pub async fn share_file(app: AppHandle, path: String) -> AppResult<()> {
+    crate::files::share(app, path).await
+}
+
+#[tauri::command]
+pub async fn open_log_dir() -> AppResult<()> {
+    crate::files::open_log_dir().await
+}
+
 // -- mobile platform -------------------------------------------------------
 //
-// What the opener, dialog and drag-and-drop APIs do on the desktop has to be
-// asked of the OS on Android. The interface only calls these there; elsewhere
-// they refuse rather than pretend.
+// What the dialog and drag-and-drop APIs do on the desktop has to be asked of
+// the OS on Android. The interface only calls these there; elsewhere they
+// refuse rather than pretend.
 
 #[cfg(not(target_os = "android"))]
 fn android_only<T>() -> AppResult<T> {
     Err(AppError::Other("this is only available on Android".into()))
-}
-
-#[tauri::command]
-pub async fn platform_open_file(app: AppHandle, path: String) -> AppResult<()> {
-    #[cfg(target_os = "android")]
-    return crate::android::open_file(app, path).await;
-    #[cfg(not(target_os = "android"))]
-    {
-        let _ = (app, path);
-        android_only()
-    }
-}
-
-#[tauri::command]
-pub async fn platform_open_downloads(app: AppHandle) -> AppResult<()> {
-    #[cfg(target_os = "android")]
-    return crate::android::open_downloads(app).await;
-    #[cfg(not(target_os = "android"))]
-    {
-        let _ = app;
-        android_only()
-    }
 }
 
 #[tauri::command]
@@ -1012,11 +1015,6 @@ fn os_label() -> String {
         }
         version => format!("{name} {version}"),
     }
-}
-
-#[tauri::command]
-pub fn get_log_dir() -> AppResult<String> {
-    Ok(paths::logs_dir()?.to_string_lossy().into_owned())
 }
 
 /// Third-party licence list, read from the bundled resource.

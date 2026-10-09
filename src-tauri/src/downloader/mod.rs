@@ -319,6 +319,11 @@ async fn download_analyzed(
         .as_ref()
         .map(SourceContext::headers)
         .unwrap_or_default();
+    // What the other-site session is lent by, besides the address.
+    let page_url = request
+        .source
+        .as_ref()
+        .and_then(|source| source.page_url.as_deref());
 
     // A merge is the one step with a hard external dependency. Failing here,
     // before any bytes move, is much better than after a 2 GB download.
@@ -349,7 +354,7 @@ async fn download_analyzed(
     let mut aggregate = Aggregator::new(plan.estimated_bytes, plan.stage_count());
 
     let produced = if plan.needs_engine {
-        run_via_engine(task_id, &plan, &metadata, &headers, settings, &control, &mut aggregate, on_update, temp_dir)
+        run_via_engine(task_id, &plan, &metadata, &headers, page_url, settings, &control, &mut aggregate, on_update, temp_dir)
             .await?
     } else {
         match run_natively(task_id, &plan, &metadata, settings, &control, &mut aggregate, on_update, temp_dir).await {
@@ -365,13 +370,22 @@ async fn download_analyzed(
                 );
                 cleanup_task_files(task_id);
                 aggregate = Aggregator::new(plan.estimated_bytes, 1 + u32::from(plan.convert_to.is_some()));
-                run_via_engine(task_id, &plan, &metadata, &headers, settings, &control, &mut aggregate, on_update, temp_dir)
+                run_via_engine(task_id, &plan, &metadata, &headers, page_url, settings, &control, &mut aggregate, on_update, temp_dir)
                     .await
                     // The engine failing here is the same refusal seen from
                     // another angle; the access error is the one that explains
-                    // it to the user.
+                    // it to the user. Except TikTok's sign-in wall, which says
+                    // more than the 403 does: either the session the analysis
+                    // was read with went stale, or its switch was turned off,
+                    // in between -- and the user can do something about that --
+                    // or, seen with the session behind it, TikTok will not show
+                    // the post to that account at all, which is not offered
+                    // again.
                     .map_err(|err| match err {
-                        AppError::Canceled | AppError::DiskFull | AppError::Permission(_) => err,
+                        AppError::Canceled
+                        | AppError::DiskFull
+                        | AppError::Permission(_)
+                        | AppError::TiktokSignIn { .. } => err,
                         _ => AppError::Forbidden { status, detail },
                     })?
             }
@@ -515,6 +529,7 @@ async fn run_via_engine(
     plan: &DownloadPlan,
     metadata: &MediaMetadata,
     headers: &[(String, String)],
+    page_url: Option<&str>,
     settings: &Settings,
     control: &Arc<TaskControl>,
     aggregate: &mut Aggregator,
@@ -542,6 +557,8 @@ async fn run_via_engine(
             section: None,
             force_keyframes: false,
             headers: &target.headers,
+            page_url,
+            sound_from_second: target.sound_from_second,
         },
         settings,
         Arc::clone(control),
@@ -581,6 +598,8 @@ pub(crate) struct EngineTarget {
     pub(crate) selector: String,
     pub(crate) merge_container: Option<String>,
     pub(crate) headers: Vec<(String, String)>,
+    /// See [`engine_dl::EngineDownload::sound_from_second`].
+    pub(crate) sound_from_second: bool,
 }
 
 pub(crate) fn engine_target(
@@ -623,6 +642,8 @@ pub(crate) fn engine_target(
             merge_container: (!audio_only && engine_merges_into(&plan.container))
                 .then(|| plan.container.clone()),
             headers,
+            // One address, one stream: there is no second rendition here.
+            sound_from_second: false,
         };
     }
 
@@ -631,6 +652,7 @@ pub(crate) fn engine_target(
         selector: plan.selector_for_engine(),
         merge_container: plan.needs_merge.then(|| plan.container.clone()),
         headers: headers.to_vec(),
+        sound_from_second: plan.sound_from_muxed(),
     }
 }
 
@@ -1310,5 +1332,48 @@ mod tests {
         };
         let refused = preview_of(nothing, &request(handed_over(), None)).unwrap_err();
         assert_eq!(refused.code(), "unsupported");
+    }
+
+    /// The TikTok shape: the sharpest picture with no sound, and the sound
+    /// only inside a 720p rendition. Every TikTok transfer is refused to the
+    /// direct fetcher with a 403 and goes through the engine, so this target
+    /// is the path the fix actually runs on.
+    fn sound_elsewhere() -> MediaMetadata {
+        let mut picture = listed("bytevc1_1080p_1511769-0", FormatKind::Video, Some(1080), "mp4");
+        picture.vcodec = Some("h265".into());
+        picture.filesize = Some(36_463_968);
+        let mut both = listed("h264_720p_1207492-0", FormatKind::Muxed, Some(720), "mp4");
+        both.filesize = Some(37_655_063);
+
+        let mut metadata = providers::tests_support::blank();
+        metadata.provider_id = providers::engine::PROVIDER_ID.into();
+        metadata.platform = PlatformId::Tiktok;
+        metadata.canonical_url = "https://www.tiktok.com/@edat673243/video/7691247381555268877".into();
+        metadata.duration_sec = Some(249.0);
+        metadata.formats = vec![picture, both];
+        metadata
+    }
+
+    #[test]
+    fn the_engine_is_asked_for_the_sound_alone_out_of_the_second_rendition() {
+        let metadata = sound_elsewhere();
+        let plan = plan::for_request(&metadata, &request(None, None)).unwrap();
+        let target = engine_target(&plan, &metadata, &[]);
+        assert_eq!(target.selector, "bytevc1_1080p_1511769-0+h264_720p_1207492-0");
+        assert_eq!(target.merge_container.as_deref(), Some("mp4"));
+        assert!(target.sound_from_second);
+
+        // An ordinary pair of picture and sound needs none of that.
+        let plan = plan::for_request(&zoo(), &request(None, None)).unwrap();
+        assert!(!engine_target(&plan, &zoo(), &[]).sound_from_second);
+    }
+
+    #[test]
+    fn the_preview_of_a_borrowed_sound_counts_both_renditions() {
+        let preview = preview_of(sound_elsewhere(), &request(None, None)).unwrap();
+        assert_eq!(preview.quality_label, "1080p");
+        assert_eq!(preview.container, "mp4");
+        assert_eq!(preview.estimated_bytes, Some(36_463_968 + 37_655_063));
+        assert!(!preview.audio_only);
     }
 }
