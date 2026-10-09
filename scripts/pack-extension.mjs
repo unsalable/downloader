@@ -42,11 +42,15 @@ function forFirefox(manifest) {
   manifest.browser_specific_settings = {
     gecko: {
       id: FIREFOX_ID,
-      // storage.session, scripting with world isolation and module
-      // background scripts all hold from here on.
-      strict_min_version: '128.0',
+      // The data collection declaration is the newest key here: Firefox
+      // reads it from 140 (the ESR line) and Firefox for Android from 142,
+      // and addons.mozilla.org warns about any minimum below that.
+      // storage.session, isolated scripting and module background scripts
+      // all came earlier.
+      strict_min_version: '140.0',
       data_collection_permissions: { required: ['none'] },
     },
+    gecko_android: { strict_min_version: '142.0' },
   };
   return manifest;
 }
